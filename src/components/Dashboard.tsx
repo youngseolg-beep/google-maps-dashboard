@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { analyzeReviews } from "../services/geminiService";
-import { Sparkles, Star, Loader2, AlertCircle, Settings, Link as LinkIcon, Calendar, Play, Info, MessageSquare text-gray-300 } from "lucide-react";
+import { Sparkles, Star, Loader2, AlertCircle, Settings, Link as LinkIcon, Calendar, Play, Info, MessageSquare } from "lucide-react";
 import ReactMarkdown from 'react-markdown';
 
 interface Review {
