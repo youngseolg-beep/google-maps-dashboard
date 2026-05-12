@@ -28,84 +28,106 @@ def parse_relative_date(date_str):
     return now
 
 def scrape_reviews():
-    if not GOOGLE_MAPS_URL:
-        print("❌ URL이 설정되지 않았습니다.")
-        return
+    if not GOOGLE_MAPS_URL: return
 
     with sync_playwright() as p:
-        # [혁신 1] 모바일 브라우저로 위장하여 구글의 보안벽을 낮춥니다.
-        iphone = p.devices['iPhone 14 Pro Max']
-        browser = p.chromium.launch(headless=True)
+        # [장치 1] 자동화 감지 우회 옵션을 극대화합니다.
+        browser = p.chromium.launch(headless=True, args=[
+            "--disable-blink-features=AutomationControlled",
+            "--no-sandbox"
+        ])
         context = browser.new_context(
-            **iphone,
-            locale="ko-KR",
-            timezone_id="Asia/Seoul"
+            user_agent="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+            viewport={"width": 1280, "height": 1000}
         )
         page = context.new_page()
         
-        print(f"📡 [모바일 모드] 접속 시도: {GOOGLE_MAPS_URL}")
+        print(f"🚀 [최종 테스트] 접속 중: {GOOGLE_MAPS_URL}")
         
         try:
-            page.goto(GOOGLE_MAPS_URL, wait_until="commit", timeout=60000)
-            page.wait_for_timeout(10000) # 충분한 로딩 대기
-
-            # [혁신 2] '리뷰' 탭을 찾기 위해 화면의 모든 버튼을 뒤집니다.
-            print("🔍 리뷰 버튼 찾는 중...")
-            page.get_by_text(re.compile(r"리뷰", re.I)).first.click(timeout=10000)
+            # 주소 접속 (여유롭게 대기)
+            page.goto(GOOGLE_MAPS_URL, wait_until="networkidle", timeout=60000)
             page.wait_for_timeout(5000)
-        except Exception as e:
-            print(f"⚠️ 리뷰 탭 진입 시도 중: {e}")
 
-        reviews = []
-        processed_texts = set()
-        
-        print("⏬ 데이터 강제 추출 시작...")
-        
-        # [혁신 3] 클래스 이름이 아니라 '별점' 요소를 기준으로 주변 텍스트를 긁어모읍니다.
-        for _ in range(15): # 스크롤 반복
-            # 구글 맵 리뷰 리스트의 공통적인 속성을 가진 요소들을 모두 탐색
-            elements = page.locator("xpath=//div[contains(@aria-label, '별점')] | //span[contains(@aria-label, '별점')]").all()
+            # [장치 2] 리뷰 탭을 찾기 위해 '리뷰'라는 텍스트를 가진 요소를 클릭
+            print("🔍 리뷰 탭 활성화 시도...")
+            review_btn = page.get_by_role("button", name=re.compile(r"리뷰", re.I)).first
+            if review_btn.is_visible():
+                review_btn.click()
+                page.wait_for_timeout(3000)
             
-            for el in elements:
-                try:
-                    # 부모 요소를 찾아 그 안의 텍스트를 몽땅 긁어옵니다.
-                    parent = el.locator("xpath=./ancestor::div[1]")
-                    full_text = parent.inner_text().strip()
-                    
-                    if not full_text or full_text in processed_texts:
-                        continue
-                    
-                    processed_texts.add(full_text)
-                    
-                    # 텍스트 내에서 날짜 정보와 본문 분리 시도
-                    # (모바일 환경에 최적화된 파싱)
-                    lines = full_text.split('\n')
-                    if len(lines) < 2: continue
+            # 최신순 정렬
+            try:
+                page.get_by_label("리뷰 정렬").click(timeout=3000)
+                page.wait_for_timeout(1000)
+                page.get_by_role("menuitemradio", name="최신순").click()
+                page.wait_for_timeout(2000)
+            except:
+                pass
 
-                    reviews.append({
-                        "author": lines[0],
-                        "rating": 5, # 기본값
-                        "text": " ".join(lines[1:4]), # 내용 일부 추출
-                        "date": datetime.now().strftime("%Y-%m-%d") # 임시
-                    })
-                except:
+            reviews = []
+            processed_ids = set()
+            
+            print("📡 리뷰 스캔 중 (클래스 무시 강제 수집)...")
+            
+            for scroll in range(20):
+                # [장치 3] 특정 클래스가 아니라, 리뷰 작성 날짜(rsqaWe)가 포함된 모든 구역을 뒤집니다.
+                # 구글 맵 리뷰의 가장 변하지 않는 특징인 '날짜' 요소를 기준으로 역추적합니다.
+                date_elements = page.locator(".rsqaWe").all()
+                
+                if not date_elements:
+                    # 아무것도 안 보이면 조금 더 스크롤
+                    page.mouse.wheel(0, 1500)
+                    page.wait_for_timeout(2000)
                     continue
 
-            if len(reviews) > 0:
-                print(f"✨ 현재 {len(reviews)}건 발견...")
+                for date_el in date_elements:
+                    try:
+                        # 날짜 요소의 부모(리뷰 전체 칸)를 찾습니다.
+                        container = date_el.locator("xpath=./ancestor::div[contains(@class, 'jftiEf') or contains(@role, 'article')]").first
+                        
+                        # 텍스트 내용 가져오기
+                        text_el = container.locator(".wiI7pd").first
+                        if not text_el.is_visible(): continue
+                        
+                        review_text = text_el.inner_text().strip()
+                        if not review_text or review_text in processed_ids: continue
+                        
+                        processed_ids.add(review_text[:50]) # 중복 방지
+                        
+                        date_str = date_el.inner_text().strip()
+                        actual_date = parse_relative_date(date_str)
+
+                        if actual_date < START_DATE:
+                            continue
+
+                        reviews.append({
+                            "author": "고객",
+                            "rating": 5,
+                            "text": review_text,
+                            "date": actual_date.strftime("%Y-%m-%d")
+                        })
+                    except:
+                        continue
+
+                print(f"🔄 현재 {len(reviews)}건 수집됨...")
+                if len(reviews) >= 20: break
+                
+                # 천천히 스크롤 (로딩 시간을 줍니다)
+                page.mouse.wheel(0, 2000)
+                page.wait_for_timeout(2500)
+
+            print(f"🏁 최종 수집 완료: {len(reviews)}건")
+
+            # 저장
+            os.makedirs("public/data", exist_ok=True)
+            with open("public/data/reviews.json", "w", encoding="utf-8") as f:
+                json.dump(reviews, f, ensure_ascii=False, indent=4)
             
-            page.mouse.wheel(0, 2000)
-            page.wait_for_timeout(3000)
-
-            if len(reviews) >= 10: break
-
-        # 최종 저장
-        print(f"🏁 [결과] 최종 수집 성공: {len(reviews)}건")
-        os.makedirs("public/data", exist_ok=True)
-        with open("public/data/reviews.json", "w", encoding="utf-8") as f:
-            json.dump(reviews, f, ensure_ascii=False, indent=4)
-        
-        browser.close()
+        except Exception as e:
+            print(f"❌ 에러: {e}")
+        finally:
+            browser.close()
 
 if __name__ == "__main__":
     scrape_reviews()
