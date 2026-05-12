@@ -1,0 +1,6 @@
+{
+  "name": "Map Insights Dashboard",
+  "description": "A dashboard to analyze Google Maps reviews using Gemini AI.",
+  "requestFramePermissions": [],
+  "majorCapabilities": []
+}
