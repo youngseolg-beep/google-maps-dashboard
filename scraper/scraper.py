@@ -54,7 +54,10 @@ def scrape_reviews():
         page = context.new_page()
         
         print(f"🌐 접속 중... URL: {GOOGLE_MAPS_URL}")
-        page.goto(GOOGLE_MAPS_URL, wait_until="networkidle")
+        # 접속 대기 시간을 60초로 늘리고, 로딩 기준을 완화합니다.
+page.goto(GOOGLE_MAPS_URL, wait_until="domcontentloaded", timeout=60000)
+# 페이지가 안정될 때까지 5초만 더 기다려줍니다.
+page.wait_for_timeout(5000)
         page.wait_for_timeout(random.randint(3000, 5000)) # 랜덤 지연 
         
         # '리뷰' 탭 클릭 시도
