@@ -1,7 +1,7 @@
 import { GoogleGenAI } from "@google/genai";
 
-// 테스트를 위해 직접 API 키를 기입합니다.
-const apiKey = "AIzaSyAhxFm2q1wFR1_p2PsbcLqZuoLN8NNq32g";
+// 수정 후 코드
+const apiKey = import.meta.env.VITE_GEMINI_API_KEY || "";
 
 // Initialize the Google GenAI SDK
 const ai = new GoogleGenAI({ apiKey: apiKey });
