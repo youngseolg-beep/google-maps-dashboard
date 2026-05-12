@@ -54,10 +54,16 @@ def scrape_reviews():
         page = context.new_page()
         
         print(f"🌐 접속 중... URL: {GOOGLE_MAPS_URL}")
-        # 접속 대기 시간을 60초로 늘리고, 로딩 기준을 완화합니다.
-page.goto(GOOGLE_MAPS_URL, wait_until="domcontentloaded", timeout=60000)
-# 페이지가 안정될 때까지 5초만 더 기다려줍니다.
-page.wait_for_timeout(5000)
+        
+        # [수정 포인트] 접속 대기 시간을 60초로 늘리고 들여쓰기를 맞춤
+        try:
+            page.goto(GOOGLE_MAPS_URL, wait_until="domcontentloaded", timeout=60000)
+            # 페이지가 안정될 때까지 충분히 대기
+            page.wait_for_timeout(5000)
+        except Exception as e:
+            print(f"⚠️ 페이지 접속 중 타임아웃 발생: {e}")
+            print("계속 진행을 시도합니다...")
+        
         page.wait_for_timeout(random.randint(3000, 5000)) # 랜덤 지연 
         
         # '리뷰' 탭 클릭 시도
@@ -79,7 +85,7 @@ page.wait_for_timeout(5000)
                 page.locator("div[role='menuitemradio']:has-text('최신순')").click()
                 page.wait_for_timeout(random.randint(3000, 4000))
         except Exception:
-            print("최신순 정렬 설정을 건너뜁니다.")
+            print("최신순 정렬 설정을 건너뜜 (기본 정렬 사용)")
 
         reviews = []
         processed_ids = set()
@@ -87,29 +93,36 @@ page.wait_for_timeout(5000)
         
         print("⏬ 무한 스크롤 및 데이터 수집 시작...")
         
-        while not stop_crawling:
+        # 수집 시도 횟수 제한 (무한 루프 방지)
+        max_attempts = 100
+        attempts = 0
+
+        while not stop_crawling and attempts < max_attempts:
+            attempts += 1
             # 구글 맵 최신 리뷰 클래스 타겟팅
             review_elements = page.locator(".jftiEf").all()
             if not review_elements:
-                print("리뷰 요소를 찾을 수 없습니다. 페이지 구조 변경 여부를 확인하세요.")
-                break
+                print("리뷰 요소를 찾을 수 없습니다. 페이지 로딩을 더 기다립니다.")
+                page.wait_for_timeout(5000)
+                if attempts > 10: break
+                continue
                 
             new_reviews_found = False
             
             for el in review_elements:
                 review_id = el.get_attribute("data-review-id")
-                if review_id in processed_ids:
+                if not review_id or review_id in processed_ids:
                     continue
                     
                 processed_ids.add(review_id)
                 new_reviews_found = True
                 
-                # "더보기" 버튼이 있다면 클릭 (본문 전체 확보)
+                # "더보기" 버튼 클릭
                 try:
                     more_btn = el.locator("button.w8nwRe.kyuRq")
                     if more_btn.count() > 0:
-                        more_btn.first.click()
-                except Exception:
+                        more_btn.first.click(timeout=1000)
+                except:
                     pass
                 
                 # 데이터 파싱
@@ -120,7 +133,7 @@ page.wait_for_timeout(5000)
                 rating = 0
                 if rating_el.count() > 0:
                     aria_label = rating_el.get_attribute("aria-label") or ""
-                    match = re.search(r'\d+', aria_label) # "별표 5개 중 4개"에서 숫자 추출
+                    match = re.search(r'\d+', aria_label)
                     if match:
                         rating = int(match.group())
                 
@@ -130,12 +143,11 @@ page.wait_for_timeout(5000)
                 date_el = el.locator(".rsqaWe")
                 date_str = date_el.inner_text().strip() if date_el.count() > 0 else ""
                 
-                # 상대 날짜를 실제 날짜로 변환
                 actual_date = parse_relative_date(date_str)
                 
-                # [4] 중단 로직: 수집된 리뷰 날짜가 기준일보다 과거인지 확인
+                # 중단 로직
                 if actual_date < START_DATE:
-                    print(f"🛑 [중단] 기준 날짜 이전 리뷰에 도달했습니다. (리뷰 날짜: {actual_date.strftime('%Y-%m-%d')} < 기준 날짜: {START_DATE_STR})")
+                    print(f"🛑 [중단] 기준 날짜 이전 리뷰 도달: {actual_date.strftime('%Y-%m-%d')}")
                     stop_crawling = True
                     break
                     
@@ -150,23 +162,25 @@ page.wait_for_timeout(5000)
             if stop_crawling:
                 break
                 
-            # [5] 스크롤 내리기 
+            # 스크롤 내리기 
             if review_elements:
                 try:
-                    # 화면의 마지막 리뷰 요소로 포커스 이동 후 조금 더 내리기
                     review_elements[-1].scroll_into_view_if_needed()
-                    page.mouse.wheel(0, 1500)
-                    page.wait_for_timeout(random.randint(2000, 4000)) # 데이터 로딩을 충분히 기다림
-                except Exception:
+                    page.mouse.wheel(0, 2000)
+                    page.wait_for_timeout(random.randint(2000, 3000))
+                except:
                     break
             
             if not new_reviews_found:
-                print("더 이상 새로운 리뷰가 없습니다. 스크롤 끝 도달.")
-                break
+                # 더 이상 새 리뷰가 없으면 조금 더 기다려보고 종료
+                page.wait_for_timeout(3000)
+                if not new_reviews_found:
+                    print("모든 리뷰를 확인했습니다.")
+                    break
 
-        print(f"✅ 총 {len(reviews)}개의 최신 리뷰를 수집했습니다.")
+        print(f"✅ 총 {len(reviews)}개의 최신 리뷰 수집 완료.")
 
-        # Vite/React에서 사용할 수 있도록 public/data/ 폴더에 저장
+        # 데이터 저장
         os.makedirs("public/data", exist_ok=True)
         with open("public/data/reviews.json", "w", encoding="utf-8") as f:
             json.dump(reviews, f, ensure_ascii=False, indent=4)
