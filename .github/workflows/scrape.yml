@@ -1,0 +1,48 @@
+name: Scrape Google Maps Reviews
+
+on:
+  schedule:
+    - cron: '0 0 * * *' # 매일 자정 자동 실행
+  workflow_dispatch: # 수동 실행 버튼 활성화
+    inputs:
+      google_maps_url:
+        description: '구글 맵 장소 URL'
+        required: true
+        type: string
+      start_date:
+        description: '수집 시작 날짜 (YYYY-MM-DD)'
+        required: true
+        type: string
+        default: '2026-05-01'
+
+jobs:
+  scrape-and-update:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 📦 체크아웃
+        uses: actions/checkout@v4
+
+      - name: 🐍 파이썬 설정
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: 🛠 패키지 설치
+        run: |
+          pip install -r scraper/requirements.txt
+          playwright install chromium
+
+      - name: 🏃 크롤링 실행
+        env:
+          GOOGLE_MAPS_URL: ${{ github.event.inputs.google_maps_url || secrets.GOOGLE_MAPS_URL }}
+          START_DATE: ${{ github.event.inputs.start_date || '2026-05-01' }}
+        run: |
+          python scraper/scraper.py
+
+      - name: 💾 데이터 업데이트 및 저장
+        run: |
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action Scraper"
+          git add public/data/reviews.json
+          git diff --quiet && git diff --staged --quiet || git commit -m "chore: 리뷰 데이터 업데이트"
+          git push
