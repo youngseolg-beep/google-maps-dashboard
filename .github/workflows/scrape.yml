@@ -1,48 +1,41 @@
-name: Scrape Google Maps Reviews
-
+name: scrape-and-update
 on:
-  schedule:
-    - cron: '0 0 * * *' # 매일 자정 자동 실행
-  workflow_dispatch: # 수동 실행 버튼 활성화
+  workflow_dispatch: # 버튼 누르면 실행
     inputs:
-      google_maps_url:
-        description: '구글 맵 장소 URL'
+      store_url:
+        description: '구글 맵 주소'
         required: true
-        type: string
       start_date:
-        description: '수집 시작 날짜 (YYYY-MM-DD)'
-        required: true
-        type: string
-        default: '2026-05-01'
+        description: '수집 시작일 (YYYY-MM-DD)'
+        default: '2026-01-01'
 
 jobs:
   scrape-and-update:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-latest # 깃허브의 공용 컴퓨터(리눅스)
     steps:
-      - name: 📦 체크아웃
+      - name: 체크아웃
         uses: actions/checkout@v4
 
-      - name: 🐍 파이썬 설정
+      - name: 파이썬 설정
         uses: actions/setup-python@v5
         with:
-          python-version: '3.10'
+          python-version: '3.11'
 
-      - name: 🛠 패키지 설치
+      - name: 패키지 설치
         run: |
-          pip install -r scraper/requirements.txt
+          pip install playwright
           playwright install chromium
 
-      - name: 🏃 크롤링 실행
+      - name: 크롤링 실행
         env:
-          GOOGLE_MAPS_URL: ${{ github.event.inputs.google_maps_url || secrets.GOOGLE_MAPS_URL }}
-          START_DATE: ${{ github.event.inputs.start_date || '2026-05-01' }}
-        run: |
-          python scraper/scraper.py
+          GOOGLE_MAPS_URL: ${{ github.event.inputs.store_url }}
+          START_DATE: ${{ github.event.inputs.start_date }}
+        run: python scraper/scraper.py
 
-      - name: 💾 데이터 업데이트 및 저장
+      - name: 데이터 업데이트 및 저장
         run: |
-          git config --local user.email "action@github.com"
-          git config --local user.name "GitHub Action Scraper"
+          git config --global user.name "GitHub Action"
+          git config --global user.email "action@github.com"
           git add public/data/reviews.json
-          git diff --quiet && git diff --staged --quiet || git commit -m "chore: 리뷰 데이터 업데이트"
+          git commit -m "Update reviews data [skip ci]" || echo "No changes to commit"
           git push
