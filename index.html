@@ -1,13 +1,85 @@
-<!doctype html>
-<html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>My Google AI Studio App</title>
-  </head>
-  <body>
-    <div id="root"></div>
-    <script type="module" src="/src/main.tsx"></script>
-  </body>
-</html>
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <title>SV 통합 리뷰 관리 시스템</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-gray-100 p-8">
+    <div class="max-w-6xl mx-auto">
+        <h1 class="text-3xl font-bold mb-8 text-blue-800">🚀 SV 통합 리뷰 관리 시스템</h1>
 
+        <div class="flex space-x-4 mb-6">
+            <button onclick="showTab('analysis')" id="tab-analysis" class="px-6 py-2 bg-blue-600 text-white rounded-t-lg">매장 정밀 분석 (3개월)</button>
+            <button onclick="showTab('sv-report')" id="tab-sv-report" class="px-6 py-2 bg-gray-300 text-gray-700 rounded-t-lg">SV별 데일리 리포트</button>
+        </div>
+
+        <div id="content-analysis" class="bg-white p-6 rounded-b-lg shadow">
+            <h2 class="text-xl font-bold mb-4 border-l-4 border-blue-500 pl-2">최근 3개월 데이터 분석</h2>
+            <div id="analysis-list" class="space-y-4">
+                </div>
+        </div>
+
+        <div id="content-sv-report" class="hidden bg-white p-6 rounded-b-lg shadow">
+            <div class="flex space-x-2 mb-6 border-b pb-4">
+                <button onclick="filterSV('SV_1')" class="sv-btn px-4 py-1 bg-gray-200 rounded">담당자 A</button>
+                <button onclick="filterSV('SV_2')" class="sv-btn px-4 py-1 bg-gray-200 rounded">담당자 B</button>
+                <button onclick="filterSV('SV_3')" class="sv-btn px-4 py-1 bg-gray-200 rounded">담당자 C</button>
+                <button onclick="filterSV('SV_4')" class="sv-btn px-4 py-1 bg-gray-200 rounded">담당자 D</button>
+            </div>
+            <h2 class="text-xl font-bold mb-4 text-green-700">오늘의 신규 리뷰 (중복 제외)</h2>
+            <div id="sv-list" class="space-y-4">
+                <p class="text-gray-500">담당자를 선택해주세요.</p>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let allData = [];
+
+        async function loadData() {
+            const res = await fetch('public/data/reviews.json');
+            allData = await res.json();
+            renderAnalysis();
+        }
+
+        function renderAnalysis() {
+            const list = document.getElementById('analysis-list');
+            // 최근 3개월 필터 로직 (일, 주, 달 전 텍스트 포함된 것 위주)
+            const filtered = allData.filter(r => 
+                r.date_raw.includes('일') || r.date_raw.includes('주') || r.date_raw.includes('달') || r.date_raw.includes('개월')
+            );
+            
+            list.innerHTML = filtered.map(r => `
+                <div class="p-4 border rounded hover:bg-gray-50">
+                    <div class="text-sm text-blue-600 mb-1">${r.date_raw}</div>
+                    <div class="text-gray-800">${r.text}</div>
+                </div>
+            `).join('');
+        }
+
+        function filterSV(svName) {
+            const list = document.getElementById('sv-list');
+            // SV별 매장 주소 매핑 로직 (여기에 실제 주소들을 할당하세요)
+            // 현재는 테스트용으로 전체 데이터 중 '신규(일 전)'만 필터링
+            const fresh = allData.filter(r => r.date_raw.includes('일 전'));
+            
+            list.innerHTML = fresh.length > 0 ? fresh.map(r => `
+                <div class="p-4 border-l-4 border-green-500 bg-green-50 rounded">
+                    <div class="font-bold text-sm text-green-800 mb-1">NEW - ${r.date_raw}</div>
+                    <div class="text-gray-800">${r.text}</div>
+                </div>
+            `).join('') : '<p class="text-gray-500">오늘 올라온 신규 리뷰가 없습니다.</p>';
+        }
+
+        function showTab(tab) {
+            document.getElementById('content-analysis').classList.toggle('hidden', tab !== 'analysis');
+            document.getElementById('content-sv-report').classList.toggle('hidden', tab !== 'sv-report');
+            document.getElementById('tab-analysis').className = tab === 'analysis' ? 'px-6 py-2 bg-blue-600 text-white rounded-t-lg' : 'px-6 py-2 bg-gray-300 text-gray-700 rounded-t-lg';
+            document.getElementById('tab-sv-report').className = tab === 'sv-report' ? 'px-6 py-2 bg-blue-600 text-white rounded-t-lg' : 'px-6 py-2 bg-gray-300 text-gray-700 rounded-t-lg';
+        }
+
+        loadData();
+    </script>
+</body>
+</html>
