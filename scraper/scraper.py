@@ -4,109 +4,331 @@ import time
 import re
 from playwright.sync_api import sync_playwright
 
-GOOGLE_MAPS_URL = os.environ.get("GOOGLE_MAPS_URL", "")
+GOOGLE_MAPS_URL = os.environ.get("GOOGLE_MAPS_URL", "").strip()
+
+STORE_NAME = "Paik's Noodle Amsterdam"
+DATA_PATH = "public/data/reviews.json"
+
+
+def normalize_url(url):
+    if not url:
+        return ""
+
+    url = url.strip()
+
+    if "/reviews" in url or "!1b1" in url:
+        return url
+
+    return url
+
+
+def safe_inner_text(locator, default=""):
+    try:
+        if locator.count() > 0:
+            return locator.first.inner_text().strip()
+    except:
+        pass
+    return default
+
+
+def safe_attr(locator, attr, default=""):
+    try:
+        if locator.count() > 0:
+            value = locator.first.get_attribute(attr)
+            return value.strip() if value else default
+    except:
+        pass
+    return default
+
+
+def parse_rating(label):
+    if not label:
+        return 5
+
+    match = re.search(r"([1-5])", label)
+    if match:
+        return int(match.group(1))
+
+    return 5
+
+
+def click_cookie_buttons(page):
+    patterns = [
+        r"Accept all",
+        r"Accept",
+        r"I agree",
+        r"Agree",
+        r"동의",
+        r"모두 수락",
+        r"Alles accepteren",
+        r"Akkoord",
+    ]
+
+    for pattern in patterns:
+        try:
+            btn = page.get_by_role("button", name=re.compile(pattern, re.I)).first
+            if btn.count() > 0:
+                btn.click(timeout=3000)
+                print("✅ 쿠키/동의 버튼 클릭 완료")
+                page.wait_for_timeout(2000)
+                return
+        except:
+            pass
+
+
+def wait_for_reviews(page):
+    selectors = [
+        "div[role='article']",
+        ".wiI7pd",
+        "div[role='feed']",
+    ]
+
+    for attempt in range(6):
+        for selector in selectors:
+            try:
+                count = page.locator(selector).count()
+                if count > 0:
+                    print(f"✅ 리뷰 영역 감지: {selector} / {count}개")
+                    return True
+            except:
+                pass
+
+        print(f"⏳ 리뷰 패널 대기 중... {attempt + 1}/6")
+        page.wait_for_timeout(5000)
+
+    return False
+
+
+def click_more_buttons(page):
+    patterns = [
+        r"More",
+        r"Read more",
+        r"자세히 보기",
+        r"더보기",
+        r"Meer",
+        r"Volledige review",
+    ]
+
+    for pattern in patterns:
+        try:
+            buttons = page.get_by_role("button", name=re.compile(pattern, re.I))
+            count = min(buttons.count(), 20)
+
+            for i in range(count):
+                try:
+                    buttons.nth(i).click(timeout=1000)
+                    page.wait_for_timeout(200)
+                except:
+                    pass
+        except:
+            pass
+
+
+def get_scroll_target(page):
+    candidates = [
+        "div[role='feed']",
+        "div.m6QErb.DxyBCb.kA9KIf.dS8AEf",
+        "div.m6QErb[tabindex='-1']",
+    ]
+
+    for selector in candidates:
+        try:
+            target = page.locator(selector).first
+            if target.count() > 0:
+                return target
+        except:
+            pass
+
+    return None
+
+
+def scroll_reviews(page):
+    target = get_scroll_target(page)
+
+    try:
+        if target:
+            target.hover(timeout=3000)
+        else:
+            page.mouse.move(500, 500)
+    except:
+        page.mouse.move(500, 500)
+
+    page.mouse.wheel(0, 3500)
+    page.keyboard.press("PageDown")
+    page.wait_for_timeout(3500)
+
+
+def extract_reviews(page):
+    collected = []
+    processed_keys = set()
+    stalled_count = 0
+    last_total = 0
+
+    for round_no in range(25):
+        click_more_buttons(page)
+
+        articles = page.locator("div[role='article']")
+        article_count = articles.count()
+        found_this_turn = 0
+
+        print(f"🔎 {round_no + 1}회차 article 감지 수: {article_count}")
+
+        for i in range(article_count):
+            try:
+                art = articles.nth(i)
+
+                text = safe_inner_text(art.locator(".wiI7pd"), "")
+                text = re.sub(r"\s+", " ", text).strip()
+
+                if not text or len(text) < 3:
+                    continue
+
+                noise_words = [
+                    "Drag to change",
+                    "Collapse side panel",
+                    "Expand side panel",
+                    "Keyboard shortcuts",
+                    "Terms",
+                    "Privacy",
+                ]
+
+                if any(word in text for word in noise_words):
+                    continue
+
+                author = safe_inner_text(art.locator(".d4r55"), "Anonymous")
+                date_str = safe_inner_text(art.locator(".rsqaof"), "Recent")
+
+                rating_label = safe_attr(
+                    art.locator(
+                        "span[aria-label*='star'], span[aria-label*='Star'], span[aria-label*='별'], span[aria-label*='ster'], span[aria-label*='Ster']"
+                    ),
+                    "aria-label",
+                    "",
+                )
+
+                rating = parse_rating(rating_label)
+
+                key = f"{author}|{date_str}|{text}"
+
+                if key in processed_keys:
+                    continue
+
+                collected.append(
+                    {
+                        "store_name": STORE_NAME,
+                        "author": author,
+                        "rating": rating,
+                        "text": text,
+                        "date": date_str,
+                        "collected_at": time.strftime("%Y-%m-%d"),
+                    }
+                )
+
+                processed_keys.add(key)
+                found_this_turn += 1
+
+            except Exception as e:
+                print(f"⚠️ 개별 리뷰 추출 실패: {e}")
+                continue
+
+        if found_this_turn > 0:
+            print(f"🔄 {round_no + 1}회차: {found_this_turn}건 추가 / 누적 {len(collected)}건")
+        else:
+            print(f"⚠️ {round_no + 1}회차: 신규 리뷰 없음 / 누적 {len(collected)}건")
+
+        if len(collected) == last_total:
+            stalled_count += 1
+        else:
+            stalled_count = 0
+            last_total = len(collected)
+
+        if stalled_count >= 5 and len(collected) > 0:
+            print("✅ 추가 로딩 정체 감지. 수집 종료.")
+            break
+
+        scroll_reviews(page)
+
+    return collected
+
+
+def save_reviews(reviews):
+    os.makedirs("public/data", exist_ok=True)
+
+    with open(DATA_PATH, "w", encoding="utf-8") as f:
+        json.dump(reviews, f, ensure_ascii=False, indent=4)
+
+    print(f"✨ 저장 완료: {DATA_PATH} / {len(reviews)}건")
+
 
 def scrape():
-    if not GOOGLE_MAPS_URL: return
+    if not GOOGLE_MAPS_URL:
+        print("❌ GOOGLE_MAPS_URL 환경변수가 비어 있습니다.")
+        return
+
+    target_url = normalize_url(GOOGLE_MAPS_URL)
 
     with sync_playwright() as p:
-        # 봇 감지 우회 옵션 유지
-        browser = p.chromium.launch(headless=True, args=["--disable-blink-features=AutomationControlled"])
+        browser = p.chromium.launch(
+            headless=True,
+            args=[
+                "--disable-blink-features=AutomationControlled",
+                "--disable-dev-shm-usage",
+                "--no-sandbox",
+                "--disable-setuid-sandbox",
+                "--lang=en-US,en",
+            ],
+        )
+
         context = browser.new_context(
             user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
-            locale="en-US"
+            locale="en-US",
+            timezone_id="Europe/Amsterdam",
+            viewport={"width": 1366, "height": 900},
         )
-        page = context.new_page()
-        # 기본 타임아웃을 60초로 상향
-        page.set_default_timeout(60000)
-        
-        try:
-            target_url = GOOGLE_MAPS_URL.split('?')[0].rstrip('/') + "/reviews/"
-            print(f"🌐 타겟 진입 시도: {target_url}")
-            
-            # [수정] networkidle 대신 더 빠른 시점에 진행하도록 변경
-            try:
-                page.goto(target_url, wait_until="commit", timeout=60000)
-            except Exception as e:
-                print(f"⚠️ 페이지 로딩 중 타임아웃 발생(무시하고 진행): {e}")
 
-            # 물리적으로 리뷰가 렌더링될 시간을 확보
-            print("⏳ 리뷰 데이터 렌더링 대기 중 (10초)...")
+        context.add_init_script(
+            """
+            Object.defineProperty(navigator, 'webdriver', {
+                get: () => undefined
+            });
+            """
+        )
+
+        page = context.new_page()
+        page.set_default_timeout(60000)
+
+        try:
+            print(f"🌐 타겟 진입 시도: {target_url}")
+            page.goto(target_url, wait_until="domcontentloaded", timeout=60000)
+
+            page.wait_for_timeout(3000)
+            click_cookie_buttons(page)
+
+            print("⏳ Google Maps 리뷰 패널 렌더링 대기 중...")
             page.wait_for_timeout(10000)
 
-            # 쿠키 동의 버튼 (보이면 무조건 클릭)
-            try:
-                page.get_by_role("button", name=re.compile("Accept all|Agree|동의", re.I)).first.click()
-                print("✅ 쿠키 동의 완료")
-            except: pass
+            if not wait_for_reviews(page):
+                print("❌ 리뷰 패널을 찾지 못했습니다.")
+                print(f"현재 URL: {page.url}")
+                print(f"페이지 제목: {page.title()}")
+                return
 
-            collected = []
-            processed_texts = set()
+            reviews = extract_reviews(page)
 
-            for i in range(15):
-                # 리뷰 기사(article) 단위 수집
-                articles = page.locator("div[role='article']").all()
-                found_this_turn = 0
-                
-                for art in articles:
-                    try:
-                        # 리뷰 본문 클래스 .wiI7pd 타겟팅
-                        content_el = art.locator(".wiI7pd").first
-                        if content_el.count() == 0: continue
-                        content = content_el.inner_text().strip()
-                        
-                        if not content or content in processed_texts or len(content) < 5: continue
-                        if "Drag to change" in content: continue
-
-                        # 작성자/날짜/별점 수집
-                        author = "Anonymous"
-                        try: author = art.locator(".d4r55").inner_text().strip()
-                        except: pass
-
-                        date_str = "Recent"
-                        try: date_str = art.locator(".rsqaof").inner_text().strip()
-                        except: pass
-
-                        rating = 5
-                        try:
-                            star_label = art.locator("span[aria-label*='star']").get_attribute("aria-label")
-                            rating = int(re.search(r'\d', star_label).group())
-                        except: pass
-
-                        collected.append({
-                            "store_name": "Paik's Noodle Amsterdam",
-                            "author": author,
-                            "rating": rating,
-                            "text": content,
-                            "date": date_str,
-                            "collected_at": time.strftime("%Y-%m-%d")
-                        })
-                        processed_texts.add(content)
-                        found_this_turn += 1
-                    except: continue
-
-                if found_this_turn > 0:
-                    print(f"🔄 {i+1}회차: {found_this_turn}건 추가 (누적 {len(collected)}건)")
-                
-                # 강제 스크롤
-                page.mouse.move(500, 500)
-                page.mouse.wheel(0, 4000)
-                page.wait_for_timeout(3000)
-
-            # 결과 저장
-            if collected:
-                data_path = "public/data/reviews.json"
-                os.makedirs("public/data", exist_ok=True)
-                with open(data_path, "w", encoding="utf-8") as f:
-                    json.dump(collected, f, ensure_ascii=False, indent=4)
-                print(f"✨ 성공! 진짜 리뷰 {len(collected)}건 구출 완료.")
+            if reviews:
+                save_reviews(reviews)
+                print(f"✅ 성공! 실제 리뷰 {len(reviews)}건 수집 완료.")
             else:
-                print("❌ 데이터가 발견되지 않았습니다. 매장 주소를 다시 확인해주세요.")
+                print("❌ 데이터가 발견되지 않았습니다.")
+                print(f"현재 URL: {page.url}")
+                print(f"페이지 제목: {page.title()}")
 
         except Exception as e:
             print(f"🔥 치명적 오류: {e}")
+
         finally:
             browser.close()
+
 
 if __name__ == "__main__":
     scrape()
