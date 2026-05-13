@@ -12,6 +12,7 @@ def scrape():
         return
 
     with sync_playwright() as p:
+        # 가속도 및 보안 우회 설정
         browser = p.chromium.launch(headless=True, args=["--disable-blink-features=AutomationControlled"])
         context = browser.new_context(
             user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
@@ -30,46 +31,53 @@ def scrape():
         
         try:
             print(f"🌐 접속 중: {GOOGLE_MAPS_URL}")
-            page.goto(GOOGLE_MAPS_URL, wait_until="domcontentloaded", timeout=60000)
-            
-            # 방해 팝업(로그인 유도 등)이 뜰 경우를 대비해 충분히 대기
+            # 대기 모드를 로딩 완료 시점으로 변경
+            page.goto(GOOGLE_MAPS_URL, wait_until="networkidle", timeout=90000)
             page.wait_for_timeout(10000)
 
-            # 1. 매장명 수집 (방해 요소 제외하고 '진짜' 제목만 추출)
-            target_store_name = "알 수 없는 매장"
-            # 구글 맵 매장명 전용 클래스들
-            name_selectors = ["h1.DUwDvf", "h1.fontHeadlineLarge", "div.lMbY9 h1"]
+            # 1. 매장명 수집 (더 강력한 셀렉터)
+            target_store_name = ""
+            # 구글 맵 제목을 나타내는 다양한 클래스 시도
+            name_candidates = [
+                "h1.DUwDvf", 
+                "h1.fontHeadlineLarge", 
+                "xpath=//h1[contains(@class, 'DUwDvf')]",
+                "xpath=//div[@role='main']//h1"
+            ]
             
-            for sel in name_selectors:
+            for sel in name_candidates:
                 try:
                     el = page.locator(sel).first
-                    # 텍스트에 '로그인'이나 '지도 활용'이 포함되어 있으면 매장명이 아님
-                    raw_text = el.inner_text().strip()
-                    if raw_text and "로그인" not in raw_text and "최대한 활용" not in raw_text:
-                        target_store_name = raw_text
-                        break
+                    if el.is_visible():
+                        name = el.inner_text().strip()
+                        if name and "로그인" not in name and "최대한 활용" not in name and "data=" not in name:
+                            target_store_name = name
+                            break
                 except: continue
-            
-            if target_store_name == "알 수 없는 매장":
-                target_store_name = "매장_" + GOOGLE_MAPS_URL.split('/')[-1][:10]
-            
-            print(f"🏢 매장명 확인됨: {target_store_name}")
 
-            # 2. 리뷰 탭 클릭 (안내창 뒤에 숨어있을 수 있으므로 강제 클릭 시도)
+            if not target_store_name:
+                target_store_name = "테스트 매장_" + str(int(time.time()))[-4:]
+            
+            print(f"🏢 매장명 최종 확인됨: {target_store_name}")
+
+            # 2. 리뷰 탭 클릭 (안전장치 강화)
             print("🔘 리뷰 탭 진입 시도...")
-            try:
-                tab = page.locator("button[role='tab']:has-text('리뷰'), button[role='tab']:has-text('Reviews')").first
-                tab.click(force=True) # force=True로 가려져 있어도 클릭 시도
+            # '리뷰'라는 글자가 들어간 버튼을 찾을 때까지 최대 10초 대기
+            review_tab = page.get_by_role("tab").filter(has_text=re.compile("리뷰|Reviews")).first
+            if review_tab.is_visible():
+                review_tab.click(force=True)
+                print("✅ 리뷰 탭 클릭 성공")
                 page.wait_for_timeout(5000)
-            except:
-                print("⚠️ 리뷰 탭을 찾지 못해 현재 화면 수집 시도")
+            else:
+                # 탭 클릭 실패 시 주소 끝에 /reviews 를 붙여서 강제 이동 시도하는 로직은 복잡하니 일단 휠 시도
+                print("⚠️ 리뷰 탭을 못 찾았습니다. 화면 중앙에서 수집을 시도합니다.")
 
             collected = []
             processed_texts = set()
             
-            # 3. 데이터 수집 시작
+            # 3. 데이터 수집 시작 (스크롤 회차 증가)
             print("⏳ 데이터 수집 시작...")
-            for i in range(10):
+            for i in range(12):
                 articles = page.locator("div[role='article']").all()
                 for art in articles:
                     try:
@@ -79,6 +87,7 @@ def scrape():
                         
                         if not txt or txt in processed_texts: continue
                         
+                        # 별점
                         rating = 0
                         try:
                             r_el = art.locator(".kvMYC").first
@@ -87,42 +96,42 @@ def scrape():
                             if r_match: rating = int(r_match.group(1))
                         except: rating = 0
 
-                        d_str = "최근"
-                        try:
-                            d_el = art.locator(".rsqaWe").first
-                            if d_el.count() > 0: d_str = d_el.inner_text()
-                        except: pass
-
                         collected.append({
                             "store_name": target_store_name,
                             "store_url": GOOGLE_MAPS_URL,
                             "text": txt,
                             "rating": rating,
-                            "date_raw": d_str,
+                            "date_raw": "최근",
                             "collected_at": time.strftime("%Y-%m-%d")
                         })
                         processed_texts.add(txt)
                     except: continue
 
+                print(f"🔄 스크롤 {i+1}회: {len(collected)}건 확보 중...")
+                
+                # 스크롤 타겟팅 정밀화
                 page.evaluate("""
-                    const s = document.querySelector('div[role="main"] div.m67qrb') || document.querySelector('.m67qrb');
+                    const s = document.querySelector('div[role="main"] div.m67qrb') || 
+                              document.querySelector('.DxyBCb') || 
+                              document.querySelector('.m67qrb');
                     if (s) s.scrollTop = s.scrollHeight;
                 """)
                 page.wait_for_timeout(3000)
 
-            # 4. 저장 및 병합
+            # 4. 저장 및 병합 (중복 체크 로직 보강)
             data_path = "public/data/reviews.json"
             all_data = []
             if os.path.exists(data_path):
-                try:
-                    with open(data_path, "r", encoding="utf-8") as f:
-                        all_data = json.load(f)
-                except: all_data = []
+                with open(data_path, "r", encoding="utf-8") as f:
+                    try: all_data = json.load(f)
+                    except: all_data = []
 
-            existing_keys = {f"{d.get('store_name')}_{d.get('text')}" for d in all_data}
+            # 매장명이 다르면 중복 체크를 하지 않도록 키 수정
+            existing_texts = {d.get('text') for d in all_data if d.get('store_name') == target_store_name}
+            
             new_added = 0
             for item in collected:
-                if f"{item['store_name']}_{item['text']}" not in existing_keys:
+                if item['text'] not in existing_texts:
                     all_data.append(item)
                     new_added += 1
 
