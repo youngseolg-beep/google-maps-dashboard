@@ -12,7 +12,6 @@ def scrape():
         return
 
     with sync_playwright() as p:
-        # 가속도 및 보안 우회 설정
         browser = p.chromium.launch(headless=True, args=["--disable-blink-features=AutomationControlled"])
         context = browser.new_context(
             user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
@@ -31,53 +30,52 @@ def scrape():
         
         try:
             print(f"🌐 접속 중: {GOOGLE_MAPS_URL}")
-            # 대기 모드를 로딩 완료 시점으로 변경
-            page.goto(GOOGLE_MAPS_URL, wait_until="networkidle", timeout=90000)
-            page.wait_for_timeout(10000)
-
-            # 1. 매장명 수집 (더 강력한 셀렉터)
-            target_store_name = ""
-            # 구글 맵 제목을 나타내는 다양한 클래스 시도
-            name_candidates = [
-                "h1.DUwDvf", 
-                "h1.fontHeadlineLarge", 
-                "xpath=//h1[contains(@class, 'DUwDvf')]",
-                "xpath=//div[@role='main']//h1"
-            ]
+            # networkidle 대신 commit 사용 (접속 시작되면 바로 진행)
+            page.goto(GOOGLE_MAPS_URL, wait_until="commit", timeout=60000)
             
+            # 매장 이름이 나타날 때까지 최대 30초 대기 (나타나면 바로 다음 줄 실행)
+            print("⏳ 매장 정보 로딩 대기 중...")
+            try:
+                page.wait_for_selector("h1", timeout=30000)
+            except:
+                print("⚠️ 매장 이름 로딩이 지연되어 현재 상태에서 진행합니다.")
+
+            # 1. 매장명 수집
+            target_store_name = "알 수 없는 매장"
+            name_candidates = ["h1.DUwDvf", "h1.fontHeadlineLarge", "xpath=//h1"]
             for sel in name_candidates:
                 try:
                     el = page.locator(sel).first
                     if el.is_visible():
                         name = el.inner_text().strip()
-                        if name and "로그인" not in name and "최대한 활용" not in name and "data=" not in name:
+                        if name and "로그인" not in name:
                             target_store_name = name
                             break
                 except: continue
-
-            if not target_store_name:
-                target_store_name = "테스트 매장_" + str(int(time.time()))[-4:]
             
-            print(f"🏢 매장명 최종 확인됨: {target_store_name}")
+            if target_store_name == "알 수 없는 매장":
+                target_store_name = "매장_" + GOOGLE_MAPS_URL.split('/')[-1][:10]
+            
+            print(f"🏢 매장명: {target_store_name}")
 
-            # 2. 리뷰 탭 클릭 (안전장치 강화)
+            # 2. 리뷰 탭 클릭 (강력한 시도)
             print("🔘 리뷰 탭 진입 시도...")
-            # '리뷰'라는 글자가 들어간 버튼을 찾을 때까지 최대 10초 대기
-            review_tab = page.get_by_role("tab").filter(has_text=re.compile("리뷰|Reviews")).first
-            if review_tab.is_visible():
+            try:
+                # 탭 버튼이 나타날 때까지 잠시 대기
+                page.wait_for_selector("button[role='tab']", timeout=10000)
+                review_tab = page.get_by_role("tab").filter(has_text=re.compile("리뷰|Reviews")).first
                 review_tab.click(force=True)
                 print("✅ 리뷰 탭 클릭 성공")
                 page.wait_for_timeout(5000)
-            else:
-                # 탭 클릭 실패 시 주소 끝에 /reviews 를 붙여서 강제 이동 시도하는 로직은 복잡하니 일단 휠 시도
-                print("⚠️ 리뷰 탭을 못 찾았습니다. 화면 중앙에서 수집을 시도합니다.")
+            except:
+                print("⚠️ 리뷰 탭을 찾지 못했습니다. 현재 화면 수집 시도")
 
             collected = []
             processed_texts = set()
             
-            # 3. 데이터 수집 시작 (스크롤 회차 증가)
+            # 3. 데이터 수집 시작
             print("⏳ 데이터 수집 시작...")
-            for i in range(12):
+            for i in range(15): # SV용 데이터 확보를 위해 15회 스크롤
                 articles = page.locator("div[role='article']").all()
                 for art in articles:
                     try:
@@ -109,7 +107,7 @@ def scrape():
 
                 print(f"🔄 스크롤 {i+1}회: {len(collected)}건 확보 중...")
                 
-                # 스크롤 타겟팅 정밀화
+                # 강제 스크롤
                 page.evaluate("""
                     const s = document.querySelector('div[role="main"] div.m67qrb') || 
                               document.querySelector('.DxyBCb') || 
@@ -118,20 +116,21 @@ def scrape():
                 """)
                 page.wait_for_timeout(3000)
 
-            # 4. 저장 및 병합 (중복 체크 로직 보강)
+            # 4. 저장 및 병합
             data_path = "public/data/reviews.json"
             all_data = []
             if os.path.exists(data_path):
-                with open(data_path, "r", encoding="utf-8") as f:
-                    try: all_data = json.load(f)
-                    except: all_data = []
+                try:
+                    with open(data_path, "r", encoding="utf-8") as f:
+                        all_data = json.load(f)
+                except: all_data = []
 
-            # 매장명이 다르면 중복 체크를 하지 않도록 키 수정
-            existing_texts = {d.get('text') for d in all_data if d.get('store_name') == target_store_name}
+            # 텍스트 중복 방지 (동일 매장의 동일 텍스트만 제외)
+            existing_keys = {f"{d.get('store_name')}_{d.get('text')}" for d in all_data}
             
             new_added = 0
             for item in collected:
-                if item['text'] not in existing_texts:
+                if f"{item['store_name']}_{item['text']}" not in existing_keys:
                     all_data.append(item)
                     new_added += 1
 
