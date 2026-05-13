@@ -5,13 +5,19 @@ import re
 from datetime import datetime, timedelta
 from playwright.sync_api import sync_playwright
 
+# 1. 환경 변수에서 설정값 읽기
 GOOGLE_MAPS_URL = os.environ.get("GOOGLE_MAPS_URL")
+# 기본 수집 시작일: 2026-01-01
 START_DATE_STR = os.environ.get("START_DATE", "2026-01-01")
-START_DATE = datetime.strptime(START_DATE_STR, "%Y-%m-%d")
+try:
+    START_DATE = datetime.strptime(START_DATE_STR, "%Y-%m-%d")
+except:
+    START_DATE = datetime(2026, 1, 1)
 
 def parse_date(date_str):
     now = datetime.now()
     if not date_str: return now
+    # 구글 맵 날짜 형식 대응 (X일 전, X주 전, X개월 전, X년 전)
     match = re.search(r'(\d+)(일|주|달|개월|년)\s*전', date_str)
     if not match: return now
     num, unit = int(match.group(1)), match.group(2)
@@ -43,10 +49,9 @@ def scrape():
         try:
             print(f"🌐 접속 중: {GOOGLE_MAPS_URL}")
             page.goto(GOOGLE_MAPS_URL, wait_until="domcontentloaded", timeout=60000)
-            print("⏳ 페이지 안정화 대기 중...")
             page.wait_for_timeout(10000)
             
-            # 1. 리뷰 탭 클릭
+            # 리뷰 탭 클릭
             review_tab = page.locator("button[role='tab']:has-text('리뷰'), button[role='tab']:has-text('Reviews')").first
             if review_tab.is_visible():
                 review_tab.click()
@@ -55,43 +60,55 @@ def scrape():
 
             reviews = []
             processed_texts = set()
+            should_stop = False # 종료 플래그
             
-            # 2. 스크롤 및 수집
-            print("⏳ 무한 스크롤 모드 가동...")
+            print(f"⏳ {START_DATE_STR} 이후 리뷰 수집 시작...")
             
             for i in range(20):
-                # 현재 로드된 리뷰들 수집
-                items = page.locator(".wiI7pd").all()
+                if should_stop: break
+                
+                items = page.locator("div[role='article']").all()
+                new_in_this_scroll = 0
+                
                 for item in items:
                     try:
-                        text = item.inner_text().strip()
+                        # 리뷰 텍스트 추출
+                        text_el = item.locator(".wiI7pd")
+                        if text_el.count() == 0: continue
+                        text = text_el.inner_text().strip()
+                        
                         if not text or text in processed_texts: continue
                         
-                        parent = item.locator("xpath=./ancestor::div[contains(@role, 'article')]")
-                        date_str = parent.locator(".rsqaWe").first.inner_text() if parent.locator(".rsqaWe").count() > 0 else ""
+                        # 날짜 추출 및 판별
+                        date_el = item.locator(".rsqaWe")
+                        date_str = date_el.first.inner_text() if date_el.count() > 0 else ""
                         review_date = parse_date(date_str)
                         
-                        if review_date < START_DATE: continue
+                        # [핵심] 설정한 날짜보다 이전(과거) 리뷰를 만나면?
+                        if review_date < START_DATE:
+                            print(f"🛑 과거 리뷰 발견 ({review_date.strftime('%Y-%m-%d')}). 수집을 중단합니다.")
+                            should_stop = True
+                            break # 현재 아이템 루프 탈출
 
-                        reviews.append({"author": "고객", "text": text, "date": review_date.strftime("%Y-%m-%d")})
+                        reviews.append({
+                            "author": "고객",
+                            "text": text,
+                            "date": review_date.strftime("%Y-%m-%d")
+                        })
                         processed_texts.add(text)
+                        new_in_this_scroll += 1
                     except: continue
 
-                print(f"🔄 회차 {i+1}: 누적 {len(reviews)}건")
+                print(f"🔄 회차 {i+1}: 누적 {len(reviews)}건 확보")
+                if should_stop: break
 
-                # [강력 수정] 리뷰 리스트가 들어있는 컨테이너를 찾아 강제로 바닥까지 스크롤
+                # 다음 데이터를 위해 스크롤
                 page.evaluate("""
                     const scrollable = document.querySelector('div[role="main"] div.m67qrb') || 
                                      document.querySelector('.DxyBCb') || 
                                      document.querySelector('.m67qrb');
-                    if (scrollable) {
-                        scrollable.scrollTop = scrollable.scrollHeight;
-                    } else {
-                        window.scrollBy(0, 2000);
-                    }
+                    if (scrollable) scrollable.scrollTop = scrollable.scrollHeight;
                 """)
-                
-                # 구글 서버가 데이터를 줄 시간을 줌 (속도를 조금 늦추는 게 안전함)
                 page.wait_for_timeout(4000)
 
             # 3. 저장
@@ -99,10 +116,10 @@ def scrape():
             with open("public/data/reviews.json", "w", encoding="utf-8") as f:
                 json.dump(reviews, f, ensure_ascii=False, indent=4)
             
-            print(f"✨ 최종 성공! 총 {len(reviews)}건 저장.")
+            print(f"✨ 최종 성공! 총 {len(reviews)}건 저장 완료.")
 
         except Exception as e:
-            print(f"❌ 에러: {e}")
+            print(f"❌ 에러 발생: {e}")
         finally:
             browser.close()
 
