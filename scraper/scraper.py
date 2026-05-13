@@ -23,33 +23,27 @@ def scrape():
         
         try:
             print(f"🌐 접속 시도: {GOOGLE_MAPS_URL}")
-            # networkidle 대신 domcontentloaded 사용 (훨씬 빠름)
             page.goto(GOOGLE_MAPS_URL, wait_until="domcontentloaded", timeout=45000)
-            
-            # 리다이렉션 및 기초 뼈대 로딩을 위한 대기
-            print("⏳ 매장 뼈대 로딩 대기...")
-            page.wait_for_timeout(7000) 
+            page.wait_for_timeout(10000) 
 
             # 1. 매장명 수집
             target_store_name = "Paik's Noodle"
             try:
-                # 제목이 뜰 때까지 최대 15초 대기
-                page.wait_for_selector("h1", timeout=15000)
-                target_store_name = page.locator("h1").first.inner_text().strip()
-            except:
-                print("⚠️ 매장명을 찾지 못해 기본값으로 진행합니다.")
-            
+                name_el = page.locator("h1").first
+                if name_el.count() > 0:
+                    target_store_name = name_el.inner_text().strip()
+            except: pass
             print(f"🏢 매장명 확인: {target_store_name}")
 
-            # 2. 리뷰 탭 클릭 (강력한 시도)
+            # 2. 리뷰 탭 클릭
             print("🔘 리뷰 탭 진입 시도...")
             try:
-                # '리뷰' 버튼이 나타날 때까지 대기 후 클릭
-                review_btn = page.get_by_role("tab").filter(has_text=re.compile(r"리뷰|Reviews")).first
+                # 텍스트가 '리뷰' 또는 'Reviews'인 버튼을 찾아 클릭
+                review_btn = page.locator('button[role="tab"]').filter(has_text=re.compile(r"리뷰|Reviews")).first
                 if review_btn.is_visible():
                     review_btn.click(force=True)
                 else:
-                    # 탭 인덱스로 직접 클릭
+                    # 탭 인덱스로 직접 클릭 (보통 2번째 탭)
                     page.locator("button[role='tab']").nth(1).click(force=True)
                 print("✅ 리뷰 탭 클릭 완료")
             except:
@@ -63,31 +57,31 @@ def scrape():
             
             # 3. 데이터 수집 루프
             for i in range(15):
-                # 리뷰 아티클(div[role='article'])을 기준으로 탐색
+                # [수정] 클래스명에 의존하지 않고 리뷰 아티클 자체를 타겟팅
                 articles = page.locator("div[role='article']").all()
                 current_scroll_count = 0
                 
                 for art in articles:
                     try:
-                        # 리뷰 본문 추출 (가장 긴 텍스트 찾기)
-                        txt = ""
-                        # 구글 맵의 대표적인 리뷰 텍스트 클래스들
-                        text_selectors = [".wiI7pd", ".MyE63c", "span"]
-                        for sel in text_selectors:
-                            el = art.locator(sel).first
-                            if el.count() > 0:
-                                tmp = el.inner_text().strip()
-                                if len(tmp) > len(txt): txt = tmp
+                        # 아티클 내부의 모든 span 태그 텍스트를 합쳐서 리뷰 본문 추출
+                        # 보통 리뷰 본문은 글자 수가 많으므로 필터링
+                        txt = art.inner_text().replace('\n', ' ').strip()
                         
-                        if not txt or len(txt) < 5 or txt in processed_texts: continue
+                        # 이미 처리했거나 너무 짧은 텍스트(이름, 날짜 등)는 제외
+                        if not txt or len(txt) < 10 or txt in processed_texts: continue
                         
-                        # 별점 추출
+                        # 별점 추출 (aria-label에서 숫자 찾기)
                         rating = 0
                         r_el = art.locator("[aria-label*='별점'], [aria-label*='star']").first
                         if r_el.count() > 0:
                             r_label = r_el.get_attribute("aria-label") or ""
                             r_match = re.search(r'(\d)', r_label)
                             if r_match: rating = int(r_match.group(1))
+
+                        # 우리가 원하는 건 '리뷰 내용'이므로 작성자 이름 등을 걸러내는 최소한의 필터
+                        if "리뷰" in txt or "공유" in txt or "사진" in txt:
+                            # 구글 맵 특유의 버튼 텍스트가 섞여있다면 정제 시도
+                            txt = txt.split("공유")[0].strip()
 
                         collected.append({
                             "store_name": target_store_name,
@@ -101,16 +95,21 @@ def scrape():
                         current_scroll_count += 1
                     except: continue
 
-                print(f"🔄 회차 {i+1}: +{current_scroll_count}건 발견 (총 {len(collected)}건)")
+                print(f"🔄 회차 {i+1}: +{current_scroll_count}건 발견 (누적 {len(collected)}건)")
 
-                # 스크롤: 리뷰 상자를 찾아 정확히 휠 굴리기
-                page.evaluate("""
-                    const s = document.querySelector('.m67qrb') || 
-                              document.querySelector('.DxyBCb') || 
-                              document.querySelector('div[role="main"] div[tabindex="0"]');
-                    if (s) s.scrollBy(0, 2000);
-                    else window.scrollBy(0, 1500);
-                """)
+                # [수정] 더 정교한 스크롤: 리뷰 상자 중앙으로 마우스 이동 후 휠 굴리기
+                try:
+                    scroll_box = page.locator('.m67qrb, .DxyBCb, div[role="main"]').first
+                    if scroll_box.is_visible():
+                        box = scroll_box.bounding_box()
+                        if box:
+                            page.mouse.move(box['x'] + box['width'] / 2, box['y'] + box['height'] / 2)
+                            page.mouse.wheel(0, 3000)
+                    else:
+                        page.mouse.wheel(0, 3000)
+                except:
+                    page.mouse.wheel(0, 2000)
+                
                 page.wait_for_timeout(3000)
 
             # 4. 저장 및 병합
@@ -122,10 +121,11 @@ def scrape():
                         all_data = json.load(f)
                 except: all_data = []
 
-            existing_keys = {f"{d.get('store_name')}_{d.get('text')}" for d in all_data}
+            existing_keys = {f"{d.get('store_name')}_{d.get('text')[:20]}" for d in all_data}
             new_added = 0
             for item in collected:
-                if f"{item['store_name']}_{item['text']}" not in existing_keys:
+                # 텍스트 앞부분 20자로 중복 체크 (정제된 텍스트 대응)
+                if f"{item['store_name']}_{item['text'][:20]}" not in existing_keys:
                     all_data.append(item)
                     new_added += 1
 
