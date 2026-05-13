@@ -13,65 +13,73 @@ def scrape():
 
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True, args=["--disable-blink-features=AutomationControlled"])
-        # locale을 ko-KR로 설정하여 구글이 한국어 구조를 주도록 유도
         context = browser.new_context(
             user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
             viewport={"width": 1280, "height": 1000},
-            locale="ko-KR" 
+            locale="ko-KR"
         )
 
         page = context.new_page()
         
         try:
             print(f"🌐 접속 시도: {GOOGLE_MAPS_URL}")
-            page.goto(GOOGLE_MAPS_URL, wait_until="networkidle", timeout=60000)
-            page.wait_for_timeout(10000) 
+            # networkidle 대신 domcontentloaded 사용 (훨씬 빠름)
+            page.goto(GOOGLE_MAPS_URL, wait_until="domcontentloaded", timeout=45000)
+            
+            # 리다이렉션 및 기초 뼈대 로딩을 위한 대기
+            print("⏳ 매장 뼈대 로딩 대기...")
+            page.wait_for_timeout(7000) 
 
             # 1. 매장명 수집
             target_store_name = "Paik's Noodle"
             try:
-                # h1 태그 내부의 텍스트를 가져옴
+                # 제목이 뜰 때까지 최대 15초 대기
+                page.wait_for_selector("h1", timeout=15000)
                 target_store_name = page.locator("h1").first.inner_text().strip()
-            except: pass
+            except:
+                print("⚠️ 매장명을 찾지 못해 기본값으로 진행합니다.")
+            
             print(f"🏢 매장명 확인: {target_store_name}")
 
-            # 2. 리뷰 탭 클릭
+            # 2. 리뷰 탭 클릭 (강력한 시도)
             print("🔘 리뷰 탭 진입 시도...")
-            # 텍스트 매칭 범위를 넓힘 (리뷰, Reviews, 评价 등)
-            review_btn = page.get_by_role("tab").filter(has_text=re.compile(r"리뷰|Reviews|Review", re.I)).first
-            
-            if review_btn.is_visible():
-                review_btn.click(force=True)
-            else:
-                # 탭 인덱스로 직접 클릭 (보통 2번째가 리뷰)
-                page.locator("button[role='tab']").nth(1).click(force=True)
-            
-            print("⏳ 리뷰 리스트 로딩 대기 (15초)...")
-            page.wait_for_timeout(15000)
+            try:
+                # '리뷰' 버튼이 나타날 때까지 대기 후 클릭
+                review_btn = page.get_by_role("tab").filter(has_text=re.compile(r"리뷰|Reviews")).first
+                if review_btn.is_visible():
+                    review_btn.click(force=True)
+                else:
+                    # 탭 인덱스로 직접 클릭
+                    page.locator("button[role='tab']").nth(1).click(force=True)
+                print("✅ 리뷰 탭 클릭 완료")
+            except:
+                print("⚠️ 리뷰 탭 클릭 실패, 현재 상태에서 수집 강행")
+
+            print("⏳ 데이터 렌더링 대기 (10초)...")
+            page.wait_for_timeout(10000)
 
             collected = []
             processed_texts = set()
             
-            # 3. 데이터 수집 루프 (스크롤 20회로 증폭)
-            for i in range(20):
-                # [핵심] 특정 클래스 대신 '리뷰 상자' 자체를 타겟팅
+            # 3. 데이터 수집 루프
+            for i in range(15):
+                # 리뷰 아티클(div[role='article'])을 기준으로 탐색
                 articles = page.locator("div[role='article']").all()
                 current_scroll_count = 0
                 
                 for art in articles:
                     try:
-                        # 아티클 내부에서 가장 긴 텍스트 블록을 찾음 (이게 리뷰 내용일 확률 99%)
-                        # 구글 맵의 리뷰 본문은 보통 특정 클래스나 span 안에 있음
-                        content_locators = [".wiI7pd", ".MyE63c", "span"]
+                        # 리뷰 본문 추출 (가장 긴 텍스트 찾기)
                         txt = ""
-                        for loc in content_locators:
-                            potential_text = art.locator(loc).first
-                            if potential_text.count() > 0:
-                                temp_txt = potential_text.inner_text().strip()
-                                if len(temp_txt) > len(txt): # 가장 긴 텍스트 채택
-                                    txt = temp_txt
+                        # 구글 맵의 대표적인 리뷰 텍스트 클래스들
+                        text_selectors = [".wiI7pd", ".MyE63c", "span"]
+                        for sel in text_selectors:
+                            el = art.locator(sel).first
+                            if el.count() > 0:
+                                tmp = el.inner_text().strip()
+                                if len(tmp) > len(txt): txt = tmp
                         
-                        if not txt or len(txt) < 3 or txt in processed_texts: continue
+                        if not txt or len(txt) < 5 or txt in processed_texts: continue
                         
                         # 별점 추출
                         rating = 0
@@ -93,9 +101,9 @@ def scrape():
                         current_scroll_count += 1
                     except: continue
 
-                print(f"🔄 회차 {i+1}: +{current_scroll_count}건 발견 (누적 {len(collected)}건)")
+                print(f"🔄 회차 {i+1}: +{current_scroll_count}건 발견 (총 {len(collected)}건)")
 
-                # 스크롤: 리뷰 컨테이너를 찾아서 강제로 내림
+                # 스크롤: 리뷰 상자를 찾아 정확히 휠 굴리기
                 page.evaluate("""
                     const s = document.querySelector('.m67qrb') || 
                               document.querySelector('.DxyBCb') || 
@@ -125,7 +133,7 @@ def scrape():
             with open(data_path, "w", encoding="utf-8") as f:
                 json.dump(all_data, f, ensure_ascii=False, indent=4)
             
-            print(f"✨ {target_store_name} 수집 완료! 신규 {new_added}건 추가")
+            print(f"✨ {target_store_name} 완료! 신규 {new_added}건 추가")
 
         except Exception as e:
             print(f"❌ 오류 발생: {e}")
