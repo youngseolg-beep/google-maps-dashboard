@@ -5,15 +5,15 @@
     <title>SV 통합 리뷰 관리 시스템</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
-        .star-active { color: #fbbf24; }
         .active-sv { background-color: #2563eb !important; color: white !important; }
+        .star-active { color: #fbbf24; }
     </style>
 </head>
 <body class="bg-slate-50 p-6">
     <div class="max-w-7xl mx-auto">
         <header class="mb-10 flex justify-between items-center bg-white p-6 rounded-2xl shadow-sm">
-            <h1 class="text-2xl font-black text-slate-800">📊 SV REVIEW MASTER <span class="text-blue-500 text-sm font-normal ml-2">v1.2.4</span></h1>
-            <div id="status-tag" class="px-3 py-1 bg-slate-100 rounded-full text-[10px] font-bold text-slate-500 tracking-tighter">연결 시도 중...</div>
+            <h1 class="text-2xl font-black text-slate-800">📊 SV REVIEW MASTER <span class="text-blue-500 text-sm font-normal ml-2">v1.2.5</span></h1>
+            <div id="status-tag" class="px-3 py-1 bg-slate-100 rounded-full text-[10px] font-bold text-slate-500">연결 시도 중...</div>
         </header>
 
         <div class="grid grid-cols-4 gap-4 mb-8">
@@ -24,18 +24,18 @@
         </div>
 
         <div class="flex gap-6">
-            <div class="w-1/4 bg-white p-4 rounded-2xl shadow-sm h-fit min-h-[200px]">
-                <h3 class="font-bold mb-4 text-slate-400 text-[10px] uppercase">담당 매장</h3>
-                <div id="store-list" class="space-y-2 text-xs text-slate-400">SV를 선택하세요.</div>
+            <div class="w-1/4 bg-white p-4 rounded-2xl shadow-sm h-fit min-h-[300px]">
+                <h3 class="font-bold mb-4 text-slate-400 text-[10px] uppercase tracking-tighter">담당 매장 목록</h3>
+                <div id="store-list" class="space-y-2"></div>
             </div>
             <div class="w-3/4">
-                <div id="review-container" class="space-y-4 text-slate-400 text-center py-20">데이터 로드 대기 중...</div>
+                <div id="review-container" class="space-y-4"></div>
             </div>
         </div>
     </div>
 
     <script>
-        // 최성환 SV가 9번(암스테르담)을 볼 수 있게 확실히 매핑
+        // 최성환 SV가 담당하는 매장 URL 번호들
         const SV_MAP = {
             '이여명': ['1', '5', '10'],
             '강소영': ['2', '6', '11'],
@@ -46,24 +46,14 @@
         let allReviews = [];
 
         async function init() {
-            // [해결책] 파일이 어디에 있든 다 찾아보는 후보군
-            const candidates = [
-                'public/data/reviews.json',
-                './public/data/reviews.json',
-                'data/reviews.json',
-                './data/reviews.json',
-                'reviews.json'
-            ];
-
+            const paths = ['data/reviews.json', 'public/data/reviews.json', './data/reviews.json'];
             let loaded = false;
-            for (let path of candidates) {
+            for (let p of paths) {
                 try {
-                    const res = await fetch(path);
+                    const res = await fetch(p);
                     if (res.ok) {
                         allReviews = await res.json();
-                        loaded = true;
-                        console.log("🔥 찾았다! 경로:", path);
-                        break;
+                        loaded = true; break;
                     }
                 } catch(e) {}
             }
@@ -72,52 +62,60 @@
             if (loaded) {
                 status.innerText = `연결됨: ${allReviews.length}건`;
                 status.className = "px-3 py-1 bg-green-100 rounded-full text-[10px] font-bold text-green-600";
-                document.getElementById('review-container').innerText = "담당 SV를 클릭하세요.";
+                document.getElementById('review-container').innerHTML = '<div class="text-center py-20 text-slate-400">담당 SV를 선택해 주세요.</div>';
             } else {
-                status.innerText = "연결 실패: reviews.json 없음";
+                status.innerText = "연결 실패";
                 status.className = "px-3 py-1 bg-red-100 rounded-full text-[10px] font-bold text-red-600";
             }
         }
 
-        function selectSV(name, btn) {
+        function selectSV(svName, btn) {
             document.querySelectorAll('.sv-tab').forEach(b => b.classList.remove('active-sv'));
             btn.classList.add('active-sv');
 
-            const ids = SV_MAP[name];
-            // 매칭 로직 강화: URL에 해당 숫자가 들어있으면 무조건 통과
-            const filtered = allReviews.filter(r => 
-                ids.some(id => r.store_url.includes(`/${id}`) || r.store_url.includes(`=${id}`))
-            );
+            const ids = SV_MAP[svName];
+            
+            // [핵심] 주소 체계가 어떻게 변하든 숫자만 있으면 걸러내는 로직
+            const filtered = allReviews.filter(r => {
+                const url = r.store_url || "";
+                return ids.some(id => {
+                    // 주소가 /9 로 끝나거나, /9/ 를 포함하거나, .com/9 를 포함하는지 체크
+                    return url.endsWith('/' + id) || url.includes('/' + id + '/') || url.includes('.com/' + id);
+                });
+            });
+
+            console.log(svName + " 필터링 결과:", filtered.length, "건");
 
             const stores = [...new Set(filtered.map(r => r.store_name))];
             const storeListDiv = document.getElementById('store-list');
             
             if(stores.length > 0) {
                 storeListDiv.innerHTML = stores.map(s => `
-                    <button onclick="filterStore('${s}')" class="w-full text-left p-3 rounded-lg hover:bg-blue-50 text-xs font-bold text-slate-700 transition-all">📍 ${s}</button>
+                    <button onclick="filterStore('${s}')" class="w-full text-left p-3 rounded-lg hover:bg-blue-50 text-xs font-bold text-slate-700 border border-slate-100 transition-all">📍 ${s}</button>
                 `).join('');
                 renderReviews(filtered);
             } else {
-                storeListDiv.innerHTML = "데이터가 없습니다.";
-                document.getElementById('review-container').innerText = "수집된 데이터가 없습니다.";
+                storeListDiv.innerHTML = '<p class="text-[10px] text-red-400">데이터가 없습니다.</p>';
+                document.getElementById('review-container').innerHTML = '<div class="text-center py-20 text-slate-400 font-bold text-red-400">해당 SV의 매칭 데이터를 찾을 수 없습니다.</div>';
             }
         }
 
-        function filterStore(storeName) {
-            const data = allReviews.filter(r => r.store_name === storeName);
+        function filterStore(name) {
+            const data = allReviews.filter(r => r.store_name === name);
             renderReviews(data);
         }
 
         function renderReviews(data) {
             document.getElementById('review-container').innerHTML = data.map(r => `
-                <div class="bg-white p-5 rounded-2xl shadow-sm border border-slate-100 text-left">
-                    <div class="flex justify-between mb-2">
-                        <span class="text-[10px] font-bold text-blue-500">${r.store_name}</span>
-                        <span class="text-amber-400 text-xs">★ ${r.rating || 5}</span>
+                <div class="bg-white p-5 rounded-2xl shadow-sm border border-slate-100">
+                    <div class="flex justify-between items-center mb-3">
+                        <span class="text-[10px] font-bold text-blue-600 bg-blue-50 px-2 py-0.5 rounded">${r.store_name}</span>
+                        <span class="text-amber-400 text-xs font-bold">★ 5.0</span>
                     </div>
-                    <p class="text-sm text-slate-700 leading-relaxed">${r.text}</p>
+                    <p class="text-sm text-slate-700 leading-relaxed font-medium">${r.text}</p>
+                    <div class="text-[9px] text-slate-300 mt-4 border-t pt-2 uppercase">${r.collected_at} COLLECTED</div>
                 </div>
-            `).join('');
+            `).sort(() => Math.random() - 0.5).join(''); // 랜덤하게 섞어서 보여줌
         }
 
         init();
