@@ -7,24 +7,25 @@
     <style>
         .star-active { color: #fbbf24; }
         .star-inactive { color: #d1d5db; }
+        .active-sv { background-color: #2563eb !important; color: white !important; ring: 2px; ring-color: #2563eb; }
     </style>
 </head>
 <body class="bg-slate-50 p-6">
     <div class="max-w-7xl mx-auto">
         <header class="mb-10 flex justify-between items-center bg-white p-6 rounded-2xl shadow-sm">
-            <h1 class="text-2xl font-black text-slate-800">📊 SV REVIEW MASTER <span class="text-blue-500 text-sm font-normal ml-2">v1.2.0</span></h1>
+            <h1 class="text-2xl font-black text-slate-800">📊 SV REVIEW MASTER <span class="text-blue-500 text-sm font-normal ml-2">v1.2.1</span></h1>
             <div id="last-update" class="text-xs text-slate-400">데이터 로드 중...</div>
         </header>
 
         <div class="grid grid-cols-4 gap-4 mb-8">
-            <button onclick="selectSV('이여명')" class="sv-tab p-4 bg-white rounded-xl shadow-sm hover:ring-2 ring-blue-500 transition-all font-bold text-slate-600">이여명 SV</button>
-            <button onclick="selectSV('강소영')" class="sv-tab p-4 bg-white rounded-xl shadow-sm hover:ring-2 ring-blue-500 transition-all font-bold text-slate-600">강소영 SV</button>
-            <button onclick="selectSV('소도희')" class="sv-tab p-4 bg-white rounded-xl shadow-sm hover:ring-2 ring-blue-500 transition-all font-bold text-slate-600">소도희 SV</button>
-            <button onclick="selectSV('최성환')" class="sv-tab p-4 bg-white rounded-xl shadow-sm hover:ring-2 ring-blue-500 transition-all font-bold text-slate-600">최성환 SV</button>
+            <button onclick="selectSV('이여명', this)" class="sv-tab p-4 bg-white rounded-xl shadow-sm hover:ring-2 ring-blue-500 transition-all font-bold text-slate-600">이여명 SV</button>
+            <button onclick="selectSV('강소영', this)" class="sv-tab p-4 bg-white rounded-xl shadow-sm hover:ring-2 ring-blue-500 transition-all font-bold text-slate-600">강소영 SV</button>
+            <button onclick="selectSV('소도희', this)" class="sv-tab p-4 bg-white rounded-xl shadow-sm hover:ring-2 ring-blue-500 transition-all font-bold text-slate-600">소도희 SV</button>
+            <button onclick="selectSV('최성환', this)" class="sv-tab p-4 bg-white rounded-xl shadow-sm hover:ring-2 ring-blue-500 transition-all font-bold text-slate-600">최성환 SV</button>
         </div>
 
         <div class="flex gap-6">
-            <div class="w-1/4 bg-white p-4 rounded-2xl shadow-sm h-fit">
+            <div class="w-1/4 bg-white p-4 rounded-2xl shadow-sm h-fit min-h-[300px]">
                 <h3 class="font-bold mb-4 text-slate-500 text-sm uppercase tracking-wider">담당 매장 목록</h3>
                 <div id="store-list" class="space-y-2">
                     <p class="text-xs text-slate-400">SV를 먼저 선택해주세요.</p>
@@ -40,62 +41,80 @@
                         <option value="rating-low">별점 낮은순</option>
                     </select>
                 </div>
-                <div id="review-container" class="space-y-4"></div>
+                <div id="review-container" class="space-y-4">
+                    <p class="text-center py-20 text-slate-400">데이터를 불러오는 중이거나 선택된 항목이 없습니다.</p>
+                </div>
             </div>
         </div>
     </div>
 
     <script>
+        // [중요] 수집된 데이터의 URL과 일치해야 합니다. (부분 일치로 검색하도록 로직 수정)
         const SV_MAP = {
-            '이여명': ['https://www.google.com/maps/place/Paik's+Noodle/@1.2633826,103.8020909,14z/data=!3m1!5s0x31da19af25771877:0x64dca8531f0ccf88!4m12!1m2!2m1!1sSINGAPORE+PAIKS+NOODLE!3m8!1s0x31da191c85c285cf:0xcf1e805f3426a6f7!8m2!3d1.2948016!4d103.8591949!9m1!1b1!15sChZTSU5HQVBPUkUgUEFJS1MgTk9PRExFWhgiFnNpbmdhcG9yZSBwYWlrcyBub29kbGWSARFrb3JlYW5fcmVzdGF1cmFudJoBJENoZERTVWhOTUc5blMwVkpRMEZuU1VSV2FHRmxkWFZCUlJBQuABAPoBBAgYED0!16s%2Fg%2F11vkfsncfp?entry=ttu&g_ep=EgoyMDI2MDUwNi4wIKXMDSoASAFQAw%3D%3D'],
-            '강소영': ['https://www.google.com/maps/place/Paik's+Noodle+Amsterdam/@52.3679846,4.8899433,17z/data=!4m8!3m7!1s0x47c60978a0095be1:0x5c955b954f65db98!8m2!3d52.3679846!4d4.8925182!9m1!1b1!16s%2Fg%2F11ldxc_3q5?entry=ttu&g_ep=EgoyMDI2MDUwNi4wIKXMDSoASAFQAw%3D%3D'],
-            '소도희': ['https://www.google.com/maps/place/%EC%83%88%EB%A7%88%EC%9D%84%EC%8B%9D%EB%8B%B9/@13.7305942,100.397158,11z/data=!4m12!1m2!2m1!1sTHAILAND+SAEMAEUL!3m8!1s0x30e29f07225ca6c7:0x5f5dc0b64eff0693!8m2!3d13.7475043!4d100.5395703!9m1!1b1!15sChFUSEFJTEFORCBTQUVNQUVVTFoTIhF0aGFpbGFuZCBzYWVtYWV1bJIBGmtvcmVhbl9iYXJiZWN1ZV9yZXN0YXVyYW504AEA!16s%2Fg%2F11rghd7fwy?entry=ttu&g_ep=EgoyMDI2MDUwNi4wIKXMDSoASAFQAw%3D%3D'],
-            '최성환': ['https://www.google.com/maps/place/Bornga+Wolter+Monginsidi/@13.6743684,95.2771317,6z/data=!4m12!1m2!2m1!1sINDONESIA+BORNGA!3m8!1s0x2e69f16794afe1df:0x3fc1a290a209cef6!8m2!3d-6.2393833!4d106.8085062!9m1!1b1!15sChBJTkRPTkVTSUEgQk9STkdBWhIiEGluZG9uZXNpYSBib3JuZ2GSARprb3JlYW5fYmFyYmVjdWVfcmVzdGF1cmFudOABAA!16s%2Fg%2F1tfd9kxv?entry=ttu&g_ep=EgoyMDI2MDUwNi4wIKXMDSoASAFQAw%3D%3D']
+            '이여명': ['maps.google.com/1'],
+            '강소영': ['maps.google.com/2'],
+            '소도희': ['maps.google.com/3'],
+            '최성환': ['maps.google.com/9', 'maps.google.com/7', 'maps.google.com/8']
         };
 
         let allReviews = [];
-        let displayReviews = [];
+        let filteredBySV = [];
 
         async function init() {
             try {
-                const res = await fetch('public/data/reviews.json');
+                // 경로를 ./public/data/... 또는 data/... 로 맞춰야 할 수 있음
+                const res = await fetch('public/data/reviews.json'); 
                 allReviews = await res.json();
-                document.getElementById('last-update').innerText = `최종 업데이트: ${allReviews[0]?.collected_at || '-'}`;
-            } catch(e) { console.error("데이터 로딩 실패"); }
+                console.log("데이터 로드 성공:", allReviews.length, "건");
+                document.getElementById('last-update').innerText = `총 ${allReviews.length}건 수집됨`;
+            } catch(e) {
+                console.error("데이터 로드 실패:", e);
+                document.getElementById('last-update').innerText = "데이터 파일(reviews.json)을 찾을 수 없습니다.";
+            }
         }
 
-        function selectSV(name) {
-            // 버튼 활성화 스타일
-            document.querySelectorAll('.sv-tab').forEach(btn => {
-                btn.classList.remove('bg-blue-600', 'text-white');
-                if(btn.innerText.includes(name)) btn.classList.add('bg-blue-600', 'text-white');
-            });
+        function selectSV(name, btn) {
+            // 버튼 스타일 초기화 및 적용
+            document.querySelectorAll('.sv-tab').forEach(b => b.classList.remove('active-sv'));
+            btn.classList.add('active-sv');
 
-            const urls = SV_MAP[name];
-            displayReviews = allReviews.filter(r => urls.includes(r.store_url));
+            const allowedPatterns = SV_MAP[name];
             
-            // 매장 목록 UI 업데이트
-            const stores = [...new Set(displayReviews.map(r => r.store_name))];
-            document.getElementById('store-list').innerHTML = stores.map(s => `
-                <button onclick="filterStore('${s}')" class="w-full text-left p-3 rounded-lg hover:bg-slate-50 text-sm font-medium text-slate-700 border border-transparent hover:border-slate-200 transition-all">
-                    📍 ${s}
-                </button>
-            `).join('') || '<p class="text-xs text-slate-400">수집된 매장이 없습니다.</p>';
+            // 주소에 해당 패턴이 포함되어 있는지 확인 (더 유연한 매칭)
+            filteredBySV = allReviews.filter(r => 
+                allowedPatterns.some(pattern => r.store_url.includes(pattern))
+            );
+            
+            console.log(name + " SV 데이터:", filteredBySV.length, "건");
 
-            renderReviews(displayReviews);
+            // 매장 목록 업데이트
+            const stores = [...new Set(filteredBySV.map(r => r.store_name))];
+            const storeListDiv = document.getElementById('store-list');
+            
+            if(stores.length > 0) {
+                storeListDiv.innerHTML = stores.map(s => `
+                    <button onclick="filterStore('${s}')" class="w-full text-left p-3 rounded-lg hover:bg-blue-50 text-sm font-medium text-slate-700 border border-transparent hover:border-blue-200 transition-all">
+                        📍 ${s}
+                    </button>
+                `).join('');
+                renderReviews(filteredBySV);
+                document.getElementById('current-title').innerText = `${name} SV 전체 리뷰`;
+            } else {
+                storeListDiv.innerHTML = '<p class="text-xs text-red-400 p-2">수집된 매장 데이터가 없습니다. URL 설정을 확인해주세요.</p>';
+                document.getElementById('review-container').innerHTML = '';
+            }
         }
 
         function filterStore(storeName) {
-            const filtered = displayReviews.filter(r => r.store_name === storeName);
+            const storeData = filteredBySV.filter(r => r.store_name === storeName);
             document.getElementById('current-title').innerText = `${storeName} 리뷰`;
-            renderReviews(filtered);
+            renderReviews(storeData);
         }
 
         function sortData(val) {
-            let sorted = [...displayReviews];
-            if(val === 'rating-high') sorted.sort((a,b) => b.rating - a.rating);
-            else if(val === 'rating-low') sorted.sort((a,b) => a.rating - b.rating);
-            renderReviews(sorted);
+            if (val === 'rating-high') filteredBySV.sort((a,b) => b.rating - a.rating);
+            else if (val === 'rating-low') filteredBySV.sort((a,b) => a.rating - b.rating);
+            renderReviews(filteredBySV);
         }
 
         function renderReviews(data) {
@@ -105,13 +124,15 @@
                     <div class="flex justify-between items-start mb-3">
                         <div>
                             <span class="text-xs font-bold bg-slate-100 text-slate-500 px-2 py-1 rounded-md mr-2">${r.store_name}</span>
-                            <span class="text-xs text-slate-400">${r.date_raw}</span>
+                            <span class="text-xs text-slate-400">${r.collected_at}</span>
                         </div>
-                        <div class="flex">${'★'.repeat(r.rating).padEnd(5, '☆').split('').map((s,i) => `<span class="${i < r.rating ? 'star-active' : 'star-inactive'}">${s}</span>`).join('')}</div>
+                        <div class="flex text-amber-400">
+                            ${'★'.repeat(r.rating || 5)}${'☆'.repeat(5 - (r.rating || 5))}
+                        </div>
                     </div>
                     <p class="text-slate-700 leading-relaxed">${r.text}</p>
                 </div>
-            `).join('') || '<div class="text-center py-20 text-slate-400">데이터가 없습니다.</div>';
+            `).join('') || '<div class="text-center py-20 text-slate-400">해당 조건의 리뷰가 없습니다.</div>';
         }
 
         init();
