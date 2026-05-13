@@ -1,43 +1,41 @@
 name: scrape-and-update
 on:
-  workflow_dispatch: # 버튼 누르면 실행
+  schedule:
+    - cron: '0 21 * * *' # 매일 새벽 6시 자동 실행
+  workflow_dispatch:
     inputs:
       store_url:
-        description: '구글 맵 주소'
+        description: '스크래핑할 구글 맵 주소'
         required: true
-      start_date:
-        description: '수집 시작일 (YYYY-MM-DD)'
-        default: '2026-01-01'
+        default: ''
 
 jobs:
-  scrape-and-update:
-    runs-on: ubuntu-latest # 깃허브의 공용 컴퓨터(리눅스)
+  build:
+    runs-on: ubuntu-latest
     steps:
-      - name: 체크아웃
-        uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v3
 
-      - name: 파이썬 설정
-        uses: actions/setup-python@v5
+      - name: Set up Python
+        uses: actions/setup-python@v4
         with:
-          python-version: '3.11'
+          python-version: '3.9'
 
-      - name: 패키지 설치
+      - name: Install dependencies
         run: |
           pip install playwright
           playwright install chromium
 
-      - name: 크롤링 실행
+      - name: Run scraper
         env:
-          # 🔐 핵심: 금고(Secrets)에서 신분증을 꺼내 파이썬에게 전달합니다.
+          GOOGLE_COOKIES: ${{ secrets.GOOGLE_COOKIES }}
           GOOGLE_MAPS_URL: ${{ github.event.inputs.store_url }}
-          START_DATE: ${{ github.event.inputs.start_date }}
-          GOOGLE_COOKIES: ${{ secrets.GOOGLE_COOKIES }} 
         run: python scraper/scraper.py
 
-      - name: 데이터 업데이트 및 저장
+      - name: Commit and Push
         run: |
-          git config --global user.name "GitHub Action"
-          git config --global user.email "action@github.com"
+          git config --global user.name "GitHub Actions"
+          git config --global user.email "actions@github.com"
           git add public/data/reviews.json
-          git commit -m "Update reviews data [skip ci]" || echo "No changes to commit"
+          git commit -m "Update reviews data" || exit 0
           git push
