@@ -6,13 +6,12 @@
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
         .active-sv { background-color: #2563eb !important; color: white !important; }
-        .star-active { color: #fbbf24; }
     </style>
 </head>
 <body class="bg-slate-50 p-6">
     <div class="max-w-7xl mx-auto">
         <header class="mb-10 flex justify-between items-center bg-white p-6 rounded-2xl shadow-sm">
-            <h1 class="text-2xl font-black text-slate-800">📊 SV REVIEW MASTER <span class="text-blue-500 text-sm font-normal ml-2">v1.2.6</span></h1>
+            <h1 class="text-2xl font-black text-slate-800">📊 SV REVIEW MASTER <span class="text-blue-500 text-sm font-normal ml-2">v1.2.7</span></h1>
             <div id="status-tag" class="px-3 py-1 bg-green-100 rounded-full text-[10px] font-bold text-green-600">데이터 연결 중...</div>
         </header>
 
@@ -35,12 +34,12 @@
     </div>
 
     <script>
-        // URL의 끝 번호들을 SV에 할당
+        // [수정] 주소 숫자 대신 "매장 이름"의 핵심 키워드로 매칭합니다.
         const SV_MAP = {
-            '이여명': ['1', '5', '10'],
-            '강소영': ['2', '6', '11'],
-            '소도희': ['3', '7', '12'],
-            '최성환': ['4', '8', '9', '13', '14', '15']
+            '이여명': ['Bornga'], // 예시: 본가
+            '강소영': ['Hong Kong'], // 예시: 홍콩반점
+            '소도희': ['Saemaul'], // 예시: 새마을식당
+            '최성환': ["Paik's Noodle", "Paik's", "Paiks", "Amsterdam"] // 암스테르담 포함
         };
 
         let allReviews = [];
@@ -58,12 +57,10 @@
                 } catch(e) {}
             }
 
+            const status = document.getElementById('status-tag');
             if (loaded) {
-                document.getElementById('status-tag').innerText = `연결됨: ${allReviews.length}건`;
-                document.getElementById('review-container').innerHTML = '<div class="text-center py-20 text-slate-400 font-bold">상단 SV 버튼을 눌러 담당 매장을 확인하세요.</div>';
-            } else {
-                document.getElementById('status-tag').innerText = "데이터 로드 실패";
-                document.getElementById('status-tag').className = "px-3 py-1 bg-red-100 rounded-full text-[10px] font-bold text-red-600";
+                status.innerText = `연결됨: ${allReviews.length}건`;
+                document.getElementById('review-container').innerHTML = '<div class="text-center py-20 text-slate-400 font-bold">상단 SV 버튼을 눌러주세요.</div>';
             }
         }
 
@@ -71,18 +68,12 @@
             document.querySelectorAll('.sv-tab').forEach(b => b.classList.remove('active-sv'));
             btn.classList.add('active-sv');
 
-            const ids = SV_MAP[svName];
+            const keywords = SV_MAP[svName];
             
-            // [가장 유연한 필터링] 주소 문자열 안에 해당 숫자가 단독으로(슬래시 사이 등) 있는지 체크
+            // 매장 이름(store_name)에 키워드가 포함되어 있는지 체크
             const filtered = allReviews.filter(r => {
-                const url = r.store_url || "";
-                return ids.some(id => {
-                    // 1. URL이 숫자 자체이거나 (예: .../4)
-                    // 2. URL 경로 중에 숫자가 있거나 (예: .../4/reviews)
-                    // 3. URL 끝이 해당 숫자거나
-                    const regex = new RegExp(`[/=]${id}(/|\\?|$)`);
-                    return regex.test(url) || url.includes(`.com/${id}`);
-                });
+                const name = r.store_name || "";
+                return keywords.some(key => name.toLowerCase().includes(key.toLowerCase()));
             });
 
             const stores = [...new Set(filtered.map(r => r.store_name))];
@@ -90,20 +81,20 @@
             
             if(stores.length > 0) {
                 storeListDiv.innerHTML = stores.map(s => `
-                    <button onclick="filterStore('${s}', '${svName}')" class="w-full text-left p-3 rounded-lg hover:bg-blue-50 text-xs font-bold text-slate-700 border border-slate-100 transition-all">📍 ${s}</button>
+                    <button onclick="filterStore('${s}')" class="w-full text-left p-3 rounded-lg hover:bg-blue-50 text-xs font-bold text-slate-700 border border-slate-100 transition-all">📍 ${s}</button>
                 `).join('');
                 renderReviews(filtered);
             } else {
-                storeListDiv.innerHTML = `<p class="text-[10px] text-red-400">데이터 없음 (${allReviews.length}건 중 매칭 실패)</p>`;
+                storeListDiv.innerHTML = '<p class="text-[10px] text-red-400">담당 매장 데이터 없음</p>';
                 document.getElementById('review-container').innerHTML = `
                     <div class="text-center py-20 text-slate-400">
-                        데이터 주소와 SV 매핑 번호가 일치하지 않습니다.<br>
-                        <span class="text-[10px]">수집된 첫 주소 예시: ${allReviews[0]?.store_url || '없음'}</span>
+                        해당 SV 이름으로 매칭된 매장이 없습니다.<br>
+                        <span class="text-[10px]">수집된 매장 이름 예시: ${allReviews[0]?.store_name || '없음'}</span>
                     </div>`;
             }
         }
 
-        function filterStore(name, svName) {
+        function filterStore(name) {
             const data = allReviews.filter(r => r.store_name === name);
             renderReviews(data);
         }
@@ -113,7 +104,7 @@
                 <div class="bg-white p-5 rounded-2xl shadow-sm border border-slate-100">
                     <div class="flex justify-between items-center mb-2">
                         <span class="text-[10px] font-bold text-blue-600 bg-blue-50 px-2 py-0.5 rounded">${r.store_name}</span>
-                        <span class="text-amber-400 text-xs font-bold">★ 5.0</span>
+                        <span class="text-amber-400 text-xs font-bold">★ ${r.rating || 5}</span>
                     </div>
                     <p class="text-sm text-slate-700 leading-relaxed">${r.text}</p>
                     <div class="text-[9px] text-slate-300 mt-4">${r.collected_at} 수집</div>
