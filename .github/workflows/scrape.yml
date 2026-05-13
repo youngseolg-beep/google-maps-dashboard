@@ -1,41 +1,61 @@
-name: scrape-and-update
-on:
-  workflow_dispatch: # 버튼 누르면 실행
-    inputs:
-      store_url:
-        description: '구글 맵 주소'
-        required: true
-      start_date:
-        description: '수집 시작일 (YYYY-MM-DD)'
-        default: '2026-01-01'
+import os
+import json
+import time
+import random
+from playwright.sync_api import sync_playwright
 
-jobs:
-  scrape-and-update:
-    runs-on: ubuntu-latest # 깃허브의 공용 컴퓨터(리눅스)
-    steps:
-      - name: 체크아웃
-        uses: actions/checkout@v4
+GOOGLE_MAPS_URL = os.environ.get("GOOGLE_MAPS_URL")
 
-      - name: 파이썬 설정
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
+def scrape():
+    with sync_playwright() as p:
+        # [변장] 최대한 사람처럼 보이게 설정
+        browser = p.chromium.launch(headless=True)
+        context = browser.new_context(
+            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+        )
 
-      - name: 패키지 설치
-        run: |
-          pip install playwright
-          playwright install chromium
+        # 🔐 금고에서 신분증(쿠키) 꺼내서 장착
+        cookies_raw = os.environ.get("GOOGLE_COOKIES")
+        if cookies_raw:
+            try:
+                cookies = json.loads(cookies_raw)
+                context.add_cookies(cookies)
+                print("🍪 신분증(쿠키) 장착 완료! 구글에 당당하게 입장합니다.")
+            except Exception as e:
+                print(f"❌ 쿠키 장착 실패: {e}")
 
-      - name: 크롤링 실행
-        env:
-          GOOGLE_MAPS_URL: ${{ github.event.inputs.store_url }}
-          START_DATE: ${{ github.event.inputs.start_date }}
-        run: python scraper/scraper.py
+        page = context.new_page()
+        
+        try:
+            print(f"🌐 접속 중: {GOOGLE_MAPS_URL}")
+            # 신분증이 있으므로 바로 '리뷰'가 포함된 긴 주소로 가도 구글이 허용해줍니다.
+            page.goto(GOOGLE_MAPS_URL, wait_until="domcontentloaded", timeout=60000)
+            page.wait_for_timeout(10000) # 안정적인 로딩을 위해 10초 대기
 
-      - name: 데이터 업데이트 및 저장
-        run: |
-          git config --global user.name "GitHub Action"
-          git config --global user.email "action@github.com"
-          git add public/data/reviews.json
-          git commit -m "Update reviews data [skip ci]" || echo "No changes to commit"
-          git push
+            reviews = []
+            # 로컬에서 성공했던 이름표들로 수집
+            items = page.locator(".wiI7pd, .MyE63c").all()
+            for item in items:
+                text = item.inner_text().strip()
+                if text:
+                    reviews.append({
+                        "author": "고객",
+                        "rating": 5,
+                        "text": text,
+                        "date": "2026-05-13" # 오늘 날짜 예시
+                    })
+
+            # 결과 저장
+            os.makedirs("public/data", exist_ok=True)
+            with open("public/data/reviews.json", "w", encoding="utf-8") as f:
+                json.dump(reviews, f, ensure_ascii=False, indent=4)
+            
+            print(f"✅ 수집 성공! 총 {len(reviews)}건 저장됨.")
+
+        except Exception as e:
+            print(f"❌ 실행 중 에러: {e}")
+        finally:
+            browser.close()
+
+if __name__ == "__main__":
+    scrape()
