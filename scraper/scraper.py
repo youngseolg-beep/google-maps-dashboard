@@ -6,7 +6,6 @@ from datetime import datetime, timedelta
 from playwright.sync_api import sync_playwright
 
 GOOGLE_MAPS_URL = os.environ.get("GOOGLE_MAPS_URL")
-# 수집 시작일 설정 (예: 2026-01-01)
 START_DATE_STR = os.environ.get("START_DATE", "2026-01-01")
 START_DATE = datetime.strptime(START_DATE_STR, "%Y-%m-%d")
 
@@ -37,51 +36,45 @@ def scrape():
         
         try:
             print(f"🌐 접속 중: {GOOGLE_MAPS_URL}")
-            page.goto(GOOGLE_MAPS_URL, wait_until="domcontentloaded", timeout=60000)
-            page.wait_for_timeout(5000)
-
-            # 1. [최신순 정렬] 시도
-            try:
-                # 정렬 버튼 클릭
-                sort_btn = page.locator("button[aria-label*='정렬'], button[aria-label*='Sort']").first
-                if sort_btn.is_visible():
-                    sort_btn.click()
-                    page.wait_for_timeout(2000)
-                    # '최신순' 혹은 'Newest' 선택
-                    page.locator("text='최신순', text='Newest'").first.click()
-                    print("✅ 최신순 정렬 완료")
-                    page.wait_for_timeout(3000)
-            except:
-                print("⚠️ 정렬 버튼을 찾지 못했습니다. 기본 순서로 진행합니다.")
+            page.goto(GOOGLE_MAPS_URL, wait_until="networkidle", timeout=60000)
+            
+            # 1. [리뷰 탭 클릭] - 가장 중요한 단계
+            print("🔘 리뷰 탭을 찾는 중...")
+            review_tab = page.locator("button[role='tab']:has-text('리뷰'), button[role='tab']:has-text('Reviews')").first
+            if review_tab.is_visible():
+                review_tab.click()
+                print("✅ 리뷰 탭 클릭 성공")
+                page.wait_for_timeout(5000)
+            else:
+                print("⚠️ 리뷰 탭을 직접 찾지 못해 현재 화면에서 수집을 시도합니다.")
 
             reviews = []
             processed_texts = set()
             
-            # 2. [무한 스크롤] 시작
-            print("⏳ 리뷰를 불러오는 중 (스크롤 시작)...")
-            for i in range(15): # 최대 15번 스크롤 (약 100~150개)
+            # 2. [스크롤 영역 확보 및 무한 스크롤]
+            # 리뷰들이 담긴 스크롤 가능한 컨테이너를 찾습니다.
+            scroll_container = page.locator("div[role='main'] >> div.m67qrb").first # 구글 맵 리뷰 컨테이너 클래스
+            
+            print("⏳ 스크롤 및 수집 시작...")
+            for i in range(20):
                 # 리뷰 아이템들 탐색
                 items = page.locator("div[role='article']").all()
                 
-                stop_scrolling = False
+                new_found = 0
                 for item in items:
                     try:
-                        # 텍스트 추출
                         text_el = item.locator(".wiI7pd")
                         if text_el.count() == 0: continue
                         text = text_el.inner_text().strip()
                         
-                        if text in processed_texts: continue
+                        if not text or text in processed_texts: continue
                         
-                        # 날짜 추출 및 검사
                         date_el = item.locator(".rsqaWe")
                         date_str = date_el.inner_text() if date_el.count() > 0 else ""
                         review_date = parse_date(date_str)
                         
-                        # 설정한 날짜보다 이전 리뷰가 나오면 중단
                         if review_date < START_DATE:
-                            stop_scrolling = True
-                            break
+                            continue # 특정 날짜 이전이면 건너뛰기 (스크롤은 계속)
 
                         reviews.append({
                             "author": "고객",
@@ -89,18 +82,16 @@ def scrape():
                             "date": review_date.strftime("%Y-%m-%d")
                         })
                         processed_texts.add(text)
+                        new_found += 1
                     except: continue
 
-                if stop_scrolling: 
-                    print(f"🛑 {START_DATE_STR} 이전 리뷰에 도달하여 중단합니다.")
-                    break
+                print(f"🔄 스크롤 {i+1}회: 새 리뷰 {new_found}건 발견 (총 {len(reviews)}건)")
                 
-                # 스크롤 내리기 (리뷰 목록 컨테이너 타겟팅)
-                page.mouse.wheel(0, 2000)
+                # 스크롤 내리기: 리뷰 컨테이너 위에서 마우스 휠 조작
+                page.mouse.wheel(0, 3000)
                 page.wait_for_timeout(2000)
-                print(f"🔄 스크롤 중... 현재 {len(reviews)}건 수집")
 
-            # 저장
+            # 3. 저장
             os.makedirs("public/data", exist_ok=True)
             with open("public/data/reviews.json", "w", encoding="utf-8") as f:
                 json.dump(reviews, f, ensure_ascii=False, indent=4)
