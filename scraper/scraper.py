@@ -10,22 +10,31 @@ def scrape():
     if not GOOGLE_MAPS_URL: return
 
     with sync_playwright() as p:
-        # headless=True로 하되, 감지 우회 옵션 추가
+        # 봇 감지 우회 옵션 유지
         browser = p.chromium.launch(headless=True, args=["--disable-blink-features=AutomationControlled"])
         context = browser.new_context(
             user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
-            locale="en-US" # 유럽 매장이니 영문으로 고정해서 구조 일원화
+            locale="en-US"
         )
         page = context.new_page()
+        # 기본 타임아웃을 60초로 상향
+        page.set_default_timeout(60000)
         
         try:
-            # 1. 리뷰 직접 경로 접속
             target_url = GOOGLE_MAPS_URL.split('?')[0].rstrip('/') + "/reviews/"
-            print(f"🌐 타겟 진입: {target_url}")
-            page.goto(target_url, wait_until="networkidle") # 네트워크가 조용해질 때까지 대기
-            page.wait_for_timeout(7000)
+            print(f"🌐 타겟 진입 시도: {target_url}")
+            
+            # [수정] networkidle 대신 더 빠른 시점에 진행하도록 변경
+            try:
+                page.goto(target_url, wait_until="commit", timeout=60000)
+            except Exception as e:
+                print(f"⚠️ 페이지 로딩 중 타임아웃 발생(무시하고 진행): {e}")
 
-            # 2. 쿠키 동의 (유럽 필수)
+            # 물리적으로 리뷰가 렌더링될 시간을 확보
+            print("⏳ 리뷰 데이터 렌더링 대기 중 (10초)...")
+            page.wait_for_timeout(10000)
+
+            # 쿠키 동의 버튼 (보이면 무조건 클릭)
             try:
                 page.get_by_role("button", name=re.compile("Accept all|Agree|동의", re.I)).first.click()
                 print("✅ 쿠키 동의 완료")
@@ -35,13 +44,13 @@ def scrape():
             processed_texts = set()
 
             for i in range(15):
-                # [수정] 클래스명이 바뀌어도 찾을 수 있게 role='article' 내부의 모든 div를 훑음
+                # 리뷰 기사(article) 단위 수집
                 articles = page.locator("div[role='article']").all()
                 found_this_turn = 0
                 
                 for art in articles:
                     try:
-                        # 본문 텍스트 (구글 리뷰의 가장 핵심적인 긴 문장 div 찾기)
+                        # 리뷰 본문 클래스 .wiI7pd 타겟팅
                         content_el = art.locator(".wiI7pd").first
                         if content_el.count() == 0: continue
                         content = content_el.inner_text().strip()
@@ -49,20 +58,15 @@ def scrape():
                         if not content or content in processed_texts or len(content) < 5: continue
                         if "Drag to change" in content: continue
 
-                        # 작성자명 (보통 이미지 옆의 첫 번째 굵은 글씨)
+                        # 작성자/날짜/별점 수집
                         author = "Anonymous"
-                        try:
-                            # 작성자 클래스 .d4r55가 없으면 주변 텍스트 시도
-                            author = art.locator(".d4r55").inner_text().strip()
+                        try: author = art.locator(".d4r55").inner_text().strip()
                         except: pass
 
-                        # 날짜 (보통 별점 옆의 상대적 시간)
                         date_str = "Recent"
-                        try:
-                            date_str = art.locator(".rsqaof").inner_text().strip()
+                        try: date_str = art.locator(".rsqaof").inner_text().strip()
                         except: pass
 
-                        # 별점
                         rating = 5
                         try:
                             star_label = art.locator("span[aria-label*='star']").get_attribute("aria-label")
@@ -81,14 +85,15 @@ def scrape():
                         found_this_turn += 1
                     except: continue
 
-                print(f"🔄 {i+1}회차: {found_this_turn}건 추가 (누적 {len(collected)}건)")
+                if found_this_turn > 0:
+                    print(f"🔄 {i+1}회차: {found_this_turn}건 추가 (누적 {len(collected)}건)")
                 
-                # 강제 스크롤: 마우스 휠을 더 세게
+                # 강제 스크롤
                 page.mouse.move(500, 500)
                 page.mouse.wheel(0, 4000)
-                page.wait_for_timeout(4000)
+                page.wait_for_timeout(3000)
 
-            # 3. 저장
+            # 결과 저장
             if collected:
                 data_path = "public/data/reviews.json"
                 os.makedirs("public/data", exist_ok=True)
@@ -96,8 +101,10 @@ def scrape():
                     json.dump(collected, f, ensure_ascii=False, indent=4)
                 print(f"✨ 성공! 진짜 리뷰 {len(collected)}건 구출 완료.")
             else:
-                print("❌ 여전히 리뷰를 찾지 못했습니다. 화면 캡처 분석이 필요할 수 있습니다.")
+                print("❌ 데이터가 발견되지 않았습니다. 매장 주소를 다시 확인해주세요.")
 
+        except Exception as e:
+            print(f"🔥 치명적 오류: {e}")
         finally:
             browser.close()
 
