@@ -23,58 +23,68 @@ def parse_date(date_str):
 
 def scrape():
     with sync_playwright() as p:
-        browser = p.chromium.launch(headless=True)
+        # 자동화 감지 우회 설정 강화
+        browser = p.chromium.launch(headless=True, args=["--disable-blink-features=AutomationControlled"])
         context = browser.new_context(user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36")
 
         cookies_raw = os.environ.get("GOOGLE_COOKIES")
         if cookies_raw:
-            cookies = json.loads(cookies_raw)
-            for c in cookies: c['sameSite'] = "Lax"
-            context.add_cookies(cookies)
+            try:
+                cookies = json.loads(cookies_raw)
+                for c in cookies: c['sameSite'] = "Lax"
+                context.add_cookies(cookies)
+                print("🍪 신분증 장착 완료")
+            except: pass
 
         page = context.new_page()
         
         try:
             print(f"🌐 접속 중: {GOOGLE_MAPS_URL}")
-            page.goto(GOOGLE_MAPS_URL, wait_until="networkidle", timeout=60000)
+            # [핵심] networkidle 대신 domcontentloaded 사용 (타임아웃 방지)
+            page.goto(GOOGLE_MAPS_URL, wait_until="domcontentloaded", timeout=60000)
             
-            # 1. [리뷰 탭 클릭] - 가장 중요한 단계
-            print("🔘 리뷰 탭을 찾는 중...")
-            review_tab = page.locator("button[role='tab']:has-text('리뷰'), button[role='tab']:has-text('Reviews')").first
-            if review_tab.is_visible():
-                review_tab.click()
-                print("✅ 리뷰 탭 클릭 성공")
-                page.wait_for_timeout(5000)
-            else:
-                print("⚠️ 리뷰 탭을 직접 찾지 못해 현재 화면에서 수집을 시도합니다.")
+            # 페이지가 안정화될 때까지 10초간 '깡'으로 기다립니다.
+            print("⏳ 페이지 안정화 기다리는 중...")
+            page.wait_for_timeout(10000)
+            
+            # 1. 리뷰 탭 클릭 시도 (여러 패턴 대응)
+            print("🔘 리뷰 탭 클릭 시도...")
+            review_selectors = [
+                "button[role='tab']:has-text('리뷰')",
+                "button[role='tab']:has-text('Reviews')",
+                "text='리뷰'",
+                ".hh7dbf"
+            ]
+            
+            for selector in review_selectors:
+                try:
+                    target = page.locator(selector).first
+                    if target.is_visible():
+                        target.click()
+                        print(f"✅ 리뷰 탭 클릭 성공 ({selector})")
+                        page.wait_for_timeout(5000)
+                        break
+                except: continue
 
             reviews = []
             processed_texts = set()
             
-            # 2. [스크롤 영역 확보 및 무한 스크롤]
-            # 리뷰들이 담긴 스크롤 가능한 컨테이너를 찾습니다.
-            scroll_container = page.locator("div[role='main'] >> div.m67qrb").first # 구글 맵 리뷰 컨테이너 클래스
-            
+            # 2. 스크롤 및 수집
             print("⏳ 스크롤 및 수집 시작...")
-            for i in range(20):
-                # 리뷰 아이템들 탐색
-                items = page.locator("div[role='article']").all()
-                
+            for i in range(15):
+                items = page.locator(".wiI7pd, .MyE63c").all()
                 new_found = 0
+                
                 for item in items:
                     try:
-                        text_el = item.locator(".wiI7pd")
-                        if text_el.count() == 0: continue
-                        text = text_el.inner_text().strip()
-                        
+                        text = item.inner_text().strip()
                         if not text or text in processed_texts: continue
                         
-                        date_el = item.locator(".rsqaWe")
-                        date_str = date_el.inner_text() if date_el.count() > 0 else ""
+                        parent = item.locator("xpath=./ancestor::div[contains(@role, 'article')]")
+                        date_str = parent.locator(".rsqaWe").first.inner_text() if parent.locator(".rsqaWe").count() > 0 else ""
                         review_date = parse_date(date_str)
                         
-                        if review_date < START_DATE:
-                            continue # 특정 날짜 이전이면 건너뛰기 (스크롤은 계속)
+                        if review_date < START_DATE: continue
 
                         reviews.append({
                             "author": "고객",
@@ -85,10 +95,10 @@ def scrape():
                         new_found += 1
                     except: continue
 
-                print(f"🔄 스크롤 {i+1}회: 새 리뷰 {new_found}건 발견 (총 {len(reviews)}건)")
+                print(f"🔄 스크롤 {i+1}회: 총 {len(reviews)}건 확보")
                 
-                # 스크롤 내리기: 리뷰 컨테이너 위에서 마우스 휠 조작
-                page.mouse.wheel(0, 3000)
+                # 화면 중앙 지점에서 스크롤 (더 안정적임)
+                page.mouse.wheel(0, 2000)
                 page.wait_for_timeout(2000)
 
             # 3. 저장
@@ -96,10 +106,10 @@ def scrape():
             with open("public/data/reviews.json", "w", encoding="utf-8") as f:
                 json.dump(reviews, f, ensure_ascii=False, indent=4)
             
-            print(f"✨ 최종 성공! 총 {len(reviews)}건의 리뷰를 저장했습니다.")
+            print(f"✨ 수집 성공! 총 {len(reviews)}건 저장 완료.")
 
         except Exception as e:
-            print(f"❌ 에러: {e}")
+            print(f"❌ 에러 발생: {e}")
         finally:
             browser.close()
 
