@@ -10,18 +10,6 @@ STORE_NAME = "Paik's Noodle Amsterdam"
 DATA_PATH = "public/data/reviews.json"
 
 
-def normalize_url(url):
-    if not url:
-        return ""
-
-    url = url.strip()
-
-    if "/reviews" in url or "!1b1" in url:
-        return url
-
-    return url
-
-
 def safe_inner_text(locator, default=""):
     try:
         if locator.count() > 0:
@@ -44,12 +32,8 @@ def safe_attr(locator, attr, default=""):
 def parse_rating(label):
     if not label:
         return 5
-
     match = re.search(r"([1-5])", label)
-    if match:
-        return int(match.group(1))
-
-    return 5
+    return int(match.group(1)) if match else 5
 
 
 def click_cookie_buttons(page):
@@ -76,6 +60,44 @@ def click_cookie_buttons(page):
             pass
 
 
+def open_reviews_panel(page):
+    print("🔘 리뷰 패널 열기 시도 중...")
+
+    candidates = [
+        page.get_by_role("tab", name=re.compile(r"Reviews|리뷰|Recensies", re.I)),
+        page.get_by_role("button", name=re.compile(r"Reviews|리뷰|Recensies", re.I)),
+        page.locator("button[jsaction*='pane.rating.moreReviews']"),
+        page.locator("button[aria-label*='review']"),
+        page.locator("button[aria-label*='Review']"),
+        page.locator("button[aria-label*='리뷰']"),
+        page.locator("button[aria-label*='recensie']"),
+        page.locator("button[aria-label*='Recensie']"),
+    ]
+
+    for candidate in candidates:
+        try:
+            count = candidate.count()
+            if count > 0:
+                candidate.first.click(timeout=5000)
+                print("✅ 리뷰 버튼 클릭 성공")
+                page.wait_for_timeout(8000)
+                return True
+        except:
+            pass
+
+    try:
+        page.keyboard.press("Tab")
+        page.wait_for_timeout(500)
+        page.keyboard.press("Tab")
+        page.wait_for_timeout(500)
+        page.keyboard.press("Enter")
+        page.wait_for_timeout(8000)
+    except:
+        pass
+
+    return False
+
+
 def wait_for_reviews(page):
     selectors = [
         "div[role='article']",
@@ -83,7 +105,7 @@ def wait_for_reviews(page):
         "div[role='feed']",
     ]
 
-    for attempt in range(6):
+    for attempt in range(8):
         for selector in selectors:
             try:
                 count = page.locator(selector).count()
@@ -93,7 +115,7 @@ def wait_for_reviews(page):
             except:
                 pass
 
-        print(f"⏳ 리뷰 패널 대기 중... {attempt + 1}/6")
+        print(f"⏳ 리뷰 패널 대기 중... {attempt + 1}/8")
         page.wait_for_timeout(5000)
 
     return False
@@ -207,7 +229,6 @@ def extract_reviews(page):
                 )
 
                 rating = parse_rating(rating_label)
-
                 key = f"{author}|{date_str}|{text}"
 
                 if key in processed_keys:
@@ -265,8 +286,6 @@ def scrape():
         print("❌ GOOGLE_MAPS_URL 환경변수가 비어 있습니다.")
         return
 
-    target_url = normalize_url(GOOGLE_MAPS_URL)
-
     with sync_playwright() as p:
         browser = p.chromium.launch(
             headless=True,
@@ -298,14 +317,19 @@ def scrape():
         page.set_default_timeout(60000)
 
         try:
-            print(f"🌐 타겟 진입 시도: {target_url}")
-            page.goto(target_url, wait_until="domcontentloaded", timeout=60000)
+            print(f"🌐 타겟 진입 시도: {GOOGLE_MAPS_URL}")
+            page.goto(GOOGLE_MAPS_URL, wait_until="domcontentloaded", timeout=60000)
 
-            page.wait_for_timeout(3000)
+            page.wait_for_timeout(5000)
             click_cookie_buttons(page)
 
+            print("⏳ Google Maps 기본 페이지 렌더링 대기 중...")
+            page.wait_for_timeout(8000)
+
+            open_reviews_panel(page)
+
             print("⏳ Google Maps 리뷰 패널 렌더링 대기 중...")
-            page.wait_for_timeout(10000)
+            page.wait_for_timeout(8000)
 
             if not wait_for_reviews(page):
                 print("❌ 리뷰 패널을 찾지 못했습니다.")
