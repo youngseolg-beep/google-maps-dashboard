@@ -154,6 +154,87 @@ def wait_for_reviews(page):
     return False
 
 
+def set_reviews_sort_to_newest(page):
+    print("🆕 리뷰 정렬을 최신순으로 변경 시도 중...")
+
+    sort_button_patterns = [
+        r"Sort",
+        r"정렬",
+        r"Sorteer",
+        r"Sorteren",
+    ]
+
+    newest_patterns = [
+        r"Newest",
+        r"Newest first",
+        r"Most recent",
+        r"Latest",
+        r"최신",
+        r"최신순",
+        r"Nieuwste",
+        r"Meest recente",
+    ]
+
+    try:
+        sort_clicked = False
+
+        for pattern in sort_button_patterns:
+            try:
+                btn = page.get_by_role("button", name=re.compile(pattern, re.I)).first
+
+                if btn.count() > 0:
+                    btn.click(timeout=4000, force=True)
+                    page.wait_for_timeout(2000)
+                    print("✅ 정렬 버튼 클릭 성공")
+                    sort_clicked = True
+                    break
+            except:
+                pass
+
+        if not sort_clicked:
+            print("⚠️ 정렬 버튼 발견 실패")
+            return False
+
+        newest_clicked = False
+
+        for pattern in newest_patterns:
+            try:
+                option = page.get_by_role("menuitemradio", name=re.compile(pattern, re.I)).first
+
+                if option.count() > 0:
+                    option.click(timeout=4000, force=True)
+                    page.wait_for_timeout(4000)
+                    print("✅ 최신순 정렬 적용 성공")
+                    newest_clicked = True
+                    break
+            except:
+                pass
+
+        if not newest_clicked:
+            for pattern in newest_patterns:
+                try:
+                    option = page.get_by_text(re.compile(pattern, re.I)).first
+
+                    if option.count() > 0:
+                        option.click(timeout=4000, force=True)
+                        page.wait_for_timeout(4000)
+                        print("✅ 최신순 정렬 적용 성공")
+                        newest_clicked = True
+                        break
+                except:
+                    pass
+
+        if not newest_clicked:
+            print("⚠️ 최신순 옵션 클릭 실패")
+            return False
+
+        return True
+
+    except Exception as e:
+        print(f"⚠️ 최신순 정렬 설정 실패: {e}")
+        return False
+
+
 def click_more_buttons(page):
     patterns = [
         r"More",
@@ -540,6 +621,7 @@ def scrape():
                 page.wait_for_timeout(4000)
 
                 if wait_for_reviews(page):
+                    set_reviews_sort_to_newest(page)
                     reviews = extract_reviews(page)
                     if reviews:
                         break
