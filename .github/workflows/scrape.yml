@@ -1,25 +1,25 @@
 name: scrape-and-update
+
 on:
-  schedule:
-    - cron: '0 21 * * *' # 매일 새벽 6시 자동 실행
   workflow_dispatch:
-    inputs:
-      store_url:
-        description: '스크래핑할 구글 맵 주소'
-        required: true
-        default: ''
+  schedule:
+    - cron: "0 22 * * *"
+
+permissions:
+  contents: write
 
 jobs:
-  build:
+  scrape:
     runs-on: ubuntu-latest
+
     steps:
       - name: Checkout
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
-      - name: Set up Python
-        uses: actions/setup-python@v4
+      - name: Setup Python
+        uses: actions/setup-python@v5
         with:
-          python-version: '3.9'
+          python-version: "3.11"
 
       - name: Install dependencies
         run: |
@@ -27,15 +27,16 @@ jobs:
           playwright install chromium
 
       - name: Run scraper
-        env:
-          GOOGLE_COOKIES: ${{ secrets.GOOGLE_COOKIES }}
-          GOOGLE_MAPS_URL: ${{ github.event.inputs.store_url }}
         run: python scraper/scraper.py
 
-      - name: Commit and Push
+      - name: Commit updated data
         run: |
-          git config --global user.name "GitHub Actions"
-          git config --global user.email "actions@github.com"
+          git config --global user.name "github-actions"
+          git config --global user.email "github-actions@github.com"
+
           git add public/data/reviews.json
-          git commit -m "Update reviews data" || exit 0
+          git add public/data/crawl_status.json
+
+          git diff --cached --quiet || git commit -m "Auto update reviews data"
+
           git push
