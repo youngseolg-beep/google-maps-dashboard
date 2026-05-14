@@ -11,23 +11,22 @@ DATA_PATH = "public/data/reviews.json"
 
 MAX_SCROLL_ROUNDS = 10
 STOP_STALLED_ROUNDS = 2
-MIN_REVIEWS_TARGET = 60
+MIN_REVIEWS_TARGET = 70
 
 
 def build_url_candidates(url):
     base = url.strip()
     urls = [base]
 
-    if "!9m1!1b1" not in base:
-        reviews_url = base.split("?")[0].rstrip("/") + "/reviews/"
+    reviews_url = base.split("?")[0].rstrip("/") + "/reviews/"
+    if reviews_url not in urls:
         urls.append(reviews_url)
 
-    unique = []
-    for item in urls:
-        if item and item not in unique:
-            unique.append(item)
+    return urls
 
-    return unique
+
+def normalize_spaces(text):
+    return re.sub(r"\s+", " ", text or "").strip()
 
 
 def safe_inner_text(locator, default=""):
@@ -49,10 +48,6 @@ def safe_attr(locator, attr, default=""):
     return default
 
 
-def normalize_spaces(text):
-    return re.sub(r"\s+", " ", text or "").strip()
-
-
 def parse_rating(label):
     if not label:
         return 5
@@ -71,7 +66,6 @@ def click_cookie_buttons(page):
         r"모두 수락",
         r"Alles accepteren",
         r"Akkoord",
-        r"Alles accepteren",
     ]
 
     for pattern in patterns:
@@ -88,8 +82,8 @@ def click_cookie_buttons(page):
 
 def has_review_dom(page):
     selectors = [
-        "div[role='article']",
         ".jftiEf",
+        "div[role='article']",
         ".MyEned",
         ".wiI7pd",
         "div[role='feed']",
@@ -144,7 +138,7 @@ def wait_for_reviews(page):
         "div[role='feed']",
     ]
 
-    for attempt in range(6):
+    for attempt in range(8):
         for selector in selectors:
             try:
                 count = page.locator(selector).count()
@@ -154,7 +148,7 @@ def wait_for_reviews(page):
             except:
                 pass
 
-        print(f"⏳ 리뷰 패널 대기 중... {attempt + 1}/6")
+        print(f"⏳ 리뷰 패널 대기 중... {attempt + 1}/8")
         page.wait_for_timeout(3000)
 
     return False
@@ -193,9 +187,9 @@ def click_original_review_buttons(page):
         r"Original",
         r"원문 보기",
         r"원본 보기",
+        r"Bekijk origineel",
         r"Origineel bekijken",
         r"Oorspronkelijke",
-        r"Bekijk origineel",
     ]
 
     for pattern in patterns:
@@ -232,12 +226,7 @@ def get_review_cards(page):
 
 
 def get_review_text(card):
-    candidates = [
-        ".wiI7pd",
-        ".MyEned",
-    ]
-
-    for selector in candidates:
+    for selector in [".wiI7pd", ".MyEned"]:
         text = normalize_spaces(safe_inner_text(card.locator(selector), ""))
         if text:
             return text
@@ -246,32 +235,13 @@ def get_review_text(card):
 
 
 def get_review_date(card):
-    candidates = [
-        ".rsqaof",
-        "span[class*='rsqaof']",
-        "span:has-text('ago')",
-        "span:has-text('전')",
-        "span:has-text('geleden')",
-        "span:has-text('maand')",
-        "span:has-text('week')",
-        "span:has-text('dag')",
-        "span:has-text('jaar')",
-        "span:has-text('month')",
-        "span:has-text('week')",
-        "span:has-text('day')",
-        "span:has-text('year')",
-    ]
-
-    for selector in candidates:
-        try:
-            value = normalize_spaces(safe_inner_text(card.locator(selector), ""))
-            if value:
-                return value
-        except:
-            pass
+    value = normalize_spaces(safe_inner_text(card.locator(".rsqaof"), ""))
+    if value:
+        return value
 
     try:
         all_text = card.inner_text(timeout=1000)
+
         patterns = [
             r"\b\d+\s+(?:second|minute|hour|day|week|month|year)s?\s+ago\b",
             r"\b\d+\s*(?:초|분|시간|일|주|개월|년)\s*전\b",
@@ -291,21 +261,8 @@ def get_review_date(card):
 
 
 def get_review_author(card):
-    author = safe_inner_text(card.locator(".d4r55"), "")
-    if author:
-        return normalize_spaces(author)
-
-    try:
-        all_text = card.inner_text(timeout=1000).splitlines()
-        for line in all_text:
-            line = normalize_spaces(line)
-            if line and len(line) <= 60:
-                if not re.search(r"star|별|ago|전|geleden|review|리뷰|recensie", line, re.I):
-                    return line
-    except:
-        pass
-
-    return "Anonymous"
+    author = normalize_spaces(safe_inner_text(card.locator(".d4r55"), ""))
+    return author if author else "Anonymous"
 
 
 def get_review_rating(card):
@@ -389,6 +346,7 @@ def merge_reviews(existing, new_reviews):
 
     for review in new_reviews + existing:
         key = make_review_key(review)
+
         if not key or key in seen:
             continue
 
@@ -435,16 +393,12 @@ def extract_reviews(page):
                 if any(word in text for word in noise_words):
                     continue
 
-                author = get_review_author(card)
-                date_str = get_review_date(card)
-                rating = get_review_rating(card)
-
                 review = {
                     "store_name": STORE_NAME,
-                    "author": author,
-                    "rating": rating,
+                    "author": get_review_author(card),
+                    "rating": get_review_rating(card),
                     "text": text,
-                    "date": date_str,
+                    "date": get_review_date(card),
                     "collected_at": time.strftime("%Y-%m-%d"),
                 }
 
@@ -518,13 +472,13 @@ def scrape():
                 "--disable-dev-shm-usage",
                 "--no-sandbox",
                 "--disable-setuid-sandbox",
-                "--lang=nl-NL,nl,en-US,en",
+                "--lang=en-US,en",
             ],
         )
 
         context = browser.new_context(
             user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
-            locale="nl-NL",
+            locale="en-US",
             timezone_id="Europe/Amsterdam",
             viewport={"width": 1440, "height": 1000},
         )
@@ -551,11 +505,11 @@ def scrape():
                 except Exception as e:
                     print(f"⚠️ 페이지 로딩 중 오류. 계속 진행: {e}")
 
-                page.wait_for_timeout(4000)
+                page.wait_for_timeout(5000)
                 click_cookie_buttons(page)
 
                 print("⏳ Google Maps 기본 페이지 렌더링 대기 중...")
-                page.wait_for_timeout(5000)
+                page.wait_for_timeout(7000)
 
                 if not has_review_dom(page):
                     open_reviews_panel(page)
