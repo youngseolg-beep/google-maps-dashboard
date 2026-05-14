@@ -1,4 +1,4 @@
- <!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="ko">
 <head>
     <meta charset="UTF-8">
@@ -16,7 +16,7 @@
             <div>
                 <h1 class="text-2xl font-black text-slate-800">
                     📊 SV REVIEW MASTER
-                    <span class="text-blue-500 text-sm font-normal ml-2">v1.8.1</span>
+                    <span class="text-blue-500 text-sm font-normal ml-2">v1.8.2</span>
                 </h1>
                 <p class="text-xs text-slate-400 mt-1">Google Maps 리뷰 자동 수집 · 담당 SV별 리뷰 관리</p>
             </div>
@@ -81,18 +81,26 @@
                 </div>
 
                 <div class="flex flex-wrap gap-2">
-                    <button onclick="applyKeywordFilter('jjamppong', this)" class="keyword-btn px-3 py-2 rounded-full bg-red-50 text-red-600 text-[11px] font-black hover:bg-red-100 transition-all">🍜 Jjamppong</button>
-                    <button onclick="applyKeywordFilter('jjajang', this)" class="keyword-btn px-3 py-2 rounded-full bg-slate-100 text-slate-700 text-[11px] font-black hover:bg-slate-200 transition-all">🖤 Jjajang</button>
-                    <button onclick="applyKeywordFilter('tangsuyuk', this)" class="keyword-btn px-3 py-2 rounded-full bg-amber-50 text-amber-700 text-[11px] font-black hover:bg-amber-100 transition-all">🥩 Tangsuyuk</button>
-                    <button onclick="applyKeywordFilter('service', this)" class="keyword-btn px-3 py-2 rounded-full bg-blue-50 text-blue-700 text-[11px] font-black hover:bg-blue-100 transition-all">😊 Service</button>
-                    <button onclick="applyKeywordFilter('waiting', this)" class="keyword-btn px-3 py-2 rounded-full bg-orange-50 text-orange-700 text-[11px] font-black hover:bg-orange-100 transition-all">⏰ Waiting</button>
-                    <button onclick="applyKeywordFilter('delivery', this)" class="keyword-btn px-3 py-2 rounded-full bg-purple-50 text-purple-700 text-[11px] font-black hover:bg-purple-100 transition-all">🛵 Delivery</button>
-                    <button onclick="applyKeywordFilter('spicy', this)" class="keyword-btn px-3 py-2 rounded-full bg-pink-50 text-pink-700 text-[11px] font-black hover:bg-pink-100 transition-all">🌶 Spicy</button>
-                    <button onclick="applyKeywordFilter('portion', this)" class="keyword-btn px-3 py-2 rounded-full bg-emerald-50 text-emerald-700 text-[11px] font-black hover:bg-emerald-100 transition-all">🍚 Portion</button>
-                    <button onclick="applyKeywordFilter('price', this)" class="keyword-btn px-3 py-2 rounded-full bg-yellow-50 text-yellow-700 text-[11px] font-black hover:bg-yellow-100 transition-all">💰 Price</button>
-                    <button onclick="applyKeywordFilter('clean', this)" class="keyword-btn px-3 py-2 rounded-full bg-cyan-50 text-cyan-700 text-[11px] font-black hover:bg-cyan-100 transition-all">🧼 Clean</button>
-                    <button onclick="clearKeywordFilter()" class="px-3 py-2 rounded-full bg-black text-white text-[11px] font-black hover:opacity-80 transition-all">✕ Reset</button>
-                </div>
+    <button title="Signature menu keywords: jjajangmyeon, jjamppong, tangsuyuk, woosamgyeop, samgyeopsal, galbi, kimchi jjigae, bibimbap, yeoltan bulgogi, pork belly, Korean BBQ" onclick="applyKeywordFilter('food', this)" class="keyword-btn px-3 py-2 rounded-full bg-orange-50 text-orange-700 text-[11px] font-black hover:bg-orange-100 transition-all">🍽 Food</button>
+
+    <button title="Flavor, salty, salt, cold, fresh, too spicy, too salty, bland, seasoning, taste" onclick="applyKeywordFilter('taste', this)" class="keyword-btn px-3 py-2 rounded-full bg-red-50 text-red-600 text-[11px] font-black hover:bg-red-100 transition-all">#Taste</button>
+
+    <button title="Value, price, expensive, cheap, worth, reasonable, quality, qality, portion, cost" onclick="applyKeywordFilter('value', this)" class="keyword-btn px-3 py-2 rounded-full bg-yellow-50 text-yellow-700 text-[11px] font-black hover:bg-yellow-100 transition-all">#Value</button>
+
+    <button title="Service, staff, friendly, rude, kind, attitude, response, hospitality" onclick="applyKeywordFilter('service', this)" class="keyword-btn px-3 py-2 rounded-full bg-blue-50 text-blue-700 text-[11px] font-black hover:bg-blue-100 transition-all">#Service</button>
+
+    <button title="System, order, ordering, wrong order, missing order, payment, kiosk, queue, operation" onclick="applyKeywordFilter('operation', this)" class="keyword-btn px-3 py-2 rounded-full bg-indigo-50 text-indigo-700 text-[11px] font-black hover:bg-indigo-100 transition-all">#Operation</button>
+
+    <button title="Booking, reservation, table booking, waiting, wait, queue" onclick="applyKeywordFilter('reservation', this)" class="keyword-btn px-3 py-2 rounded-full bg-violet-50 text-violet-700 text-[11px] font-black hover:bg-violet-100 transition-all">#Reservation</button>
+
+    <button title="Hygiene, clean, dirty, toilet, bathroom, smell, sanitary, sticky" onclick="applyKeywordFilter('hygiene', this)" class="keyword-btn px-3 py-2 rounded-full bg-teal-50 text-teal-700 text-[11px] font-black hover:bg-teal-100 transition-all">#Hygiene</button>
+
+    <button title="Again, revisit, come back, return, never again, will be back" onclick="applyKeywordFilter('revisit', this)" class="keyword-btn px-3 py-2 rounded-full bg-pink-50 text-pink-700 text-[11px] font-black hover:bg-pink-100 transition-all">#Revisit</button>
+
+    <button title="Authentic, charcoal, carcoal, Korean style, traditional, original, smoky, real Korean" onclick="applyKeywordFilter('authentic', this)" class="keyword-btn px-3 py-2 rounded-full bg-amber-50 text-amber-700 text-[11px] font-black hover:bg-amber-100 transition-all">#Authentic</button>
+
+    <button onclick="clearKeywordFilter()" class="px-3 py-2 rounded-full bg-black text-white text-[11px] font-black hover:opacity-80 transition-all">✕ Reset</button>
+</div>
             </div>
         </div>
 
@@ -146,18 +154,74 @@
             '최성환': ['indonesia', 'philippines', '인도네시아', '필리핀']
         };
 
-        const KEYWORD_GROUPS = {
-            jjamppong: ['jjampong', 'jjamppong', 'jjam pong', 'jampong', 'janmpong', 'spicy noodle', 'spicy soup', 'seafood noodle'],
-            jjajang: ['jjajang', 'black bean noodle', 'black noodle'],
-            tangsuyuk: ['tangsuyuk', 'sweet sour pork', 'sweet and sour pork', 'fried pork'],
-            service: ['service', 'friendly', 'kind', 'staff', 'rude'],
-            waiting: ['wait', 'waiting', 'slow', 'long time'],
-            delivery: ['delivery', 'takeout', 'take away', 'ubereats'],
-            spicy: ['spicy', 'hot', 'too spicy', 'mild'],
-            portion: ['portion', 'small', 'large', 'quantity'],
-            price: ['price', 'expensive', 'cheap', 'value'],
-            clean: ['clean', 'dirty', 'hygiene', 'toilet']
-        };
+       const KEYWORD_GROUPS = {
+    food: [
+        '짜장면', '짜장', 'jjajangmyeon', 'jajangmyeon', 'jjajang', 'jajang', 'black bean noodle', 'black noodle',
+        '짬뽕', 'jjamppong', 'jjampong', 'jjam pong', 'jamppong', 'jampong', 'spicy seafood noodle', 'seafood noodle', 'spicy noodle',
+        '탕수육', 'tangsuyuk', 'tangsooyuk', 'tang su yuk', 'tang soo yuk', 'sweet and sour pork', 'fried pork',
+        '우삼겹', 'woosamgyeop', 'woosamgyup', 'woo samgyeop', 'woo samgyup', 'usamgyeop', 'usamgyup', 'beef belly',
+        '삼겹살', 'samgyeopsal', 'samgyupsal', 'samgyeop sal', 'samgyup sal', 'pork belly',
+        '양념갈비', 'yangnyeom galbi', 'yangnyum galbi', 'yangnyeom kalbi', 'marinated galbi', 'marinated ribs', 'galbi', 'kalbi',
+        '김치찌개', 'kimchi jjigae', 'kimchi jigae', 'kimchi stew',
+        '돌솥비빔밥', 'dolsot bibimbap', 'dolsot bibimbab', 'stone bowl bibimbap', 'hot stone bibimbap', 'bibimbap', 'bibimbab',
+        '열탄불고기', 'yeoltan bulgogi', 'yeol tan bulgogi', 'yultan bulgogi', 'grilled bulgogi', 'bulgogi',
+        '7분돼지김치', '7분 돼지김치', 'seven minute pork kimchi', '7 minute pork kimchi', '7-min pork kimchi', 'pork kimchi',
+        '항정살', 'hangjeongsal', 'hangjung sal', 'hangjeong sal', 'pork jowl',
+        '오겹살', 'ogyeopsal', 'ogyupsal', 'ohgyeopsal', 'five layer pork'
+    ],
+
+    taste: [
+        'flavor', 'flavour', 'taste', 'tasty', 'delicious', 'yummy', 'good taste', 'bad taste',
+        'bland', 'rich', 'savory', 'savoury', 'seasoning', 'seasoned',
+        'salty', 'too salty', 'over salted', 'oversalted', 'salt', 'salted', 'less salt', 'more salt', 'sodium',
+        'cold', 'not hot', 'lukewarm', 'cool', 'served cold',
+        'fresh', 'freshness', 'not fresh', 'stale', 'old',
+        'too', 'too much', 'too spicy', 'too cold', 'too oily', 'too sweet',
+        '맛', '맛있', '맛없', '풍미', '간', '간이', '짜다', '짠', '너무 짜', '소금', '염도',
+        '차갑', '식었', '미지근', '신선', '신선도', '오래된', '너무', '과하게', '지나치게'
+    ],
+
+    value: [
+        'value', 'worth', 'reasonable', 'expensive', 'cheap', 'price', 'pricing', 'overpriced', 'cost',
+        'quality', 'qality', 'poor quality', 'good quality', 'bad quality', 'standard',
+        'portion', 'small portion', 'large portion', 'quantity', 'amount',
+        '가성비', '가격', '비싸', '저렴', '퀄리티', '품질', '수준', '양', '양이', '적다', '많다'
+    ],
+
+    service: [
+        'service', 'staff', 'friendly', 'kind', 'rude', 'unfriendly', 'attitude', 'hospitality',
+        'response', 'helpful', 'manager', 'server', 'waiter', 'waitress',
+        '서비스', '직원', '친절', '불친절', '응대', '태도', '매니저'
+    ],
+
+    operation: [
+        'system', 'process', 'operation', 'queue', 'kiosk', 'payment', 'cashier', 'app', 'table', 'seat',
+        'order', 'ordered', 'ordering', 'wrong order', 'missing order', 'mistake', 'serve', 'served',
+        '운영', '시스템', '프로세스', '결제', '키오스크', '계산', '주문', '오주문', '누락', '서빙', '좌석', '테이블'
+    ],
+
+    reservation: [
+        'booking', 'reservation', 'reserve', 'reserved', 'booked', 'table booking',
+        'wait', 'waiting', 'long wait', 'queue', 'line',
+        '예약', '웨이팅', '대기', '줄', '기다림'
+    ],
+
+    hygiene: [
+        'hygiene', 'clean', 'dirty', 'toilet', 'bathroom', 'restroom', 'smell', 'sticky', 'sanitary',
+        '위생', '청결', '더럽', '지저분', '화장실', '냄새', '끈적'
+    ],
+
+    revisit: [
+        'again', 'come back', 'return', 'revisit', 'visit again', 'never again', 'will be back',
+        '재방문', '다시', '또', '두번', '다시는', '또 올'
+    ],
+
+    authentic: [
+        'authentic', 'traditional', 'real korean', 'korean style', 'original', 'local taste', 'genuine',
+        'charcoal', 'carcoal', 'char coal', 'coal', 'grill', 'grilled', 'smoky', 'smoke', 'bbq', 'barbecue',
+        '정통', '한국식', '한국 맛', '현지', '오리지널', '숯', '숯불', '그릴', '바비큐'
+    ]
+};
 
         let allReviews = [];
         let crawlStatus = null;
@@ -299,6 +363,11 @@
             return labels[svName] || '-';
         }
 
+        function getGoogleMapsReviewUrl(storeName) {
+            const query = encodeURIComponent(`${storeName} Google Maps reviews`);
+            return `https://www.google.com/maps/search/?api=1&query=${query}`;
+        }
+
         function renderStoreList(data) {
             const stores = [...new Set(data.map(r => r.store_name || 'Unknown Store'))];
 
@@ -341,14 +410,12 @@
                 }).length;
 
                 const isActive = currentStore === storeName;
+                const mapsUrl = getGoogleMapsReviewUrl(storeName);
 
                 return `
-                    <button
-                        onclick="filterStore('${escapeForOnclick(storeName)}', this)"
+                    <div
                         class="
                             store-btn
-                            w-full
-                            text-left
                             rounded-2xl
                             border
                             transition-all
@@ -358,68 +425,79 @@
                                 : 'border-slate-200 bg-white hover:bg-slate-50'}
                         "
                     >
-                        <div class="flex items-start justify-between gap-2">
-                            <div class="min-w-0">
-                                <div class="text-sm font-black text-slate-800 leading-snug">
-                                    ${escapeHtml(storeName)}
-                                </div>
-
-                                <div class="text-[10px] text-slate-400 mt-1">
-                                    최근 리뷰: ${escapeHtml(latestReview)}
-                                </div>
-                            </div>
-
-                            ${
-                                lowReviews > 0
-                                ? `
-                                    <div class="px-2 py-1 rounded-full bg-red-100 text-red-600 text-[10px] font-black shrink-0">
-                                        LOW ${lowReviews}
+                        <button
+                            onclick="filterStore('${escapeForOnclick(storeName)}')"
+                            class="w-full text-left"
+                        >
+                            <div class="flex items-start justify-between gap-2">
+                                <div class="min-w-0">
+                                    <div class="text-sm font-black text-slate-800 leading-snug">
+                                        ${escapeHtml(storeName)}
                                     </div>
-                                `
-                                : `
-                                    <div class="px-2 py-1 rounded-full bg-emerald-100 text-emerald-600 text-[10px] font-black shrink-0">
-                                        SAFE
+
+                                    <div class="text-[10px] text-slate-400 mt-1">
+                                        최근 리뷰: ${escapeHtml(latestReview)}
                                     </div>
-                                `
-                            }
-                        </div>
-
-                        <div class="grid grid-cols-2 gap-2 mt-4">
-                            <div class="bg-slate-50 rounded-xl p-3">
-                                <div class="text-[10px] text-slate-400 font-bold">
-                                    전체 리뷰
                                 </div>
 
-                                <div class="text-lg font-black text-slate-800 mt-1">
-                                    ${totalReviews}
+                                ${
+                                    lowReviews > 0
+                                    ? `
+                                        <div class="px-2 py-1 rounded-full bg-red-100 text-red-600 text-[10px] font-black shrink-0">
+                                            LOW ${lowReviews}
+                                        </div>
+                                    `
+                                    : `
+                                        <div class="px-2 py-1 rounded-full bg-emerald-100 text-emerald-600 text-[10px] font-black shrink-0">
+                                            SAFE
+                                        </div>
+                                    `
+                                }
+                            </div>
+
+                            <div class="grid grid-cols-2 gap-2 mt-4">
+                                <div class="bg-slate-50 rounded-xl p-3">
+                                    <div class="text-[10px] text-slate-400 font-bold">
+                                        전체 리뷰
+                                    </div>
+
+                                    <div class="text-lg font-black text-slate-800 mt-1">
+                                        ${totalReviews}
+                                    </div>
+                                </div>
+
+                                <div class="bg-slate-50 rounded-xl p-3">
+                                    <div class="text-[10px] text-slate-400 font-bold">
+                                        최근 7일
+                                    </div>
+
+                                    <div class="text-lg font-black text-blue-600 mt-1">
+                                        ${recent7Days}
+                                    </div>
                                 </div>
                             </div>
 
-                            <div class="bg-slate-50 rounded-xl p-3">
-                                <div class="text-[10px] text-slate-400 font-bold">
-                                    최근 7일
-                                </div>
-
-                                <div class="text-lg font-black text-blue-600 mt-1">
-                                    ${recent7Days}
-                                </div>
+                            <div class="mt-3 text-[10px] text-slate-400">
+                                마지막 수집: ${escapeHtml(collectedAt)}
                             </div>
-                        </div>
+                        </button>
 
-                        <div class="mt-3 text-[10px] text-slate-400">
-                            마지막 수집: ${escapeHtml(collectedAt)}
-                        </div>
-                    </button>
+                        <a
+                            href="${mapsUrl}"
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            class="mt-3 block w-full text-center rounded-xl bg-slate-900 text-white text-[11px] font-black py-2 hover:opacity-80 transition-all"
+                        >
+                            Google Maps 리뷰 열기 ↗
+                        </a>
+                    </div>
                 `;
             });
 
             storeListDiv.innerHTML = `
-                <button
-                    onclick="filterStore('ALL', this)"
+                <div
                     class="
                         store-btn
-                        w-full
-                        text-left
                         rounded-2xl
                         border
                         p-4
@@ -430,33 +508,35 @@
                             : 'border-slate-200 bg-white hover:bg-slate-50'}
                     "
                 >
-                    <div class="flex items-center justify-between">
-                        <div>
-                            <div class="text-sm font-black text-slate-800">
-                                🌍 전체 매장
+                    <button
+                        onclick="filterStore('ALL')"
+                        class="w-full text-left"
+                    >
+                        <div class="flex items-center justify-between">
+                            <div>
+                                <div class="text-sm font-black text-slate-800">
+                                    🌍 전체 매장
+                                </div>
+
+                                <div class="text-[10px] text-slate-400 mt-1">
+                                    전체 리뷰 모니터링
+                                </div>
                             </div>
 
-                            <div class="text-[10px] text-slate-400 mt-1">
-                                전체 리뷰 모니터링
+                            <div class="text-xl font-black text-slate-800">
+                                ${data.length}
                             </div>
                         </div>
-
-                        <div class="text-xl font-black text-slate-800">
-                            ${data.length}
-                        </div>
-                    </div>
-                </button>
+                    </button>
+                </div>
 
                 ${cards.join('')}
             `;
         }
 
-        function filterStore(name, btn) {
+        function filterStore(name) {
             currentStore = name;
             visibleReviewCount = 30;
-
-            document.querySelectorAll('.store-btn').forEach(b => b.classList.remove('active-store'));
-            if (btn) btn.classList.add('active-store');
 
             renderStoreList(currentSVReviews);
             refreshCurrentReviews();
