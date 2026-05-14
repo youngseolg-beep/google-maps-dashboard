@@ -1,0 +1,45 @@
+{
+    "last_crawled_at": "2026-05-14 06:11:15",
+    "total_stores": 4,
+    "success_count": 4,
+    "failed_count": 0,
+    "failed_stores": [],
+    "stores": [
+        {
+            "store_name": "Paik's Noodle Amsterdam",
+            "sv": "강소영",
+            "country": "Netherlands",
+            "ok": true,
+            "collected_count": 63,
+            "error": "",
+            "crawled_at": "2026-05-14 06:07:34"
+        },
+        {
+            "store_name": "Bornga Wolter Monginsidi",
+            "sv": "최성환",
+            "country": "Indonesia",
+            "ok": true,
+            "collected_count": 56,
+            "error": "",
+            "crawled_at": "2026-05-14 06:09:00"
+        },
+        {
+            "store_name": "Saemaeul Thailand",
+            "sv": "소도희",
+            "country": "Thailand",
+            "ok": true,
+            "collected_count": 53,
+            "error": "",
+            "crawled_at": "2026-05-14 06:09:45"
+        },
+        {
+            "store_name": "Paik's Noodle Singapore",
+            "sv": "이여명",
+            "country": "Singapore",
+            "ok": true,
+            "collected_count": 50,
+            "error": "",
+            "crawled_at": "2026-05-14 06:11:12"
+        }
+    ]
+}
