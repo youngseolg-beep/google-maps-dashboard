@@ -16,12 +16,31 @@
             <div>
                 <h1 class="text-2xl font-black text-slate-800">
                     📊 SV REVIEW MASTER
-                    <span class="text-blue-500 text-sm font-normal ml-2">v1.6.0</span>
+                    <span class="text-blue-500 text-sm font-normal ml-2">v1.7.0</span>
                 </h1>
                 <p class="text-xs text-slate-400 mt-1">Google Maps 리뷰 자동 수집 · 담당 SV별 리뷰 관리</p>
             </div>
             <div id="status-tag" class="px-3 py-1 bg-green-100 rounded-full text-[10px] font-bold text-green-600">데이터 연결 중...</div>
         </header>
+
+        <div id="global-summary" class="grid grid-cols-4 gap-4 mb-6 hidden">
+            <div class="bg-white rounded-2xl shadow-sm p-4">
+                <div class="text-[10px] text-slate-400 font-bold">전체 리뷰 수</div>
+                <div id="global-total" class="text-xl font-black text-slate-800 mt-1">0</div>
+            </div>
+            <div class="bg-white rounded-2xl shadow-sm p-4">
+                <div class="text-[10px] text-slate-400 font-bold">마지막 수집일</div>
+                <div id="global-collected" class="text-sm font-black text-blue-600 mt-2">-</div>
+            </div>
+            <div class="bg-white rounded-2xl shadow-sm p-4">
+                <div class="text-[10px] text-slate-400 font-bold">최신 리뷰 작성일</div>
+                <div id="global-latest" class="text-sm font-black text-emerald-600 mt-2">-</div>
+            </div>
+            <div class="bg-white rounded-2xl shadow-sm p-4">
+                <div class="text-[10px] text-slate-400 font-bold">저평점 리뷰</div>
+                <div id="global-low" class="text-xl font-black text-red-500 mt-1">0</div>
+            </div>
+        </div>
 
         <div class="grid grid-cols-4 gap-4 mb-6">
             <button onclick="selectSV('이여명', this)" class="sv-tab p-4 bg-white rounded-xl shadow-sm font-bold text-slate-600 transition-all">
@@ -63,12 +82,7 @@
             <div>
                 <div class="flex items-center justify-between gap-3 flex-wrap mb-2">
                     <div class="text-[10px] font-black text-slate-400">KEYWORD FILTER</div>
-
-                    <button
-                        onclick="toggleLowRatingMode(this)"
-                        id="low-rating-toggle"
-                        class="px-3 py-2 rounded-full bg-red-50 text-red-600 text-[11px] font-black hover:bg-red-100 transition-all"
-                    >
+                    <button onclick="toggleLowRatingMode(this)" id="low-rating-toggle" class="px-3 py-2 rounded-full bg-red-50 text-red-600 text-[11px] font-black hover:bg-red-100 transition-all">
                         🚨 LOW REVIEWS ONLY
                     </button>
                 </div>
@@ -165,12 +179,27 @@
 
             if (loaded) {
                 status.innerText = `연결됨: ${allReviews.length}건`;
+                renderGlobalSummary();
                 document.getElementById('review-container').innerHTML = '<div class="text-center py-20 text-slate-400 font-bold">상단 SV 버튼을 눌러주세요.</div>';
             } else {
                 status.innerText = '데이터 연결 실패';
                 status.className = 'px-3 py-1 bg-red-100 rounded-full text-[10px] font-bold text-red-600';
                 document.getElementById('review-container').innerHTML = '<div class="text-center py-20 text-red-400 font-bold">reviews.json을 불러오지 못했습니다.</div>';
             }
+        }
+
+        function renderGlobalSummary() {
+            document.getElementById('global-summary').classList.remove('hidden');
+
+            const total = allReviews.length;
+            const lowCount = allReviews.filter(r => Number(r.rating || 0) <= 3).length;
+            const collectedDates = allReviews.map(r => r.collected_at).filter(Boolean).sort().reverse();
+            const sortedByDate = [...allReviews].sort((a, b) => estimateDateAgeScore(a.date) - estimateDateAgeScore(b.date));
+
+            document.getElementById('global-total').innerText = total;
+            document.getElementById('global-collected').innerText = collectedDates[0] || '-';
+            document.getElementById('global-latest').innerText = sortedByDate[0]?.date || '-';
+            document.getElementById('global-low').innerText = lowCount;
         }
 
         function normalizeText(value) {
@@ -310,14 +339,12 @@
 
             return data.filter(review => {
                 const text = normalizeText(review.text || '');
-
                 return keywords.some(keyword => text.includes(keyword.toLowerCase()));
             });
         }
 
         function filterLowRatings(data) {
             if (!lowRatingOnly) return data;
-
             return data.filter(review => Number(review.rating || 0) <= 3);
         }
 
@@ -431,10 +458,7 @@
             if (sorted.length > visibleReviewCount) {
                 container.innerHTML += `
                     <div class="flex justify-center pt-2">
-                        <button
-                            onclick="loadMoreReviews()"
-                            class="px-5 py-3 rounded-xl bg-slate-900 text-white text-xs font-black hover:opacity-80 transition-all"
-                        >
+                        <button onclick="loadMoreReviews()" class="px-5 py-3 rounded-xl bg-slate-900 text-white text-xs font-black hover:opacity-80 transition-all">
                             리뷰 더보기 (${sorted.length - visibleReviewCount}개 남음)
                         </button>
                     </div>
