@@ -2,6 +2,8 @@ import os
 import json
 import time
 import re
+from datetime import datetime
+from zoneinfo import ZoneInfo
 from playwright.sync_api import sync_playwright
 
 DATA_PATH = "public/data/reviews.json"
@@ -10,6 +12,13 @@ STATUS_PATH = "public/data/crawl_status.json"
 MAX_SCROLL_ROUNDS = 8
 STOP_STALLED_ROUNDS = 2
 MIN_REVIEWS_TARGET = 50
+
+KST = ZoneInfo("Asia/Seoul")
+
+
+def now_kst():
+    return datetime.now(KST)
+
 
 STORES = [
     {
@@ -27,19 +36,19 @@ STORES = [
         "url": "https://www.google.com/maps/place/Bornga+Wolter+Monginsidi/@-6.2393833,106.8059313,17z/data=!4m8!3m7!1s0x2e69f16794afe1df:0x3fc1a290a209cef6!8m2!3d-6.2393833!4d106.8085062!9m1!1b1!16s%2Fg%2F1tfd9kxv?entry=ttu&g_ep=EgoyMDI2MDUxMS4wIKXMDSoASAFQAw%3D%3D",
     },
     {
-    "store_name": "Saemaeul Thailand",
-    "sv": "소도희",
-    "country": "Thailand",
-    "city": "Bangkok",
-    "url": "https://www.google.com/maps/place/%EC%83%88%EB%A7%88%EC%9D%84%EC%8B%9D%EB%8B%B9/@13.7305942,100.397158,11z/data=!4m12!1m2!2m1!1sTHAILAND+SAEMAEUL!3m8!1s0x30e29f07225ca6c7:0x5f5dc0b64eff0693!8m2!3d13.7475043!4d100.5395703!9m1!1b1!15sChFUSEFJTEFORCBTQUVNQUVVTFoTIhF0aGFpbGFuZCBzYWVtYWV1bJIBGmtvcmVhbl9iYXJiZWN1ZV9yZXN0YXVyYW504AEA!16s%2Fg%2F11rghd7fwy?entry=ttu&g_ep=EgoyMDI2MDUwNi4wIKXMDSoASAFQAw%3D%3D",
-},
-{
-    "store_name": "Paik's Noodle Singapore",
-    "sv": "이여명",
-    "country": "Singapore",
-    "city": "Singapore",
-    "url": "https://www.google.com/maps/place/Paik's+Noodle/@1.2633826,103.8020909,14z/data=!3m1!5s0x31da19af25771877:0x64dca8531f0ccf88!4m12!1m2!2m1!1sSINGAPORE+PAIKS+NOODLE!3m8!1s0x31da191c85c285cf:0xcf1e805f3426a6f7!8m2!3d1.2948016!4d103.8591949!9m1!1b1!15sChZTSU5HQVBPUkUgUEFJS1MgTk9PRExFWhgiFnNpbmdhcG9yZSBwYWlrcyBub29kbGWSARFrb3JlYW5fcmVzdGF1cmFudJoBJENoZERTVWhOTUc5blMwVkpRMEZuU1VSV2FHRmxkWFZCUlJBQuABAPoBBAgYED0!16s%2Fg%2F11vkfsncfp?entry=ttu&g_ep=EgoyMDI2MDUwNi4wIKXMDSoASAFQAw%3D%3D",
-},
+        "store_name": "Saemaeul Thailand",
+        "sv": "소도희",
+        "country": "Thailand",
+        "city": "Bangkok",
+        "url": "https://www.google.com/maps/place/%EC%83%88%EB%A7%88%EC%9D%84%EC%8B%9D%EB%8B%B9/@13.7305942,100.397158,11z/data=!4m12!1m2!2m1!1sTHAILAND+SAEMAEUL!3m8!1s0x30e29f07225ca6c7:0x5f5dc0b64eff0693!8m2!3d13.7475043!4d100.5395703!9m1!1b1!15sChFUSEFJTEFORCBTQUVNQUVVTFoTIhF0aGFpbGFuZCBzYWVtYWV1bJIBGmtvcmVhbl9iYXJiZWN1ZV9yZXN0YXVyYW504AEA!16s%2Fg%2F11rghd7fwy?entry=ttu&g_ep=EgoyMDI2MDUwNi4wIKXMDSoASAFQAw%3D%3D",
+    },
+    {
+        "store_name": "Paik's Noodle Singapore",
+        "sv": "이여명",
+        "country": "Singapore",
+        "city": "Singapore",
+        "url": "https://www.google.com/maps/place/Paik's+Noodle/@1.2633826,103.8020909,14z/data=!3m1!5s0x31da19af25771877:0x64dca8531f0ccf88!4m12!1m2!2m1!1sSINGAPORE+PAIKS+NOODLE!3m8!1s0x31da191c85c285cf:0xcf1e805f3426a6f7!8m2!3d1.2948016!4d103.8591949!9m1!1b1!15sChZTSU5HQVBPUkUgUEFJS1MgTk9PRExFWhgiFnNpbmdhcG9yZSBwYWlrcyBub29kbGWSARFrb3JlYW5fcmVzdGF1cmFudJoBJENoZERTVWhOTUc5blMwVkpRMEZuU1VSV2FHRmxkWFZCUlJBQuABAPoBBAgYED0!16s%2Fg%2F11vkfsncfp?entry=ttu&g_ep=EgoyMDI2MDUwNi4wIKXMDSoASAFQAw%3D%3D",
+    },
 ]
 
 
@@ -544,7 +553,7 @@ def extract_reviews(page, store):
                     "rating": get_review_rating(card),
                     "text": text,
                     "date": get_review_date(card),
-                    "collected_at": time.strftime("%Y-%m-%d"),
+                    "collected_at": now_kst().strftime("%Y-%m-%d"),
                 }
 
                 key = make_review_key(review)
@@ -625,7 +634,7 @@ def scrape_store(page, store):
                     "country": store["country"],
                     "collected_count": len(reviews),
                     "error": "",
-                    "crawled_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+                    "crawled_at": now_kst().strftime("%Y-%m-%d %H:%M:%S"),
                     "reviews": reviews,
                 }
 
@@ -639,7 +648,7 @@ def scrape_store(page, store):
         "country": store["country"],
         "collected_count": 0,
         "error": "리뷰 DOM 감지 실패 또는 리뷰 없음",
-        "crawled_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+        "crawled_at": now_kst().strftime("%Y-%m-%d %H:%M:%S"),
         "reviews": [],
     }
 
@@ -668,7 +677,7 @@ def save_crawl_status(results):
     os.makedirs("public/data", exist_ok=True)
 
     status = {
-        "last_crawled_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+        "last_crawled_at": now_kst().strftime("%Y-%m-%d %H:%M:%S"),
         "total_stores": len(results),
         "success_count": len([r for r in results if r["ok"]]),
         "failed_count": len([r for r in results if not r["ok"]]),
