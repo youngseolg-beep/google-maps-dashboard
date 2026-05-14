@@ -16,29 +16,22 @@
             <div>
                 <h1 class="text-2xl font-black text-slate-800">
                     📊 SV REVIEW MASTER
-                    <span class="text-blue-500 text-sm font-normal ml-2">v1.7.0</span>
+                    <span class="text-blue-500 text-sm font-normal ml-2">v1.8.0</span>
                 </h1>
                 <p class="text-xs text-slate-400 mt-1">Google Maps 리뷰 자동 수집 · 담당 SV별 리뷰 관리</p>
             </div>
             <div id="status-tag" class="px-3 py-1 bg-green-100 rounded-full text-[10px] font-bold text-green-600">데이터 연결 중...</div>
         </header>
 
-        <div id="global-summary" class="grid grid-cols-4 gap-4 mb-6 hidden">
+        <div id="global-summary" class="grid grid-cols-2 gap-4 mb-6 hidden">
             <div class="bg-white rounded-2xl shadow-sm p-4">
-                <div class="text-[10px] text-slate-400 font-bold">전체 리뷰 수</div>
-                <div id="global-total" class="text-xl font-black text-slate-800 mt-1">0</div>
+                <div class="text-[10px] text-slate-400 font-bold">전체 리뷰 마지막 크롤링 시간</div>
+                <div id="global-crawled-at" class="text-sm font-black text-blue-600 mt-2">-</div>
             </div>
             <div class="bg-white rounded-2xl shadow-sm p-4">
-                <div class="text-[10px] text-slate-400 font-bold">마지막 수집일</div>
-                <div id="global-collected" class="text-sm font-black text-blue-600 mt-2">-</div>
-            </div>
-            <div class="bg-white rounded-2xl shadow-sm p-4">
-                <div class="text-[10px] text-slate-400 font-bold">최신 리뷰 작성일</div>
-                <div id="global-latest" class="text-sm font-black text-emerald-600 mt-2">-</div>
-            </div>
-            <div class="bg-white rounded-2xl shadow-sm p-4">
-                <div class="text-[10px] text-slate-400 font-bold">저평점 리뷰</div>
-                <div id="global-low" class="text-xl font-black text-red-500 mt-1">0</div>
+                <div class="text-[10px] text-slate-400 font-bold">크롤링 성공 여부</div>
+                <div id="global-crawl-status" class="text-sm font-black text-emerald-600 mt-2">-</div>
+                <div id="global-failed-stores" class="text-[10px] text-red-500 mt-2 hidden"></div>
             </div>
         </div>
 
@@ -110,18 +103,22 @@
             </div>
 
             <div class="w-3/4">
-                <div id="review-summary" class="mb-4 grid grid-cols-3 gap-3 hidden">
+                <div id="review-summary" class="mb-4 grid grid-cols-4 gap-3 hidden">
                     <div class="bg-white rounded-2xl shadow-sm p-4">
-                        <div class="text-[10px] text-slate-400 font-bold">리뷰 수</div>
+                        <div class="text-[10px] text-slate-400 font-bold">해당 매장 전체 리뷰 수</div>
                         <div id="summary-count" class="text-xl font-black text-slate-800 mt-1">0</div>
                     </div>
                     <div class="bg-white rounded-2xl shadow-sm p-4">
-                        <div class="text-[10px] text-slate-400 font-bold">평균 별점</div>
-                        <div id="summary-rating" class="text-xl font-black text-amber-500 mt-1">0.0</div>
+                        <div class="text-[10px] text-slate-400 font-bold">저평점 리뷰 수</div>
+                        <div id="summary-low" class="text-xl font-black text-red-500 mt-1">0</div>
                     </div>
                     <div class="bg-white rounded-2xl shadow-sm p-4">
-                        <div class="text-[10px] text-slate-400 font-bold">선택 매장</div>
-                        <div id="summary-store" class="text-sm font-black text-blue-600 mt-2 truncate">전체</div>
+                        <div class="text-[10px] text-slate-400 font-bold">최신 리뷰 작성일</div>
+                        <div id="summary-latest" class="text-sm font-black text-emerald-600 mt-2">-</div>
+                    </div>
+                    <div class="bg-white rounded-2xl shadow-sm p-4">
+                        <div class="text-[10px] text-slate-400 font-bold">마지막 수집일</div>
+                        <div id="summary-collected" class="text-sm font-black text-blue-600 mt-2">-</div>
                     </div>
                 </div>
 
@@ -152,6 +149,7 @@
         };
 
         let allReviews = [];
+        let crawlStatus = null;
         let currentSV = null;
         let currentSVReviews = [];
         let currentStore = 'ALL';
@@ -161,15 +159,27 @@
         let visibleReviewCount = 30;
 
         async function init() {
-            const paths = ['data/reviews.json', 'public/data/reviews.json', 'reviews.json'];
-            let loaded = false;
+            const reviewPaths = ['data/reviews.json', 'public/data/reviews.json', 'reviews.json'];
+            const statusPaths = ['data/crawl_status.json', 'public/data/crawl_status.json', 'crawl_status.json'];
 
-            for (let p of paths) {
+            let reviewsLoaded = false;
+
+            for (let p of reviewPaths) {
                 try {
                     const res = await fetch(p);
                     if (res.ok) {
                         allReviews = await res.json();
-                        loaded = true;
+                        reviewsLoaded = true;
+                        break;
+                    }
+                } catch(e) {}
+            }
+
+            for (let p of statusPaths) {
+                try {
+                    const res = await fetch(p);
+                    if (res.ok) {
+                        crawlStatus = await res.json();
                         break;
                     }
                 } catch(e) {}
@@ -177,8 +187,8 @@
 
             const status = document.getElementById('status-tag');
 
-            if (loaded) {
-                status.innerText = `연결됨: ${allReviews.length}건`;
+            if (reviewsLoaded) {
+                status.innerText = `리뷰 데이터 연결됨`;
                 renderGlobalSummary();
                 document.getElementById('review-container').innerHTML = '<div class="text-center py-20 text-slate-400 font-bold">상단 SV 버튼을 눌러주세요.</div>';
             } else {
@@ -191,15 +201,35 @@
         function renderGlobalSummary() {
             document.getElementById('global-summary').classList.remove('hidden');
 
-            const total = allReviews.length;
-            const lowCount = allReviews.filter(r => Number(r.rating || 0) <= 3).length;
-            const collectedDates = allReviews.map(r => r.collected_at).filter(Boolean).sort().reverse();
-            const sortedByDate = [...allReviews].sort((a, b) => estimateDateAgeScore(a.date) - estimateDateAgeScore(b.date));
+            const crawledAt = crawlStatus?.last_crawled_at || getLatestCollectedAt(allReviews);
+            const totalStores = crawlStatus?.total_stores || '-';
+            const successCount = crawlStatus?.success_count ?? '-';
+            const failedCount = crawlStatus?.failed_count ?? 0;
+            const failedStores = crawlStatus?.failed_stores || [];
 
-            document.getElementById('global-total').innerText = total;
-            document.getElementById('global-collected').innerText = collectedDates[0] || '-';
-            document.getElementById('global-latest').innerText = sortedByDate[0]?.date || '-';
-            document.getElementById('global-low').innerText = lowCount;
+            document.getElementById('global-crawled-at').innerText = crawledAt || '-';
+
+            const statusEl = document.getElementById('global-crawl-status');
+            const failedEl = document.getElementById('global-failed-stores');
+
+            if (crawlStatus) {
+                if (failedCount === 0) {
+                    statusEl.innerText = `성공 ${successCount}/${totalStores}`;
+                    statusEl.className = 'text-sm font-black text-emerald-600 mt-2';
+                    failedEl.classList.add('hidden');
+                    failedEl.innerText = '';
+                } else {
+                    statusEl.innerText = `일부 실패 ${successCount}/${totalStores}`;
+                    statusEl.className = 'text-sm font-black text-red-500 mt-2';
+                    failedEl.classList.remove('hidden');
+                    failedEl.innerText = `실패 매장: ${failedStores.map(s => s.store_name).join(', ')}`;
+                }
+            } else {
+                statusEl.innerText = '상태 파일 없음';
+                statusEl.className = 'text-sm font-black text-amber-500 mt-2';
+                failedEl.classList.remove('hidden');
+                failedEl.innerText = 'crawl_status.json을 찾지 못했습니다.';
+            }
         }
 
         function normalizeText(value) {
@@ -411,6 +441,16 @@
             return 999999;
         }
 
+        function getLatestCollectedAt(data) {
+            const values = data.map(r => r.collected_at).filter(Boolean).sort().reverse();
+            return values[0] || '-';
+        }
+
+        function getLatestReviewDate(data) {
+            const sorted = [...data].sort((a, b) => estimateDateAgeScore(a.date) - estimateDateAgeScore(b.date));
+            return sorted[0]?.date || '-';
+        }
+
         function renderReviews(data, selectedStoreLabel) {
             const sorted = sortReviews(data);
             const visibleReviews = sorted.slice(0, visibleReviewCount);
@@ -486,13 +526,12 @@
             box.classList.remove('hidden');
 
             const count = data.length;
-            const avg = count
-                ? data.reduce((sum, r) => sum + Number(r.rating || 0), 0) / count
-                : 0;
+            const lowCount = data.filter(r => Number(r.rating || 0) <= 3).length;
 
             document.getElementById('summary-count').innerText = count;
-            document.getElementById('summary-rating').innerText = avg.toFixed(1);
-            document.getElementById('summary-store').innerText = selectedStoreLabel || '전체';
+            document.getElementById('summary-low').innerText = lowCount;
+            document.getElementById('summary-latest').innerText = getLatestReviewDate(data);
+            document.getElementById('summary-collected').innerText = getLatestCollectedAt(data);
         }
 
         function escapeHtml(value) {
