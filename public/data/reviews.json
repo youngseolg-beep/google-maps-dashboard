@@ -153,14 +153,6 @@
     },
     {
         "store_name": "Paik's Noodle Amsterdam",
-        "author": "María Mazzanti",
-        "rating": 5,
-        "text": "Great place for a quick bite in the center! Crispy Korean chicken, tasty noodles, generous portions and a bottle of cold soju if you feel like it. Service was helpful and friendly . All that costed 49 euros (36 without the little bottle of soju to share) Highly recommended! Good food and cute vibes. Also, clean and nice noise volume inside. You can talk (not overwhelming noise at all)",
-        "date": "2 months ago",
-        "collected_at": "2026-05-14"
-    },
-    {
-        "store_name": "Paik's Noodle Amsterdam",
         "author": "Chris C.",
         "rating": 5,
         "text": "Paik's Noodle nails that sweet spot between Chinese and Korean flavors - think bold, saucy jjajangmyeon without the fuss. Ordered the same black bean noodles in Amsterdam that I had two years ago in Seoul, and boom: identical quality. No fancy gimmicks, just steaming bowls of comfort that hit hard and fast. Perfect for when you need real food, real quick. Consistency? Flawless. Vibes? Pure efficiency. Don't overthink it - this is fast, flavorful, and exactly what you came for.",
@@ -169,9 +161,17 @@
     },
     {
         "store_name": "Paik's Noodle Amsterdam",
+        "author": "María Mazzanti",
+        "rating": 5,
+        "text": "Great place for a quick bite in the center! Crispy Korean chicken, tasty noodles, generous portions and a bottle of cold soju if you feel like it. Service was helpful and friendly . All that costed 49 euros (36 without the little bottle of soju to share) Highly recommended! Good food and cute vibes. Also, clean and nice noise volume inside. You can talk (not overwhelming noise at all)",
+        "date": "2 months ago",
+        "collected_at": "2026-05-14"
+    },
+    {
+        "store_name": "Paik's Noodle Amsterdam",
         "author": "Generalarry",
         "rating": 5,
-        "text": "Despite the reviews and some comments, we decided to give this celebrity chef’s restaurant a try. Honestly we enjoyed it! The jajangmyeon was delicious and the tantsuyuk was pretty good! Obviously we aren’t in Korea, but for a Korea restaurant in Amsterdam it’s pretty tasty! Staff was also friendly and the ordering system was easy to use and convenient!",
+        "text": "Despite the reviews and some comments, we decided to give this celebrity chef’s restaurant a try. Honestly we enjoyed it! The jajangmyeon was delicious and the tantsuyuk was pretty good! Obviously we aren’t in Korea, but for a Korea …",
         "date": "a year ago",
         "collected_at": "2026-05-14"
     },
@@ -179,7 +179,7 @@
         "store_name": "Paik's Noodle Amsterdam",
         "author": "Axo Lotl",
         "rating": 4,
-        "text": "I had the spicy chicken and it was really tasty! I recommend this place. Very authentic Korean food 😋 …",
+        "text": "I had the spicy chicken and it was really tasty! I recommend this place. Very authentic Korean food 😋",
         "date": "2 months ago",
         "collected_at": "2026-05-14"
     },
@@ -195,7 +195,7 @@
         "store_name": "Paik's Noodle Amsterdam",
         "author": "Samantha Kemmler",
         "rating": 4,
-        "text": "Even in prior of watching culinary wars on Netflix I was following the launch process of Paik's in NL on social media. So, one could say that it has been a long time since I had wanted to try it. As the walk-in concept wouldn't necessarily …",
+        "text": "Even in prior of watching culinary wars on Netflix I was following the launch process of Paik's in NL on social media. So, one could say that it has been a long time since I had wanted to try it. As the walk-in concept wouldn't necessarily suit me and friends going, I opted for a lunch visit by myself. There was a small queue already just in prior of opening and guests quickly filled up the ground level. I opted for the Jajangmyeon & the Tangsuyuk. Everything was being prepared freshly and it took my order roughly 20mins to be served. The staff was friendly and accommodating to explain everything whereas needed to customers. The taste of the food was superb. Exactly what I was hoping for. It just gave \"comfort food\"-vibes. I would even say that I liked the Tangsuyuk the best. For my liking (though I mixed everything well to have all the noodles coated), it was a bit much of the back bean sauce but that's a personal preference. The only downside in my opinion are the costs. Overall it suits the price levels you would expect in Amsterdam but 19€ for a serving of just Tangsuyuk is a bit high in my opinion. Yet one has to say that you wouldn't find these dishes (regularly) on any other menu in or around Amsterdam. Will I come back? Yes. Will it be soon at this price point, probably not.",
         "date": "a year ago",
         "collected_at": "2026-05-14"
     },
@@ -203,7 +203,7 @@
         "store_name": "Paik's Noodle Amsterdam",
         "author": "Tara Hajimoto",
         "rating": 5,
-        "text": "I come here often, price is really good for what you get especially here in the city center and also authentic, unlike many other Korean restaurants in the city center. I saw some reviewers commenting it’s not authentic, but everytime I go there, most customers are Koreans, it’s like being back in South-Korea. I also don’t understand why some reviewers say it’s expensive. It’s Amsterdam and even a simple sandwich is around the same price. The last time I went for the Jjajangmyeon and Tangsuyuk, they were delicious. Service is very attentive and helpful, you order with QR menu, which is very simple and efficient, once my phone was dead, you can ask the staff to place an order also. Once my Jjajangmyeon was a bit not warm enough, but they made me a new one, they solved that well. I heard RM from BTS ate there last summer and he finished all the food, I was glad the staff shared it to me after I said I loved BTS and they also showed me his signature in the restaurant. I will come back for sure.",
+        "text": "I come here often, price is really good for what you get especially here in the city center and also authentic, unlike many other Korean restaurants in the city center. I saw some reviewers commenting it’s not authentic, but everytime I go …",
         "date": "2 months ago",
         "collected_at": "2026-05-14"
     },
@@ -219,40 +219,8 @@
         "store_name": "Paik's Noodle Amsterdam",
         "author": "Ebi",
         "rating": 3,
-        "text": "Reasonable price in Amsterdam center. The portion size was ok.. I saw other tables also order the shared noodles for 2p (25euros), people almost licked the dish. The deep fried pork (19euros) was crispy but the batter was too thick. You can order and pay directly online. It’s nice that they offer tap water for 80 cents.",
+        "text": "Reasonable price in Amsterdam center. The portion size was ok.. I saw other tables also order the shared noodles for 2p (25euros), people almost licked the dish. The deep fried pork (19euros) was crispy but the batter was too thick. …",
         "date": "4 months ago",
-        "collected_at": "2026-05-14"
-    },
-    {
-        "store_name": "Paik's Noodle Amsterdam",
-        "author": "Patrick Donghwi Park",
-        "rating": 5,
-        "text": "Discovering authentic Korean-style Chinese cuisine in Europe can often be a challenging endeavour, as this specific fusion is not as widely available as traditional Chinese or Korean food individually. However, I recently had the pleasure …",
-        "date": "11 months ago",
-        "collected_at": "2026-05-14"
-    },
-    {
-        "store_name": "Paik's Noodle Amsterdam",
-        "author": "K.L.",
-        "rating": 5,
-        "text": "As a Korean living here in the Netherlands, I can say the food is just how Koreans like. There was a review below that said this food is catered to Westerners, but I have to disagree. The food is delicious and comes out quickly after ordering. The food is pricier than chains in the U.S., but as an occasional visit I can justify this for myself. The staff are always so friendly, especially the young lady with the glasses and dark hair. I visited today with my baby stroller, and the staff was welcoming and accommodating since the space isn’t the biggest. A suggestion though is to provide a baby diaper changing table, though the staff (again) were accommodating and offered a space to change my child. I will keep coming to this restaurant and fully recommend it. Food is delicious and staff are so pleasant.",
-        "date": "4 months ago",
-        "collected_at": "2026-05-14"
-    },
-    {
-        "store_name": "Paik's Noodle Amsterdam",
-        "author": "Jungwon H",
-        "rating": 1,
-        "text": "We are a Korean family who have lived in Europe for almost two decades, while returning to Korea at least once a year. So we know very well what Korean-Chinese food should taste like, and we also understand what to realistically expect in Europe. Unfortunately, this was by far the worst experience we’ve had. Even our seven-year-old, who was very hungry, refused to eat the food. The jjamppong soup was strangely sour, and the vegetables were completely soggy, as if they had been sitting in the broth for far too long. There was hardly any seafood. The noodles in the jajangmyeon were overcooked and mushy. Given the prices, we expected either better food or better service. The service felt almost self-service, cafeteria-style. If there were an option to give zero stars, I would. That said, the staff were friendly, and the tangsuyuk was slightly better than the other dishes, but overall, I would avoid. As this was not a question of authenticity. We are fully aware that Korean-Chinese food in Europe may differ from what we have in Korea. The real issue was not whether it was perfectly authentic, but whether the food was prepared with professionalism, care, and basic culinary quality. In this case, it simply did not feel that attention or standard was there.",
-        "date": "2 months ago",
-        "collected_at": "2026-05-14"
-    },
-    {
-        "store_name": "Paik's Noodle Amsterdam",
-        "author": "Samantha Kemmler",
-        "rating": 4,
-        "text": "Even in prior of watching culinary wars on Netflix I was following the launch process of Paik's in NL on social media. So, one could say that it has been a long time since I had wanted to try it. As the walk-in concept wouldn't necessarily suit me and friends going, I opted for a lunch visit by myself. There was a small queue already just in prior of opening and guests quickly filled up the ground level. I opted for the Jajangmyeon & the Tangsuyuk. Everything was being prepared freshly and it took my order roughly 20mins to be served. The staff was friendly and accommodating to explain everything whereas needed to customers. The taste of the food was superb. Exactly what I was hoping for. It just gave \"comfort food\"-vibes. I would even say that I liked the Tangsuyuk the best. For my liking (though I mixed everything well to have all the noodles coated), it was a bit much of the back bean sauce but that's a personal preference. The only downside in my opinion are the costs. Overall it suits the price levels you would expect in Amsterdam but 19€ for a serving of just Tangsuyuk is a bit high in my opinion. Yet one has to say that you wouldn't find these dishes (regularly) on any other menu in or around Amsterdam. Will I come back? Yes. Will it be soon at this price point, probably not.",
-        "date": "a year ago",
         "collected_at": "2026-05-14"
     },
     {
@@ -277,6 +245,46 @@
         "rating": 5,
         "text": "Loved the Tangsuyuk and the Jjajangmyeon Ordering takes place through the QR code but staff will explain how it works. the Tangsuyuk pairs well with the fatty jjajang sauce i totally enjoyed eating it. …",
         "date": "10 months ago",
+        "collected_at": "2026-05-14"
+    },
+    {
+        "store_name": "Paik's Noodle Amsterdam",
+        "author": "K.L.",
+        "rating": 5,
+        "text": "As a Korean living here in the Netherlands, I can say the food is just how Koreans like. There was a review below that said this food is catered to Westerners, but I have to disagree. The food is delicious and comes out quickly after ordering. The food is pricier than chains in the U.S., but as an occasional visit I can justify this for myself. The staff are always so friendly, especially the young lady with the glasses and dark hair. I visited today with my baby stroller, and the staff was welcoming and accommodating since the space isn’t the biggest. A suggestion though is to provide a baby diaper changing table, though the staff (again) were accommodating and offered a space to change my child. I will keep coming to this restaurant and fully recommend it. Food is delicious and staff are so pleasant.",
+        "date": "4 months ago",
+        "collected_at": "2026-05-14"
+    },
+    {
+        "store_name": "Paik's Noodle Amsterdam",
+        "author": "Jungwon H",
+        "rating": 1,
+        "text": "We are a Korean family who have lived in Europe for almost two decades, while returning to Korea at least once a year. So we know very well what Korean-Chinese food should taste like, and we also understand what to realistically expect in Europe. Unfortunately, this was by far the worst experience we’ve had. Even our seven-year-old, who was very hungry, refused to eat the food. The jjamppong soup was strangely sour, and the vegetables were completely soggy, as if they had been sitting in the broth for far too long. There was hardly any seafood. The noodles in the jajangmyeon were overcooked and mushy. Given the prices, we expected either better food or better service. The service felt almost self-service, cafeteria-style. If there were an option to give zero stars, I would. That said, the staff were friendly, and the tangsuyuk was slightly better than the other dishes, but overall, I would avoid. As this was not a question of authenticity. We are fully aware that Korean-Chinese food in Europe may differ from what we have in Korea. The real issue was not whether it was perfectly authentic, but whether the food was prepared with professionalism, care, and basic culinary quality. In this case, it simply did not feel that attention or standard was there.",
+        "date": "2 months ago",
+        "collected_at": "2026-05-14"
+    },
+    {
+        "store_name": "Paik's Noodle Amsterdam",
+        "author": "Generalarry",
+        "rating": 5,
+        "text": "Despite the reviews and some comments, we decided to give this celebrity chef’s restaurant a try. Honestly we enjoyed it! The jajangmyeon was delicious and the tantsuyuk was pretty good! Obviously we aren’t in Korea, but for a Korea restaurant in Amsterdam it’s pretty tasty! Staff was also friendly and the ordering system was easy to use and convenient!",
+        "date": "a year ago",
+        "collected_at": "2026-05-14"
+    },
+    {
+        "store_name": "Paik's Noodle Amsterdam",
+        "author": "Tara Hajimoto",
+        "rating": 5,
+        "text": "I come here often, price is really good for what you get especially here in the city center and also authentic, unlike many other Korean restaurants in the city center. I saw some reviewers commenting it’s not authentic, but everytime I go there, most customers are Koreans, it’s like being back in South-Korea. I also don’t understand why some reviewers say it’s expensive. It’s Amsterdam and even a simple sandwich is around the same price. The last time I went for the Jjajangmyeon and Tangsuyuk, they were delicious. Service is very attentive and helpful, you order with QR menu, which is very simple and efficient, once my phone was dead, you can ask the staff to place an order also. Once my Jjajangmyeon was a bit not warm enough, but they made me a new one, they solved that well. I heard RM from BTS ate there last summer and he finished all the food, I was glad the staff shared it to me after I said I loved BTS and they also showed me his signature in the restaurant. I will come back for sure.",
+        "date": "2 months ago",
+        "collected_at": "2026-05-14"
+    },
+    {
+        "store_name": "Paik's Noodle Amsterdam",
+        "author": "Vincent",
+        "rating": 5,
+        "text": "In the heart of Amsterdam Paik’s Noodles opened a new restaurant serving authentic Korean-Chinese cuisine. The menu is small, but every dish we tried was spot on. We started with their famous Jajang Myeon, which was packed with rich, authentic flavors. The Jjampong came next, the noodles were perfectly bouncy though I wouldn’t have minded a bit more seafood. The Tang Suyuk was also a highlight, crispy and flavorful. Portions were generous, and they even offer an option to upsize for a few extra euro’s. The staff was friendly and efficient, and the clean, tidy interior made for a pleasant dining atmosphere. Though there was a small queue, it moved quickly, and the prices were very reasonable for the quality and portion sizes. I will definitely be back and highly recommend it to anyone looking for a satisfying meal!",
+        "date": "a year ago",
         "collected_at": "2026-05-14"
     },
     {
@@ -337,33 +345,9 @@
     },
     {
         "store_name": "Paik's Noodle Amsterdam",
-        "author": "Vincent",
-        "rating": 5,
-        "text": "In the heart of Amsterdam Paik’s Noodles opened a new restaurant serving authentic Korean-Chinese cuisine. The menu is small, but every dish we tried was spot on. We started with their famous Jajang Myeon, which was packed with rich, authentic flavors. The Jjampong came next, the noodles were perfectly bouncy though I wouldn’t have minded a bit more seafood. The Tang Suyuk was also a highlight, crispy and flavorful. Portions were generous, and they even offer an option to upsize for a few extra euro’s. The staff was friendly and efficient, and the clean, tidy interior made for a pleasant dining atmosphere. Though there was a small queue, it moved quickly, and the prices were very reasonable for the quality and portion sizes. I will definitely be back and highly recommend it to anyone looking for a satisfying meal!",
-        "date": "a year ago",
-        "collected_at": "2026-05-14"
-    },
-    {
-        "store_name": "Paik's Noodle Amsterdam",
-        "author": "Shirley Zheng",
-        "rating": 5,
-        "text": "We went there on a Sunday afternoon at 16.00 thinking there would be no wait, ended up waiting 1.5 hours to get in. Worth the wait! But, I would definitely come back once the hype dies down a bit. I was quite hangry towards the end. Moving on to the food. The menu is small, and we basically got one of everything. We tried the noodles with black bean, the seafood spicy noodle soup, sweet & sour pork, and the fried chicken. Top hits are the fried chicken with the spicy noodle soup, I would definitely come back for these two dishes. They were delicious! I haven’t had flavor like this in Amsterdam. Looking forward to going back soon!",
-        "date": "a year ago",
-        "collected_at": "2026-05-14"
-    },
-    {
-        "store_name": "Paik's Noodle Amsterdam",
-        "author": "Gretta Zhang",
-        "rating": 2,
-        "text": "The food seems to be not fresh made. Feels like they had been made one hour ago and then reheated. Pork and eggs are very very dry. Do not deserve the money! 💸",
-        "date": "4 months ago",
-        "collected_at": "2026-05-14"
-    },
-    {
-        "store_name": "Paik's Noodle Amsterdam",
         "author": "Calvin de Wilde",
         "rating": 3,
-        "text": "I am disappointed with the amount of the pork pieces served in the bowl. There were only 4 pieces of pork maximum. This is a dishonest practice and I don't want to come to this place again for the second time. For €15 euro I expected a fair amount of protein, but this one is just an overpriced carbohydrates. The taste is good enough.",
+        "text": "I am disappointed with the amount of the pork pieces served in the bowl. There were only 4 pieces of pork maximum. This is a dishonest practice and I don't want to come to this place again for the second time. For €15 euro I expected a fair …",
         "date": "10 months ago",
         "collected_at": "2026-05-14"
     },
@@ -371,7 +355,7 @@
         "store_name": "Paik's Noodle Amsterdam",
         "author": "Y. Wang",
         "rating": 5,
-        "text": "We have had an great meal! The gochu jajiangmyeon tasted great! For children also good option with jajiangmyeon or jajang bap rice. Gochu Jjamppong was good spicy. We liked it a lot. On the side we had the Tabgsuyuk with the sauce seperate, everything tasted very good! You order and pay through your phone, one off the places in the netherlands where this system does work! Everythign was great, we will definitely return here. Just be aware that there is a big line outside. The restaurant opens at 15:00 and we arrived at 14:30 but there was aready people waiting in front, luckily we decided to wait from 14:30 and could get in the restaurant on time.",
+        "text": "We have had an great meal! The gochu jajiangmyeon tasted great! For children also good option with jajiangmyeon or jajang bap rice. Gochu Jjamppong was good spicy. We liked it a lot. On the side we had the Tabgsuyuk with the sauce …",
         "date": "a year ago",
         "collected_at": "2026-05-14"
     },
@@ -387,7 +371,7 @@
         "store_name": "Paik's Noodle Amsterdam",
         "author": "Sunny Kim",
         "rating": 3,
-        "text": "N.B. I am Korean, with extremely picky taste... As a fan of Paik noodle in Korea, and with the expectation that a minimum quality assurance would be there given that it's a franchise, I was a bit disappointed. I went with two others who said 짬뽕 was good but all agreed that 짜장면 was not great. I understand the 짬뽕 국물 had to be toned down a bit to appeal to foreigners, but the noodles used for both 짜장면 and 짬뽕 didn't seem to be made out of flours. I don't know what the issue was, but the noodles were dark and had a dry taste. 탕수육 was done properly - chewy and well done. 탕수육 추천 합니다.",
+        "text": "N.B. I am Korean, with extremely picky taste... As a fan of Paik noodle in Korea, and with the expectation that a minimum …",
         "date": "a year ago",
         "collected_at": "2026-05-14"
     },
@@ -395,7 +379,7 @@
         "store_name": "Paik's Noodle Amsterdam",
         "author": "Zoe Kang",
         "rating": 5,
-        "text": "Highly recommend! We hit the place just before the opening hour, and it got quickly filled up. Of course, the food was great! …",
+        "text": "Highly recommend! We hit the place just before the opening hour, and it got quickly filled up. Of course, the food was great! My kids loved every bits of it, even the reindeer mr. PAIK at the entrance. Very welcoming and very kind, definitely visiting again 😀",
         "date": "a year ago",
         "collected_at": "2026-05-14"
     },
@@ -411,7 +395,7 @@
         "store_name": "Paik's Noodle Amsterdam",
         "author": "James Coenraad",
         "rating": 4,
-        "text": "Today I went to Paiks Noodle in Amsterdam. It serves Korean-Chinese food. There was no queue. We ordered the 'Jajangmyeon' and 'Jjampong'. The serving sizes were decent for the price. …",
+        "text": "Today I went to Paiks Noodle in Amsterdam. It serves Korean-Chinese food. There was no queue. We ordered the 'Jajangmyeon' and 'Jjampong'. The serving sizes were decent for the price. The Jajangmyeon was good. It did lack some flavor, like a pinch of salt, even though it was sweet enough because of the onions. It misses some umami. The consistency of the sauce is good and it blends well with the noodles. The noodles were decent, had a good bite, but nothing over the top. I have had better Jajangmyeon in Amsterdam. 3.5/5✨️ This is the first time I tried Jjampong. The Jjampong was better imo, the broth is well seasoned and spicy. If you can not take spicy very well, just go with the regular one. It contains mussels and other greens like cabbage. 4/5✨️ The service is good. You have to order by scanning a qr code and the food was delivered quite fast. In conclusion, it is a good place for eating and trying out Korean food. I would prefer the Jjampong over the Jajangmyeon if you like mild food. If you can eat spicy, try out the Jjampong. Pros: - Price - Fast service Cons: - Can be bland for some - May have to wait in line",
         "date": "a year ago",
         "collected_at": "2026-05-14"
     },
@@ -419,7 +403,7 @@
         "store_name": "Paik's Noodle Amsterdam",
         "author": "Agyys D",
         "rating": 5,
-        "text": "We went on Saturday noon around 1pm. Waited just a bit for the table being prepared. Ordered through table scan app. The waitress was friendly. …",
+        "text": "We went on Saturday noon around 1pm. Waited just a bit for the table being prepared. Ordered through table scan app. The waitress was friendly. The food came fast. We had jajangmyeon, gochu jjamppong and Tangsuyuk for share. Portion is good enough for one person, maybe if you are small eater, slightly in the bigger size. The price vs quantity is reasonable. The condiments are self service, reminded me when had jajangmyeon at Dangnaemun market. No free refillable cold water like in Seoul, but for €0.80 you can have refillable tap water, and cold. I have got an advice on how to properly eat Jajangmyeon, from the restaurant guy. So it needs to be throughly stirred, the sauce and noodles. I do like the place. Not much choices on which makes it easy to make choice and whatever choice will deliver to you yummy foods. Tangsuyuk is very recommendable. I like the texture of the noodles.",
         "date": "a year ago",
         "collected_at": "2026-05-14"
     },
@@ -427,39 +411,7 @@
         "store_name": "Paik's Noodle Amsterdam",
         "author": "Daniel Yi",
         "rating": 2,
-        "text": "Visited in November. Food quality was so different from what I ate in Korea. 짜장면 (black bean sauce noodle) had literally 3 tiny pieces of meat. The sauce amount was not enough and watery, that it barely coated the noodle. 탕수육 (fried pork) was good. The server forgot to set my table. I only learned after I finished the meal there were 단무지 & 춘장 you could get.",
-        "date": "a year ago",
-        "collected_at": "2026-05-14"
-    },
-    {
-        "store_name": "Paik's Noodle Amsterdam",
-        "author": "JINNY KIM",
-        "rating": 2,
-        "text": "Very disappointing experience. It was my only bad one in Amsterdam. I was really craving Korean food and was excited to find a branch of my favourite restaurant from Korea. Jjamppong is especially hard to find done well in Europe, so I did not hesitate to visit. To be honest, the service was terrible. The welcome was okay, but upstairs they did not set up anything. No basic table setup, no free side dishes, nothing. It was confusing, especially since they had a signboard and a service table prepared upstairs, but clearly were not using it. The staff member who responded to us was quite rude, and the food was disappointing. I did not even finish half of it. Never again. I would not recommend this place to anyone.",
-        "date": "9 months ago",
-        "collected_at": "2026-05-14"
-    },
-    {
-        "store_name": "Paik's Noodle Amsterdam",
-        "author": "Kayip_c",
-        "rating": 5,
-        "text": "Loved the Tangsuyuk and the Jjajangmyeon Ordering takes place through the QR code but staff will explain how it works. the Tangsuyuk pairs well with the fatty jjajang sauce i totally enjoyed eating it. The Jjamppong was spicy as well! I do expected the noodles to be a bit more chewy so maybe a tip for the restaurant to not overcook the noodles too much so it is a bit more al dente?",
-        "date": "10 months ago",
-        "collected_at": "2026-05-14"
-    },
-    {
-        "store_name": "Paik's Noodle Amsterdam",
-        "author": "Zoe Kang",
-        "rating": 5,
-        "text": "Highly recommend! We hit the place just before the opening hour, and it got quickly filled up. Of course, the food was great! My kids loved every bits of it, even the reindeer mr. PAIK at the entrance. Very welcoming and very kind, definitely visiting again 😀",
-        "date": "a year ago",
-        "collected_at": "2026-05-14"
-    },
-    {
-        "store_name": "Paik's Noodle Amsterdam",
-        "author": "James Coenraad",
-        "rating": 4,
-        "text": "Today I went to Paiks Noodle in Amsterdam. It serves Korean-Chinese food. There was no queue. We ordered the 'Jajangmyeon' and 'Jjampong'. The serving sizes were decent for the price. The Jajangmyeon was good. It did lack some flavor, like a pinch of salt, even though it was sweet enough because of the onions. It misses some umami. The consistency of the sauce is good and it blends well with the noodles. The noodles were decent, had a good bite, but nothing over the top. I have had better Jajangmyeon in Amsterdam. 3.5/5✨️ This is the first time I tried Jjampong. The Jjampong was better imo, the broth is well seasoned and spicy. If you can not take spicy very well, just go with the regular one. It contains mussels and other greens like cabbage. 4/5✨️ The service is good. You have to order by scanning a qr code and the food was delivered quite fast. In conclusion, it is a good place for eating and trying out Korean food. I would prefer the Jjampong over the Jajangmyeon if you like mild food. If you can eat spicy, try out the Jjampong. Pros: - Price - Fast service Cons: - Can be bland for some - May have to wait in line",
+        "text": "Visited in November. Food quality was so different from what I ate in Korea. 짜장면 (black bean sauce noodle) had literally 3 tiny pieces of meat. The sauce amount was not enough and watery, that it barely coated the noodle. …",
         "date": "a year ago",
         "collected_at": "2026-05-14"
     },
@@ -492,6 +444,54 @@
         "author": "Guerlain Nguyen",
         "rating": 5,
         "text": "So cozy, quick service and amazing food. Highly recommend their TangSooYook (sweet and sour pork). We’d prefer warmer Jajangmyeon and crispier TangSooYook, as they came out a bit cold. But the taste was quite up to our expectations.",
+        "date": "a year ago",
+        "collected_at": "2026-05-14"
+    },
+    {
+        "store_name": "Paik's Noodle Amsterdam",
+        "author": "Kayip_c",
+        "rating": 5,
+        "text": "Loved the Tangsuyuk and the Jjajangmyeon Ordering takes place through the QR code but staff will explain how it works. the Tangsuyuk pairs well with the fatty jjajang sauce i totally enjoyed eating it. The Jjamppong was spicy as well! I do expected the noodles to be a bit more chewy so maybe a tip for the restaurant to not overcook the noodles too much so it is a bit more al dente?",
+        "date": "10 months ago",
+        "collected_at": "2026-05-14"
+    },
+    {
+        "store_name": "Paik's Noodle Amsterdam",
+        "author": "G. K",
+        "rating": 3,
+        "text": "With high hopes from Paik’s Noodle's reputation (Hong Kong Banjeom in Korea), I left underwhelmed. The jjajangmyeon was overly sweet—lacking the deep umami of traditional black bean sauce. Jjamppong had a harsh MSG aftertaste that overpowered the seafood. Surprisingly, our order took 30+ minutes despite a half-empty restaurant. Only the tangsuyuk (crispy, well-sauced) met expectations. For a Michelin Bib Gourmand spot, improvement is needed",
+        "date": "a year ago",
+        "collected_at": "2026-05-14"
+    },
+    {
+        "store_name": "Paik's Noodle Amsterdam",
+        "author": "Y. Wang",
+        "rating": 5,
+        "text": "We have had an great meal! The gochu jajiangmyeon tasted great! For children also good option with jajiangmyeon or jajang bap rice. Gochu Jjamppong was good spicy. We liked it a lot. On the side we had the Tabgsuyuk with the sauce seperate, everything tasted very good! You order and pay through your phone, one off the places in the netherlands where this system does work! Everythign was great, we will definitely return here. Just be aware that there is a big line outside. The restaurant opens at 15:00 and we arrived at 14:30 but there was aready people waiting in front, luckily we decided to wait from 14:30 and could get in the restaurant on time.",
+        "date": "a year ago",
+        "collected_at": "2026-05-14"
+    },
+    {
+        "store_name": "Paik's Noodle Amsterdam",
+        "author": "Sunny Kim",
+        "rating": 3,
+        "text": "N.B. I am Korean, with extremely picky taste... As a fan of Paik noodle in Korea, and with the expectation that a minimum quality assurance would be there given that it's a franchise, I was a bit disappointed. I went with two others who said 짬뽕 was good but all agreed that 짜장면 was not great. I understand the 짬뽕 국물 had to be toned down a bit to appeal to foreigners, but the noodles used for both 짜장면 and 짬뽕 didn't seem to be made out of flours. I don't know what the issue was, but the noodles were dark and had a dry taste. 탕수육 was done properly - chewy and well done. 탕수육 추천 합니다.",
+        "date": "a year ago",
+        "collected_at": "2026-05-14"
+    },
+    {
+        "store_name": "Paik's Noodle Amsterdam",
+        "author": "Daniel Yi",
+        "rating": 2,
+        "text": "Visited in November. Food quality was so different from what I ate in Korea. 짜장면 (black bean sauce noodle) had literally 3 tiny pieces of meat. The sauce amount was not enough and watery, that it barely coated the noodle. 탕수육 (fried pork) was good. The server forgot to set my table. I only learned after I finished the meal there were 단무지 & 춘장 you could get.",
+        "date": "a year ago",
+        "collected_at": "2026-05-14"
+    },
+    {
+        "store_name": "Paik's Noodle Amsterdam",
+        "author": "Hyunji Kim",
+        "rating": 5,
+        "text": "I have to say that my expectation was lower after seeing some reviews here, but I personally liked it very much. I ordered the spicy seafood noodle soup and finished it so quickly because it was delicious - the taste I remember from S.Korea. The noodle was thicker than usual, but the taste was well blended in the soup. The atmosphere is more like a fast food place with bright white lighting. But I had a very nice meal and felt comfy & great afterwards. I'll defo visit again!",
         "date": "a year ago",
         "collected_at": "2026-05-14"
     },
@@ -537,6 +537,126 @@
     },
     {
         "store_name": "Paik's Noodle Amsterdam",
+        "author": "YGxETM",
+        "rating": 5,
+        "text": "The chicken is crispy and the sauce is full of flavor. I'll definitely come back 🙃 …",
+        "date": "2 months ago",
+        "collected_at": "2026-05-14"
+    },
+    {
+        "store_name": "Paik's Noodle Amsterdam",
+        "author": "Seunghu Lee",
+        "rating": 5,
+        "text": "I’m really looking forward to eating Jjajangmeon in Amsterdam. Finally, I’ve been there. Compared to what I ate in Korea, I couldn’t find any difference between them. Not only the taste but also the service of the staff was superb. It felt like I was in Korea. I really recommend it. Try Jjajangmeon! It is the best👍",
+        "date": "a year ago",
+        "collected_at": "2026-05-14"
+    },
+    {
+        "store_name": "Paik's Noodle Amsterdam",
+        "author": "Blair Seo",
+        "rating": 5,
+        "text": "The noodles were different from the jjajangmyeon I had in Korea, which was a bit disappointing, but it was still very delicious! Would definitely recommend!",
+        "date": "7 months ago",
+        "collected_at": "2026-05-14"
+    },
+    {
+        "store_name": "Paik's Noodle Amsterdam",
+        "author": "Sergio",
+        "rating": 3,
+        "text": "I don't understand the hype. The jjamppong was too bland and just tasted spicy. They put literally two mussels, two squid rings and two strips of super tough meat. The jjajang sauce was better, but not really different from what you can find elsewhere. I was expecting some wok hei. The fried stuff looked good. I don't think it's worth waiting for one hour (at least) for this.",
+        "date": "a year ago",
+        "collected_at": "2026-05-14"
+    },
+    {
+        "store_name": "Paik's Noodle Amsterdam",
+        "author": "lisbo_oa",
+        "rating": 5,
+        "text": "I have never had such a delicious noodle! The prices are low and I was satisfied! Also I was lucky, I got there around 5pm and there was no one in line. …",
+        "date": "a year ago",
+        "collected_at": "2026-05-14"
+    },
+    {
+        "store_name": "Paik's Noodle Amsterdam",
+        "author": "Samantha Kemmler",
+        "rating": 4,
+        "text": "Even in prior of watching culinary wars on Netflix I was following the launch process of Paik's in NL on social media. So, one could say that it has been a long time since I had wanted to try it. As the walk-in concept wouldn't necessarily …",
+        "date": "a year ago",
+        "collected_at": "2026-05-14"
+    },
+    {
+        "store_name": "Paik's Noodle Amsterdam",
+        "author": "Ebi",
+        "rating": 3,
+        "text": "Reasonable price in Amsterdam center. The portion size was ok.. I saw other tables also order the shared noodles for 2p (25euros), people almost licked the dish. The deep fried pork (19euros) was crispy but the batter was too thick. You can order and pay directly online. It’s nice that they offer tap water for 80 cents.",
+        "date": "4 months ago",
+        "collected_at": "2026-05-14"
+    },
+    {
+        "store_name": "Paik's Noodle Amsterdam",
+        "author": "Patrick Donghwi Park",
+        "rating": 5,
+        "text": "Discovering authentic Korean-style Chinese cuisine in Europe can often be a challenging endeavour, as this specific fusion is not as widely available as traditional Chinese or Korean food individually. However, I recently had the pleasure …",
+        "date": "11 months ago",
+        "collected_at": "2026-05-14"
+    },
+    {
+        "store_name": "Paik's Noodle Amsterdam",
+        "author": "Shirley Zheng",
+        "rating": 5,
+        "text": "We went there on a Sunday afternoon at 16.00 thinking there would be no wait, ended up waiting 1.5 hours to get in. Worth the wait! But, I would definitely come back once the hype dies down a bit. I was quite hangry towards the end. Moving on to the food. The menu is small, and we basically got one of everything. We tried the noodles with black bean, the seafood spicy noodle soup, sweet & sour pork, and the fried chicken. Top hits are the fried chicken with the spicy noodle soup, I would definitely come back for these two dishes. They were delicious! I haven’t had flavor like this in Amsterdam. Looking forward to going back soon!",
+        "date": "a year ago",
+        "collected_at": "2026-05-14"
+    },
+    {
+        "store_name": "Paik's Noodle Amsterdam",
+        "author": "Gretta Zhang",
+        "rating": 2,
+        "text": "The food seems to be not fresh made. Feels like they had been made one hour ago and then reheated. Pork and eggs are very very dry. Do not deserve the money! 💸",
+        "date": "4 months ago",
+        "collected_at": "2026-05-14"
+    },
+    {
+        "store_name": "Paik's Noodle Amsterdam",
+        "author": "Calvin de Wilde",
+        "rating": 3,
+        "text": "I am disappointed with the amount of the pork pieces served in the bowl. There were only 4 pieces of pork maximum. This is a dishonest practice and I don't want to come to this place again for the second time. For €15 euro I expected a fair amount of protein, but this one is just an overpriced carbohydrates. The taste is good enough.",
+        "date": "10 months ago",
+        "collected_at": "2026-05-14"
+    },
+    {
+        "store_name": "Paik's Noodle Amsterdam",
+        "author": "Zoe Kang",
+        "rating": 5,
+        "text": "Highly recommend! We hit the place just before the opening hour, and it got quickly filled up. Of course, the food was great! …",
+        "date": "a year ago",
+        "collected_at": "2026-05-14"
+    },
+    {
+        "store_name": "Paik's Noodle Amsterdam",
+        "author": "James Coenraad",
+        "rating": 4,
+        "text": "Today I went to Paiks Noodle in Amsterdam. It serves Korean-Chinese food. There was no queue. We ordered the 'Jajangmyeon' and 'Jjampong'. The serving sizes were decent for the price. …",
+        "date": "a year ago",
+        "collected_at": "2026-05-14"
+    },
+    {
+        "store_name": "Paik's Noodle Amsterdam",
+        "author": "Agyys D",
+        "rating": 5,
+        "text": "We went on Saturday noon around 1pm. Waited just a bit for the table being prepared. Ordered through table scan app. The waitress was friendly. …",
+        "date": "a year ago",
+        "collected_at": "2026-05-14"
+    },
+    {
+        "store_name": "Paik's Noodle Amsterdam",
+        "author": "JINNY KIM",
+        "rating": 2,
+        "text": "Very disappointing experience. It was my only bad one in Amsterdam. I was really craving Korean food and was excited to find a branch of my favourite restaurant from Korea. Jjamppong is especially hard to find done well in Europe, so I did not hesitate to visit. To be honest, the service was terrible. The welcome was okay, but upstairs they did not set up anything. No basic table setup, no free side dishes, nothing. It was confusing, especially since they had a signboard and a service table prepared upstairs, but clearly were not using it. The staff member who responded to us was quite rude, and the food was disappointing. I did not even finish half of it. Never again. I would not recommend this place to anyone.",
+        "date": "9 months ago",
+        "collected_at": "2026-05-14"
+    },
+    {
+        "store_name": "Paik's Noodle Amsterdam",
         "author": "Zil",
         "rating": 5,
         "text": "If you’re looking for a culinary experience that’s both unique and unforgettable, Paik’s Noodle Amsterdam is an absolute must-visit. As someone who has never been to Korea, I found the flavors here to be completely new to me—and absolutely delicious. Every bite felt like a revelation! We were seated upstairs. I had the Jajangmyeon, which is Korean black bean sauce noodles with stir-fried pork and vegetables. Normally, I’m not a fan of pork, but this dish was so flavorful that I couldn’t stop eating it. The sauce was rich, savory, and perfectly balanced—it was unlike anything I’ve tasted before. I also shared the Gochu Yuringi, a dish of deep-fried chicken topped with sweet-and-sour soy sauce and hot chili peppers. No exaggeration: this was the best chicken I’ve ever had. The crispy coating, tender meat, and flavorful sauce worked so well together that it felt like a masterpiece on a plate. I can’t recommend it enough! What stood out to me was how approachable the food was—it was incredibly easy and enjoyable to eat, making it perfect for anyone visiting the restaurant, whether they’re familiar with Korean cuisine or not. There were also extra sauces and flavours on every table, so everyone can adjust the taste of their dishes. The service was very friendly and accommodating. I first learned about Paik through his appearance on Culinary Class Wars on Netflix, and his passion for making food accessible and delicious really shines through in the dishes here. He’s not just a chef—he’s a storyteller who brings Korean (and Chinese) cuisine to life. Thank you, Paik’s Noodle Amsterdam, for an amazing dining experience I’ll never forget. And thank you, Paik, for sharing your love of food and culture with the world! I’ll definitely be back.",
@@ -553,26 +673,10 @@
     },
     {
         "store_name": "Paik's Noodle Amsterdam",
-        "author": "YGxETM",
-        "rating": 5,
-        "text": "The chicken is crispy and the sauce is full of flavor. I'll definitely come back 🙃",
-        "date": "2 months ago",
-        "collected_at": "2026-05-14"
-    },
-    {
-        "store_name": "Paik's Noodle Amsterdam",
         "author": "Seunghu Lee",
         "rating": 5,
         "text": "I’m really looking forward to eating Jjajangmeon in Amsterdam. Finally, I’ve been there. Compared to what I ate in Korea, I couldn’t find any difference between them. …",
         "date": "a year ago",
-        "collected_at": "2026-05-14"
-    },
-    {
-        "store_name": "Paik's Noodle Amsterdam",
-        "author": "Blair Seo",
-        "rating": 5,
-        "text": "The noodles were different from the jjajangmyeon I had in Korea, which was a bit disappointing, but it was still very delicious! Would definitely recommend!",
-        "date": "7 months ago",
         "collected_at": "2026-05-14"
     },
     {
@@ -625,81 +729,9 @@
     },
     {
         "store_name": "Paik's Noodle Amsterdam",
-        "author": "Generalarry",
-        "rating": 5,
-        "text": "Despite the reviews and some comments, we decided to give this celebrity chef’s restaurant a try. Honestly we enjoyed it! The jajangmyeon was delicious and the tantsuyuk was pretty good! Obviously we aren’t in Korea, but for a Korea …",
-        "date": "a year ago",
-        "collected_at": "2026-05-13"
-    },
-    {
-        "store_name": "Paik's Noodle Amsterdam",
-        "author": "Tara Hajimoto",
-        "rating": 5,
-        "text": "I come here often, price is really good for what you get especially here in the city center and also authentic, unlike many other Korean restaurants in the city center. I saw some reviewers commenting it’s not authentic, but everytime I go …",
-        "date": "2 months ago",
-        "collected_at": "2026-05-13"
-    },
-    {
-        "store_name": "Paik's Noodle Amsterdam",
-        "author": "Ebi",
-        "rating": 3,
-        "text": "Reasonable price in Amsterdam center. The portion size was ok.. I saw other tables also order the shared noodles for 2p (25euros), people almost licked the dish. The deep fried pork (19euros) was crispy but the batter was too thick. …",
-        "date": "4 months ago",
-        "collected_at": "2026-05-13"
-    },
-    {
-        "store_name": "Paik's Noodle Amsterdam",
-        "author": "Calvin de Wilde",
-        "rating": 3,
-        "text": "I am disappointed with the amount of the pork pieces served in the bowl. There were only 4 pieces of pork maximum. This is a dishonest practice and I don't want to come to this place again for the second time. For €15 euro I expected a fair …",
-        "date": "9 months ago",
-        "collected_at": "2026-05-13"
-    },
-    {
-        "store_name": "Paik's Noodle Amsterdam",
-        "author": "Y. Wang",
-        "rating": 5,
-        "text": "We have had an great meal! The gochu jajiangmyeon tasted great! For children also good option with jajiangmyeon or jajang bap rice. Gochu Jjamppong was good spicy. We liked it a lot. On the side we had the Tabgsuyuk with the sauce …",
-        "date": "a year ago",
-        "collected_at": "2026-05-13"
-    },
-    {
-        "store_name": "Paik's Noodle Amsterdam",
-        "author": "Sunny Kim",
-        "rating": 3,
-        "text": "N.B. I am Korean, with extremely picky taste... As a fan of Paik noodle in Korea, and with the expectation that a minimum …",
-        "date": "a year ago",
-        "collected_at": "2026-05-13"
-    },
-    {
-        "store_name": "Paik's Noodle Amsterdam",
         "author": "Jaejun Kim",
         "rating": 5,
         "text": "I lived in Europe for 10 years, and it’s always delightful to find Korean-style Chinese food here. I ordered Jajangmyeon, Tangsuyuk, and Jjamppong. …",
-        "date": "a year ago",
-        "collected_at": "2026-05-13"
-    },
-    {
-        "store_name": "Paik's Noodle Amsterdam",
-        "author": "Hyunji Kim",
-        "rating": 5,
-        "text": "I have to say that my expectation was lower after seeing some reviews here, but I personally liked it very much. I ordered the spicy seafood noodle soup and finished it so quickly because it was delicious - the taste I remember from S.Korea. The noodle was thicker than usual, but the taste was well blended in the soup. The atmosphere is more like a fast food place with bright white lighting. But I had a very nice meal and felt comfy & great afterwards. I'll defo visit again!",
-        "date": "a year ago",
-        "collected_at": "2026-05-13"
-    },
-    {
-        "store_name": "Paik's Noodle Amsterdam",
-        "author": "G. K",
-        "rating": 3,
-        "text": "With high hopes from Paik’s Noodle's reputation (Hong Kong Banjeom in Korea), I left underwhelmed. The jjajangmyeon was overly sweet—lacking the deep umami of traditional black bean sauce. Jjamppong had a harsh MSG aftertaste that overpowered the seafood. Surprisingly, our order took 30+ minutes despite a half-empty restaurant. Only the tangsuyuk (crispy, well-sauced) met expectations. For a Michelin Bib Gourmand spot, improvement is needed",
-        "date": "a year ago",
-        "collected_at": "2026-05-13"
-    },
-    {
-        "store_name": "Paik's Noodle Amsterdam",
-        "author": "Agyys D",
-        "rating": 5,
-        "text": "We went on Saturday noon around 1pm. Waited just a bit for the table being prepared. Ordered through table scan app. The waitress was friendly. The food came fast. We had jajangmyeon, gochu jjamppong and Tangsuyuk for share. Portion is good enough for one person, maybe if you are small eater, slightly in the bigger size. The price vs quantity is reasonable. The condiments are self service, reminded me when had jajangmyeon at Dangnaemun market. No free refillable cold water like in Seoul, but for €0.80 you can have refillable tap water, and cold. I have got an advice on how to properly eat Jajangmyeon, from the restaurant guy. So it needs to be throughly stirred, the sauce and noodles. I do like the place. Not much choices on which makes it easy to make choice and whatever choice will deliver to you yummy foods. Tangsuyuk is very recommendable. I like the texture of the noodles.",
         "date": "a year ago",
         "collected_at": "2026-05-13"
     },
@@ -717,14 +749,6 @@
         "rating": 4,
         "text": "Very good jjajangmyeon, a little sweet. If you can handle chilies, definitely get the spicy option – there will be lots of sliced chilies but you can mix in or leave out as much as your heart desires. Self serving bar for pickled radish and …",
         "date": "a year ago",
-        "collected_at": "2026-05-13"
-    },
-    {
-        "store_name": "Paik's Noodle Amsterdam",
-        "author": "Seunghu Lee",
-        "rating": 5,
-        "text": "I’m really looking forward to eating Jjajangmeon in Amsterdam. Finally, I’ve been there. Compared to what I ate in Korea, I couldn’t find any difference between them. Not only the taste but also the service of the staff was superb. It felt like I was in Korea. I really recommend it. Try Jjajangmeon! It is the best👍",
-        "date": "Recent",
         "collected_at": "2026-05-13"
     },
     {
@@ -1020,14 +1044,6 @@
         "author": "Hannah Dev",
         "rating": 5,
         "text": "Was warmly welcomed by staff. They were attentive and social. Wait time for food to arrive was around 10 minutes. Portion size was good and loved the little self serve area for pickled radish and onion. Jajamyeong was delicious and up to the expectations set. Felt like a true Seoul diner. Much appreciated.",
-        "date": "Recent",
-        "collected_at": "2026-05-13"
-    },
-    {
-        "store_name": "Paik's Noodle Amsterdam",
-        "author": "Sergio",
-        "rating": 3,
-        "text": "I don't understand the hype. The jjamppong was too bland and just tasted spicy. They put literally two mussels, two squid rings and two strips of super tough meat. The jjajang sauce was better, but not really different from what you can find elsewhere. I was expecting some wok hei. The fried stuff looked good. I don't think it's worth waiting for one hour (at least) for this.",
         "date": "Recent",
         "collected_at": "2026-05-13"
     },
