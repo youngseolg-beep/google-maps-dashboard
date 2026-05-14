@@ -6,20 +6,56 @@
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
         .active-sv { background-color: #2563eb !important; color: white !important; }
+        .active-store { background-color: #eff6ff !important; border-color: #2563eb !important; color: #1d4ed8 !important; }
     </style>
 </head>
 <body class="bg-slate-50 p-6">
     <div class="max-w-7xl mx-auto">
-        <header class="mb-10 flex justify-between items-center bg-white p-6 rounded-2xl shadow-sm">
-            <h1 class="text-2xl font-black text-slate-800">📊 SV REVIEW MASTER <span class="text-blue-500 text-sm font-normal ml-2">v1.2.7</span></h1>
+        <header class="mb-8 flex justify-between items-center bg-white p-6 rounded-2xl shadow-sm">
+            <div>
+                <h1 class="text-2xl font-black text-slate-800">
+                    📊 SV REVIEW MASTER
+                    <span class="text-blue-500 text-sm font-normal ml-2">v1.3.0</span>
+                </h1>
+                <p class="text-xs text-slate-400 mt-1">Google Maps 리뷰 자동 수집 · 담당 SV별 리뷰 관리</p>
+            </div>
             <div id="status-tag" class="px-3 py-1 bg-green-100 rounded-full text-[10px] font-bold text-green-600">데이터 연결 중...</div>
         </header>
 
-        <div class="grid grid-cols-4 gap-4 mb-8">
-            <button onclick="selectSV('이여명', this)" class="sv-tab p-4 bg-white rounded-xl shadow-sm font-bold text-slate-600 transition-all">이여명 SV</button>
-            <button onclick="selectSV('강소영', this)" class="sv-tab p-4 bg-white rounded-xl shadow-sm font-bold text-slate-600 transition-all">강소영 SV</button>
-            <button onclick="selectSV('소도희', this)" class="sv-tab p-4 bg-white rounded-xl shadow-sm font-bold text-slate-600 transition-all">소도희 SV</button>
-            <button onclick="selectSV('최성환', this)" class="sv-tab p-4 bg-white rounded-xl shadow-sm font-bold text-slate-600 transition-all">최성환 SV</button>
+        <div class="grid grid-cols-4 gap-4 mb-6">
+            <button onclick="selectSV('이여명', this)" class="sv-tab p-4 bg-white rounded-xl shadow-sm font-bold text-slate-600 transition-all">
+                이여명 SV
+                <div class="text-[10px] font-normal mt-1 text-slate-400">대만 · 싱가포르</div>
+            </button>
+            <button onclick="selectSV('강소영', this)" class="sv-tab p-4 bg-white rounded-xl shadow-sm font-bold text-slate-600 transition-all">
+                강소영 SV
+                <div class="text-[10px] font-normal mt-1 text-slate-400">몽골 · 네덜란드</div>
+            </button>
+            <button onclick="selectSV('소도희', this)" class="sv-tab p-4 bg-white rounded-xl shadow-sm font-bold text-slate-600 transition-all">
+                소도희 SV
+                <div class="text-[10px] font-normal mt-1 text-slate-400">호주 · 태국 · 캄보디아</div>
+            </button>
+            <button onclick="selectSV('최성환', this)" class="sv-tab p-4 bg-white rounded-xl shadow-sm font-bold text-slate-600 transition-all">
+                최성환 SV
+                <div class="text-[10px] font-normal mt-1 text-slate-400">인도네시아 · 필리핀</div>
+            </button>
+        </div>
+
+        <div class="bg-white p-4 rounded-2xl shadow-sm mb-6 flex flex-wrap items-center justify-between gap-3">
+            <div>
+                <div id="current-title" class="text-sm font-black text-slate-700">SV를 선택해주세요</div>
+                <div id="current-subtitle" class="text-[11px] text-slate-400 mt-1">담당 국가 기준으로 리뷰가 자동 분류됩니다.</div>
+            </div>
+
+            <div class="flex items-center gap-2">
+                <span class="text-[11px] font-bold text-slate-400">정렬</span>
+                <select id="sort-select" onchange="handleSortChange()" class="text-xs font-bold border border-slate-200 rounded-lg px-3 py-2 bg-white text-slate-700 outline-none">
+                    <option value="latest">날짜 순 · 최신 추정</option>
+                    <option value="rating-high">별점 높은 순</option>
+                    <option value="rating-low">별점 낮은 순</option>
+                    <option value="oldest">날짜 순 · 오래된 추정</option>
+                </select>
+            </div>
         </div>
 
         <div class="flex gap-6">
@@ -27,89 +63,275 @@
                 <h3 class="font-bold mb-4 text-slate-400 text-[10px] uppercase">담당 매장 목록</h3>
                 <div id="store-list" class="space-y-2"></div>
             </div>
+
             <div class="w-3/4">
+                <div id="review-summary" class="mb-4 grid grid-cols-3 gap-3 hidden">
+                    <div class="bg-white rounded-2xl shadow-sm p-4">
+                        <div class="text-[10px] text-slate-400 font-bold">리뷰 수</div>
+                        <div id="summary-count" class="text-xl font-black text-slate-800 mt-1">0</div>
+                    </div>
+                    <div class="bg-white rounded-2xl shadow-sm p-4">
+                        <div class="text-[10px] text-slate-400 font-bold">평균 별점</div>
+                        <div id="summary-rating" class="text-xl font-black text-amber-500 mt-1">0.0</div>
+                    </div>
+                    <div class="bg-white rounded-2xl shadow-sm p-4">
+                        <div class="text-[10px] text-slate-400 font-bold">선택 매장</div>
+                        <div id="summary-store" class="text-sm font-black text-blue-600 mt-2 truncate">전체</div>
+                    </div>
+                </div>
+
                 <div id="review-container" class="space-y-4"></div>
             </div>
         </div>
     </div>
 
     <script>
-        // [수정] 주소 숫자 대신 "매장 이름"의 핵심 키워드로 매칭합니다.
-        const SV_MAP = {
-            '이여명': ['Bornga'], // 예시: 본가
-            '강소영': ['Hong Kong'], // 예시: 홍콩반점
-            '소도희': ['Saemaul'], // 예시: 새마을식당
-            '최성환': ["Paik's Noodle", "Paik's", "Paiks", "Amsterdam"] // 암스테르담 포함
+        const SV_COUNTRY_MAP = {
+            '이여명': ['taiwan', 'singapore', '대만', '싱가포르'],
+            '강소영': ['mongolia', 'netherlands', 'amsterdam', '몽골', '네덜란드'],
+            '소도희': ['australia', 'thailand', 'cambodia', '호주', '태국', '캄보디아'],
+            '최성환': ['indonesia', 'philippines', '인도네시아', '필리핀']
         };
 
         let allReviews = [];
+        let currentSV = null;
+        let currentSVReviews = [];
+        let currentStore = 'ALL';
+        let currentSort = 'latest';
 
         async function init() {
             const paths = ['data/reviews.json', 'public/data/reviews.json', 'reviews.json'];
             let loaded = false;
+
             for (let p of paths) {
                 try {
                     const res = await fetch(p);
                     if (res.ok) {
                         allReviews = await res.json();
-                        loaded = true; break;
+                        loaded = true;
+                        break;
                     }
                 } catch(e) {}
             }
 
             const status = document.getElementById('status-tag');
+
             if (loaded) {
                 status.innerText = `연결됨: ${allReviews.length}건`;
                 document.getElementById('review-container').innerHTML = '<div class="text-center py-20 text-slate-400 font-bold">상단 SV 버튼을 눌러주세요.</div>';
+            } else {
+                status.innerText = '데이터 연결 실패';
+                status.className = 'px-3 py-1 bg-red-100 rounded-full text-[10px] font-bold text-red-600';
+                document.getElementById('review-container').innerHTML = '<div class="text-center py-20 text-red-400 font-bold">reviews.json을 불러오지 못했습니다.</div>';
             }
+        }
+
+        function normalizeText(value) {
+            return String(value || '').toLowerCase();
+        }
+
+        function inferCountryText(review) {
+            const combined = [
+                review.store_name,
+                review.country,
+                review.address,
+                review.location,
+                review.city
+            ].map(normalizeText).join(' ');
+
+            return combined;
+        }
+
+        function isReviewMatchedToSV(review, svName) {
+            const keywords = SV_COUNTRY_MAP[svName] || [];
+            const target = inferCountryText(review);
+            return keywords.some(keyword => target.includes(keyword.toLowerCase()));
         }
 
         function selectSV(svName, btn) {
+            currentSV = svName;
+            currentStore = 'ALL';
+
             document.querySelectorAll('.sv-tab').forEach(b => b.classList.remove('active-sv'));
             btn.classList.add('active-sv');
 
-            const keywords = SV_MAP[svName];
-            
-            // 매장 이름(store_name)에 키워드가 포함되어 있는지 체크
-            const filtered = allReviews.filter(r => {
-                const name = r.store_name || "";
-                return keywords.some(key => name.toLowerCase().includes(key.toLowerCase()));
-            });
+            currentSVReviews = allReviews.filter(r => isReviewMatchedToSV(r, svName));
 
-            const stores = [...new Set(filtered.map(r => r.store_name))];
+            document.getElementById('current-title').innerText = `${svName} SV 담당 리뷰`;
+            document.getElementById('current-subtitle').innerText = `담당 국가: ${getCountryLabel(svName)}`;
+
+            renderStoreList(currentSVReviews);
+            renderReviews(currentSVReviews, '전체');
+        }
+
+        function getCountryLabel(svName) {
+            const labels = {
+                '이여명': '대만 · 싱가포르',
+                '강소영': '몽골 · 네덜란드',
+                '소도희': '호주 · 태국 · 캄보디아',
+                '최성환': '인도네시아 · 필리핀'
+            };
+
+            return labels[svName] || '-';
+        }
+
+        function renderStoreList(data) {
+            const stores = [...new Set(data.map(r => r.store_name || 'Unknown Store'))];
             const storeListDiv = document.getElementById('store-list');
-            
-            if(stores.length > 0) {
-                storeListDiv.innerHTML = stores.map(s => `
-                    <button onclick="filterStore('${s}')" class="w-full text-left p-3 rounded-lg hover:bg-blue-50 text-xs font-bold text-slate-700 border border-slate-100 transition-all">📍 ${s}</button>
-                `).join('');
-                renderReviews(filtered);
+
+            if (stores.length > 0) {
+                storeListDiv.innerHTML = `
+                    <button onclick="filterStore('ALL', this)" class="store-btn active-store w-full text-left p-3 rounded-lg hover:bg-blue-50 text-xs font-bold text-slate-700 border border-slate-100 transition-all">
+                        전체 매장
+                        <span class="float-right text-slate-400">${data.length}</span>
+                    </button>
+                    ${stores.map(s => {
+                        const count = data.filter(r => (r.store_name || 'Unknown Store') === s).length;
+                        return `
+                            <button onclick="filterStore('${escapeForOnclick(s)}', this)" class="store-btn w-full text-left p-3 rounded-lg hover:bg-blue-50 text-xs font-bold text-slate-700 border border-slate-100 transition-all">
+                                📍 ${escapeHtml(s)}
+                                <span class="float-right text-slate-400">${count}</span>
+                            </button>
+                        `;
+                    }).join('')}
+                `;
             } else {
                 storeListDiv.innerHTML = '<p class="text-[10px] text-red-400">담당 매장 데이터 없음</p>';
+                document.getElementById('review-summary').classList.add('hidden');
                 document.getElementById('review-container').innerHTML = `
                     <div class="text-center py-20 text-slate-400">
-                        해당 SV 이름으로 매칭된 매장이 없습니다.<br>
-                        <span class="text-[10px]">수집된 매장 이름 예시: ${allReviews[0]?.store_name || '없음'}</span>
-                    </div>`;
+                        해당 SV 담당 국가로 매칭된 매장이 없습니다.<br>
+                        <span class="text-[10px]">수집된 매장 이름 예시: ${escapeHtml(allReviews[0]?.store_name || '없음')}</span>
+                    </div>
+                `;
             }
         }
 
-        function filterStore(name) {
-            const data = allReviews.filter(r => r.store_name === name);
-            renderReviews(data);
+        function filterStore(name, btn) {
+            currentStore = name;
+
+            document.querySelectorAll('.store-btn').forEach(b => b.classList.remove('active-store'));
+            if (btn) btn.classList.add('active-store');
+
+            const data = name === 'ALL'
+                ? currentSVReviews
+                : currentSVReviews.filter(r => (r.store_name || 'Unknown Store') === name);
+
+            renderReviews(data, name === 'ALL' ? '전체' : name);
         }
 
-        function renderReviews(data) {
-            document.getElementById('review-container').innerHTML = data.map(r => `
-                <div class="bg-white p-5 rounded-2xl shadow-sm border border-slate-100">
-                    <div class="flex justify-between items-center mb-2">
-                        <span class="text-[10px] font-bold text-blue-600 bg-blue-50 px-2 py-0.5 rounded">${r.store_name}</span>
-                        <span class="text-amber-400 text-xs font-bold">★ ${r.rating || 5}</span>
+        function handleSortChange() {
+            currentSort = document.getElementById('sort-select').value;
+
+            const data = currentStore === 'ALL'
+                ? currentSVReviews
+                : currentSVReviews.filter(r => (r.store_name || 'Unknown Store') === currentStore);
+
+            renderReviews(data, currentStore === 'ALL' ? '전체' : currentStore);
+        }
+
+        function sortReviews(data) {
+            const copied = [...data];
+
+            if (currentSort === 'rating-high') {
+                return copied.sort((a, b) => Number(b.rating || 0) - Number(a.rating || 0));
+            }
+
+            if (currentSort === 'rating-low') {
+                return copied.sort((a, b) => Number(a.rating || 0) - Number(b.rating || 0));
+            }
+
+            if (currentSort === 'oldest') {
+                return copied.sort((a, b) => estimateDateAgeScore(b.date) - estimateDateAgeScore(a.date));
+            }
+
+            return copied.sort((a, b) => estimateDateAgeScore(a.date) - estimateDateAgeScore(b.date));
+        }
+
+        function estimateDateAgeScore(dateText) {
+            const text = normalizeText(dateText);
+
+            if (!text || text === 'unknown' || text === 'recent') return 999999;
+
+            const numMatch = text.match(/\d+/);
+            const num = numMatch ? Number(numMatch[0]) : 1;
+
+            if (text.includes('second') || text.includes('minute') || text.includes('hour')) return 0;
+            if (text.includes('초') || text.includes('분') || text.includes('시간')) return 0;
+            if (text.includes('dag') || text.includes('day') || text.includes('일')) return num;
+            if (text.includes('week') || text.includes('weken') || text.includes('주')) return num * 7;
+            if (text.includes('month') || text.includes('maand') || text.includes('maanden') || text.includes('개월')) return num * 30;
+            if (text.includes('year') || text.includes('jaar') || text.includes('년')) return num * 365;
+
+            return 999999;
+        }
+
+        function renderReviews(data, selectedStoreLabel) {
+            const sorted = sortReviews(data);
+            const container = document.getElementById('review-container');
+
+            renderSummary(sorted, selectedStoreLabel);
+
+            if (!sorted.length) {
+                container.innerHTML = '<div class="text-center py-20 text-slate-400 font-bold">표시할 리뷰가 없습니다.</div>';
+                return;
+            }
+
+            container.innerHTML = sorted.map(r => {
+                const rating = Number(r.rating || 5);
+                const stars = '★'.repeat(Math.max(0, Math.min(5, rating))) + '☆'.repeat(Math.max(0, 5 - rating));
+
+                return `
+                    <div class="bg-white p-5 rounded-2xl shadow-sm border border-slate-100">
+                        <div class="flex justify-between items-start gap-3 mb-3">
+                            <div>
+                                <div class="flex flex-wrap items-center gap-2">
+                                    <span class="text-[10px] font-bold text-blue-600 bg-blue-50 px-2 py-0.5 rounded">${escapeHtml(r.store_name || 'Unknown Store')}</span>
+                                    <span class="text-[10px] font-bold text-slate-500 bg-slate-100 px-2 py-0.5 rounded">${escapeHtml(r.author || 'Anonymous')}</span>
+                                </div>
+                                <div class="text-[10px] text-slate-400 mt-2">
+                                    리뷰 작성: ${escapeHtml(r.date || 'Unknown')}
+                                    <span class="mx-1">·</span>
+                                    수집: ${escapeHtml(r.collected_at || '-')}
+                                </div>
+                            </div>
+                            <div class="text-right shrink-0">
+                                <div class="text-amber-400 text-xs font-black">${stars}</div>
+                                <div class="text-[10px] text-slate-400 mt-1">${rating.toFixed(1)}</div>
+                            </div>
+                        </div>
+
+                        <p class="text-sm text-slate-700 leading-relaxed whitespace-pre-line">${escapeHtml(r.text || '')}</p>
                     </div>
-                    <p class="text-sm text-slate-700 leading-relaxed">${r.text}</p>
-                    <div class="text-[9px] text-slate-300 mt-4">${r.collected_at} 수집</div>
-                </div>
-            `).join('');
+                `;
+            }).join('');
+        }
+
+        function renderSummary(data, selectedStoreLabel) {
+            const box = document.getElementById('review-summary');
+            box.classList.remove('hidden');
+
+            const count = data.length;
+            const avg = count
+                ? data.reduce((sum, r) => sum + Number(r.rating || 0), 0) / count
+                : 0;
+
+            document.getElementById('summary-count').innerText = count;
+            document.getElementById('summary-rating').innerText = avg.toFixed(1);
+            document.getElementById('summary-store').innerText = selectedStoreLabel || '전체';
+        }
+
+        function escapeHtml(value) {
+            return String(value || '')
+                .replaceAll('&', '&amp;')
+                .replaceAll('<', '&lt;')
+                .replaceAll('>', '&gt;')
+                .replaceAll('"', '&quot;')
+                .replaceAll("'", '&#039;');
+        }
+
+        function escapeForOnclick(value) {
+            return String(value || '').replaceAll("\\", "\\\\").replaceAll("'", "\\'");
         }
 
         init();
