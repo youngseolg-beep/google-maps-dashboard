@@ -16,7 +16,7 @@
             <div>
                 <h1 class="text-2xl font-black text-slate-800">
                     📊 SV REVIEW MASTER
-                    <span class="text-blue-500 text-sm font-normal ml-2">v1.4.0</span>
+                    <span class="text-blue-500 text-sm font-normal ml-2">v1.5.0</span>
                 </h1>
                 <p class="text-xs text-slate-400 mt-1">Google Maps 리뷰 자동 수집 · 담당 SV별 리뷰 관리</p>
             </div>
@@ -61,7 +61,18 @@
             </div>
 
             <div>
-                <div class="text-[10px] font-black text-slate-400 mb-2">KEYWORD FILTER</div>
+                <div class="flex items-center justify-between gap-3 flex-wrap mb-2">
+                    <div class="text-[10px] font-black text-slate-400">KEYWORD FILTER</div>
+
+                    <button
+                        onclick="toggleLowRatingMode(this)"
+                        id="low-rating-toggle"
+                        class="px-3 py-2 rounded-full bg-red-50 text-red-600 text-[11px] font-black hover:bg-red-100 transition-all"
+                    >
+                        🚨 LOW REVIEWS ONLY
+                    </button>
+                </div>
+
                 <div class="flex flex-wrap gap-2">
                     <button onclick="applyKeywordFilter('jjamppong', this)" class="keyword-btn px-3 py-2 rounded-full bg-red-50 text-red-600 text-[11px] font-black hover:bg-red-100 transition-all">🍜 Jjamppong</button>
                     <button onclick="applyKeywordFilter('jjajang', this)" class="keyword-btn px-3 py-2 rounded-full bg-slate-100 text-slate-700 text-[11px] font-black hover:bg-slate-200 transition-all">🖤 Jjajang</button>
@@ -132,6 +143,7 @@
         let currentStore = 'ALL';
         let currentSort = 'latest';
         let currentKeyword = null;
+        let lowRatingOnly = false;
 
         async function init() {
             const paths = ['data/reviews.json', 'public/data/reviews.json', 'reviews.json'];
@@ -186,11 +198,14 @@
             currentSV = svName;
             currentStore = 'ALL';
             currentKeyword = null;
+            lowRatingOnly = false;
 
             document.querySelectorAll('.sv-tab').forEach(b => b.classList.remove('active-sv'));
             btn.classList.add('active-sv');
 
             document.querySelectorAll('.keyword-btn').forEach(b => b.classList.remove('active-keyword'));
+            const lowToggle = document.getElementById('low-rating-toggle');
+            if (lowToggle) lowToggle.classList.remove('active-keyword');
 
             currentSVReviews = allReviews.filter(r => isReviewMatchedToSV(r, svName));
 
@@ -262,6 +277,18 @@
             refreshCurrentReviews();
         }
 
+        function toggleLowRatingMode(btn) {
+            lowRatingOnly = !lowRatingOnly;
+
+            if (lowRatingOnly) {
+                btn.classList.add('active-keyword');
+            } else {
+                btn.classList.remove('active-keyword');
+            }
+
+            refreshCurrentReviews();
+        }
+
         function clearKeywordFilter() {
             currentKeyword = null;
 
@@ -282,6 +309,12 @@
             });
         }
 
+        function filterLowRatings(data) {
+            if (!lowRatingOnly) return data;
+
+            return data.filter(review => Number(review.rating || 0) <= 3);
+        }
+
         function refreshCurrentReviews() {
             if (!currentSV) {
                 document.getElementById('review-container').innerHTML = '<div class="text-center py-20 text-slate-400 font-bold">상단 SV 버튼을 눌러주세요.</div>';
@@ -293,6 +326,7 @@
                 : currentSVReviews.filter(r => (r.store_name || 'Unknown Store') === currentStore);
 
             data = filterByKeyword(data);
+            data = filterLowRatings(data);
 
             renderReviews(data, currentStore === 'ALL' ? '전체' : currentStore);
         }
