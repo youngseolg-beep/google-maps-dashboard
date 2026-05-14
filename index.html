@@ -7,6 +7,7 @@
     <style>
         .active-sv { background-color: #2563eb !important; color: white !important; }
         .active-store { background-color: #eff6ff !important; border-color: #2563eb !important; color: #1d4ed8 !important; }
+        .active-keyword { box-shadow: 0 0 0 2px #111827 inset !important; transform: translateY(-1px); }
     </style>
 </head>
 <body class="bg-slate-50 p-6">
@@ -15,7 +16,7 @@
             <div>
                 <h1 class="text-2xl font-black text-slate-800">
                     📊 SV REVIEW MASTER
-                    <span class="text-blue-500 text-sm font-normal ml-2">v1.3.0</span>
+                    <span class="text-blue-500 text-sm font-normal ml-2">v1.4.0</span>
                 </h1>
                 <p class="text-xs text-slate-400 mt-1">Google Maps 리뷰 자동 수집 · 담당 SV별 리뷰 관리</p>
             </div>
@@ -41,20 +42,39 @@
             </button>
         </div>
 
-        <div class="bg-white p-4 rounded-2xl shadow-sm mb-6 flex flex-wrap items-center justify-between gap-3">
-            <div>
-                <div id="current-title" class="text-sm font-black text-slate-700">SV를 선택해주세요</div>
-                <div id="current-subtitle" class="text-[11px] text-slate-400 mt-1">담당 국가 기준으로 리뷰가 자동 분류됩니다.</div>
+        <div class="bg-white p-4 rounded-2xl shadow-sm mb-6 flex flex-col gap-4">
+            <div class="flex flex-wrap items-center justify-between gap-3">
+                <div>
+                    <div id="current-title" class="text-sm font-black text-slate-700">SV를 선택해주세요</div>
+                    <div id="current-subtitle" class="text-[11px] text-slate-400 mt-1">담당 국가 기준으로 리뷰가 자동 분류됩니다.</div>
+                </div>
+
+                <div class="flex items-center gap-2">
+                    <span class="text-[11px] font-bold text-slate-400">정렬</span>
+                    <select id="sort-select" onchange="handleSortChange()" class="text-xs font-bold border border-slate-200 rounded-lg px-3 py-2 bg-white text-slate-700 outline-none">
+                        <option value="latest">날짜 순 · 최신 추정</option>
+                        <option value="rating-high">별점 높은 순</option>
+                        <option value="rating-low">별점 낮은 순</option>
+                        <option value="oldest">날짜 순 · 오래된 추정</option>
+                    </select>
+                </div>
             </div>
 
-            <div class="flex items-center gap-2">
-                <span class="text-[11px] font-bold text-slate-400">정렬</span>
-                <select id="sort-select" onchange="handleSortChange()" class="text-xs font-bold border border-slate-200 rounded-lg px-3 py-2 bg-white text-slate-700 outline-none">
-                    <option value="latest">날짜 순 · 최신 추정</option>
-                    <option value="rating-high">별점 높은 순</option>
-                    <option value="rating-low">별점 낮은 순</option>
-                    <option value="oldest">날짜 순 · 오래된 추정</option>
-                </select>
+            <div>
+                <div class="text-[10px] font-black text-slate-400 mb-2">KEYWORD FILTER</div>
+                <div class="flex flex-wrap gap-2">
+                    <button onclick="applyKeywordFilter('jjamppong', this)" class="keyword-btn px-3 py-2 rounded-full bg-red-50 text-red-600 text-[11px] font-black hover:bg-red-100 transition-all">🍜 Jjamppong</button>
+                    <button onclick="applyKeywordFilter('jjajang', this)" class="keyword-btn px-3 py-2 rounded-full bg-slate-100 text-slate-700 text-[11px] font-black hover:bg-slate-200 transition-all">🖤 Jjajang</button>
+                    <button onclick="applyKeywordFilter('tangsuyuk', this)" class="keyword-btn px-3 py-2 rounded-full bg-amber-50 text-amber-700 text-[11px] font-black hover:bg-amber-100 transition-all">🥩 Tangsuyuk</button>
+                    <button onclick="applyKeywordFilter('service', this)" class="keyword-btn px-3 py-2 rounded-full bg-blue-50 text-blue-700 text-[11px] font-black hover:bg-blue-100 transition-all">😊 Service</button>
+                    <button onclick="applyKeywordFilter('waiting', this)" class="keyword-btn px-3 py-2 rounded-full bg-orange-50 text-orange-700 text-[11px] font-black hover:bg-orange-100 transition-all">⏰ Waiting</button>
+                    <button onclick="applyKeywordFilter('delivery', this)" class="keyword-btn px-3 py-2 rounded-full bg-purple-50 text-purple-700 text-[11px] font-black hover:bg-purple-100 transition-all">🛵 Delivery</button>
+                    <button onclick="applyKeywordFilter('spicy', this)" class="keyword-btn px-3 py-2 rounded-full bg-pink-50 text-pink-700 text-[11px] font-black hover:bg-pink-100 transition-all">🌶 Spicy</button>
+                    <button onclick="applyKeywordFilter('portion', this)" class="keyword-btn px-3 py-2 rounded-full bg-emerald-50 text-emerald-700 text-[11px] font-black hover:bg-emerald-100 transition-all">🍚 Portion</button>
+                    <button onclick="applyKeywordFilter('price', this)" class="keyword-btn px-3 py-2 rounded-full bg-yellow-50 text-yellow-700 text-[11px] font-black hover:bg-yellow-100 transition-all">💰 Price</button>
+                    <button onclick="applyKeywordFilter('clean', this)" class="keyword-btn px-3 py-2 rounded-full bg-cyan-50 text-cyan-700 text-[11px] font-black hover:bg-cyan-100 transition-all">🧼 Clean</button>
+                    <button onclick="clearKeywordFilter()" class="px-3 py-2 rounded-full bg-black text-white text-[11px] font-black hover:opacity-80 transition-all">✕ Reset</button>
+                </div>
             </div>
         </div>
 
@@ -93,11 +113,25 @@
             '최성환': ['indonesia', 'philippines', '인도네시아', '필리핀']
         };
 
+        const KEYWORD_GROUPS = {
+            jjamppong: ['jjampong', 'jjamppong', 'jjam pong', 'jampong', 'janmpong', 'spicy noodle', 'spicy soup', 'seafood noodle'],
+            jjajang: ['jjajang', 'black bean noodle', 'black noodle'],
+            tangsuyuk: ['tangsuyuk', 'sweet sour pork', 'sweet and sour pork', 'fried pork'],
+            service: ['service', 'friendly', 'kind', 'staff', 'rude'],
+            waiting: ['wait', 'waiting', 'slow', 'long time'],
+            delivery: ['delivery', 'takeout', 'take away', 'ubereats'],
+            spicy: ['spicy', 'hot', 'too spicy', 'mild'],
+            portion: ['portion', 'small', 'large', 'quantity'],
+            price: ['price', 'expensive', 'cheap', 'value'],
+            clean: ['clean', 'dirty', 'hygiene', 'toilet']
+        };
+
         let allReviews = [];
         let currentSV = null;
         let currentSVReviews = [];
         let currentStore = 'ALL';
         let currentSort = 'latest';
+        let currentKeyword = null;
 
         async function init() {
             const paths = ['data/reviews.json', 'public/data/reviews.json', 'reviews.json'];
@@ -151,9 +185,12 @@
         function selectSV(svName, btn) {
             currentSV = svName;
             currentStore = 'ALL';
+            currentKeyword = null;
 
             document.querySelectorAll('.sv-tab').forEach(b => b.classList.remove('active-sv'));
             btn.classList.add('active-sv');
+
+            document.querySelectorAll('.keyword-btn').forEach(b => b.classList.remove('active-keyword'));
 
             currentSVReviews = allReviews.filter(r => isReviewMatchedToSV(r, svName));
 
@@ -161,7 +198,7 @@
             document.getElementById('current-subtitle').innerText = `담당 국가: ${getCountryLabel(svName)}`;
 
             renderStoreList(currentSVReviews);
-            renderReviews(currentSVReviews, '전체');
+            refreshCurrentReviews();
         }
 
         function getCountryLabel(svName) {
@@ -213,21 +250,56 @@
             document.querySelectorAll('.store-btn').forEach(b => b.classList.remove('active-store'));
             if (btn) btn.classList.add('active-store');
 
-            const data = name === 'ALL'
-                ? currentSVReviews
-                : currentSVReviews.filter(r => (r.store_name || 'Unknown Store') === name);
+            refreshCurrentReviews();
+        }
 
-            renderReviews(data, name === 'ALL' ? '전체' : name);
+        function applyKeywordFilter(keywordKey, btn) {
+            currentKeyword = keywordKey;
+
+            document.querySelectorAll('.keyword-btn').forEach(b => b.classList.remove('active-keyword'));
+            if (btn) btn.classList.add('active-keyword');
+
+            refreshCurrentReviews();
+        }
+
+        function clearKeywordFilter() {
+            currentKeyword = null;
+
+            document.querySelectorAll('.keyword-btn').forEach(b => b.classList.remove('active-keyword'));
+
+            refreshCurrentReviews();
+        }
+
+        function filterByKeyword(data) {
+            if (!currentKeyword) return data;
+
+            const keywords = KEYWORD_GROUPS[currentKeyword] || [];
+
+            return data.filter(review => {
+                const text = normalizeText(review.text || '');
+
+                return keywords.some(keyword => text.includes(keyword.toLowerCase()));
+            });
+        }
+
+        function refreshCurrentReviews() {
+            if (!currentSV) {
+                document.getElementById('review-container').innerHTML = '<div class="text-center py-20 text-slate-400 font-bold">상단 SV 버튼을 눌러주세요.</div>';
+                return;
+            }
+
+            let data = currentStore === 'ALL'
+                ? currentSVReviews
+                : currentSVReviews.filter(r => (r.store_name || 'Unknown Store') === currentStore);
+
+            data = filterByKeyword(data);
+
+            renderReviews(data, currentStore === 'ALL' ? '전체' : currentStore);
         }
 
         function handleSortChange() {
             currentSort = document.getElementById('sort-select').value;
-
-            const data = currentStore === 'ALL'
-                ? currentSVReviews
-                : currentSVReviews.filter(r => (r.store_name || 'Unknown Store') === currentStore);
-
-            renderReviews(data, currentStore === 'ALL' ? '전체' : currentStore);
+            refreshCurrentReviews();
         }
 
         function sortReviews(data) {
@@ -279,15 +351,18 @@
 
             container.innerHTML = sorted.map(r => {
                 const rating = Number(r.rating || 5);
-                const stars = '★'.repeat(Math.max(0, Math.min(5, rating))) + '☆'.repeat(Math.max(0, 5 - rating));
+                const safeRating = Math.max(0, Math.min(5, Math.round(rating)));
+                const stars = '★'.repeat(safeRating) + '☆'.repeat(5 - safeRating);
+                const lowRatingClass = rating <= 3 ? 'border-red-200 bg-red-50/40' : 'border-slate-100 bg-white';
 
                 return `
-                    <div class="bg-white p-5 rounded-2xl shadow-sm border border-slate-100">
+                    <div class="${lowRatingClass} p-5 rounded-2xl shadow-sm border">
                         <div class="flex justify-between items-start gap-3 mb-3">
                             <div>
                                 <div class="flex flex-wrap items-center gap-2">
                                     <span class="text-[10px] font-bold text-blue-600 bg-blue-50 px-2 py-0.5 rounded">${escapeHtml(r.store_name || 'Unknown Store')}</span>
                                     <span class="text-[10px] font-bold text-slate-500 bg-slate-100 px-2 py-0.5 rounded">${escapeHtml(r.author || 'Anonymous')}</span>
+                                    ${rating <= 3 ? '<span class="text-[10px] font-black text-red-600 bg-red-100 px-2 py-0.5 rounded">LOW RATING</span>' : ''}
                                 </div>
                                 <div class="text-[10px] text-slate-400 mt-2">
                                     리뷰 작성: ${escapeHtml(r.date || 'Unknown')}
@@ -301,10 +376,25 @@
                             </div>
                         </div>
 
-                        <p class="text-sm text-slate-700 leading-relaxed whitespace-pre-line">${escapeHtml(r.text || '')}</p>
+                        <p class="text-sm text-slate-700 leading-relaxed whitespace-pre-line">${highlightKeywords(escapeHtml(r.text || ''))}</p>
                     </div>
                 `;
             }).join('');
+        }
+
+        function highlightKeywords(text) {
+            if (!currentKeyword) return text;
+
+            const keywords = KEYWORD_GROUPS[currentKeyword] || [];
+            let result = text;
+
+            keywords.forEach(keyword => {
+                const escapedKeyword = escapeRegex(keyword);
+                const regex = new RegExp(`(${escapedKeyword})`, 'gi');
+                result = result.replace(regex, '<mark class="bg-yellow-200 rounded px-0.5">$1</mark>');
+            });
+
+            return result;
         }
 
         function renderSummary(data, selectedStoreLabel) {
@@ -328,6 +418,10 @@
                 .replaceAll('>', '&gt;')
                 .replaceAll('"', '&quot;')
                 .replaceAll("'", '&#039;');
+        }
+
+        function escapeRegex(value) {
+            return String(value || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
         }
 
         function escapeForOnclick(value) {
