@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+ <!DOCTYPE html>
 <html lang="ko">
 <head>
     <meta charset="UTF-8">
@@ -16,7 +16,7 @@
             <div>
                 <h1 class="text-2xl font-black text-slate-800">
                     📊 SV REVIEW MASTER
-                    <span class="text-blue-500 text-sm font-normal ml-2">v1.8.0</span>
+                    <span class="text-blue-500 text-sm font-normal ml-2">v1.8.1</span>
                 </h1>
                 <p class="text-xs text-slate-400 mt-1">Google Maps 리뷰 자동 수집 · 담당 SV별 리뷰 관리</p>
             </div>
@@ -97,15 +97,26 @@
         </div>
 
         <div class="flex gap-6">
-            <div class="w-1/4 bg-white p-4 rounded-2xl shadow-sm h-fit min-h-[300px]">
-                <h3 class="font-bold mb-4 text-slate-400 text-[10px] uppercase">담당 매장 목록</h3>
-                <div id="store-list" class="space-y-2"></div>
+            <div class="w-[340px] shrink-0">
+                <div class="bg-white p-4 rounded-2xl shadow-sm">
+                    <div class="flex items-center justify-between mb-4">
+                        <h3 class="font-black text-slate-700 text-sm">
+                            🏪 STORE STATUS
+                        </h3>
+
+                        <div class="text-[10px] font-bold text-slate-400">
+                            운영 상태 모니터링
+                        </div>
+                    </div>
+
+                    <div id="store-list" class="space-y-3"></div>
+                </div>
             </div>
 
-            <div class="w-3/4">
+            <div class="flex-1 min-w-0">
                 <div id="review-summary" class="mb-4 grid grid-cols-4 gap-3 hidden">
                     <div class="bg-white rounded-2xl shadow-sm p-4">
-                        <div class="text-[10px] text-slate-400 font-bold">해당 매장 전체 리뷰 수</div>
+                        <div class="text-[10px] text-slate-400 font-bold">선택 기준 리뷰 수</div>
                         <div id="summary-count" class="text-xl font-black text-slate-800 mt-1">0</div>
                     </div>
                     <div class="bg-white rounded-2xl shadow-sm p-4">
@@ -290,26 +301,15 @@
 
         function renderStoreList(data) {
             const stores = [...new Set(data.map(r => r.store_name || 'Unknown Store'))];
+
             const storeListDiv = document.getElementById('store-list');
 
-            if (stores.length > 0) {
+            if (!stores.length) {
                 storeListDiv.innerHTML = `
-                    <button onclick="filterStore('ALL', this)" class="store-btn active-store w-full text-left p-3 rounded-lg hover:bg-blue-50 text-xs font-bold text-slate-700 border border-slate-100 transition-all">
-                        전체 매장
-                        <span class="float-right text-slate-400">${data.length}</span>
-                    </button>
-                    ${stores.map(s => {
-                        const count = data.filter(r => (r.store_name || 'Unknown Store') === s).length;
-                        return `
-                            <button onclick="filterStore('${escapeForOnclick(s)}', this)" class="store-btn w-full text-left p-3 rounded-lg hover:bg-blue-50 text-xs font-bold text-slate-700 border border-slate-100 transition-all">
-                                📍 ${escapeHtml(s)}
-                                <span class="float-right text-slate-400">${count}</span>
-                            </button>
-                        `;
-                    }).join('')}
+                    <div class="text-center py-10 text-slate-400 text-xs">
+                        매장 데이터 없음
+                    </div>
                 `;
-            } else {
-                storeListDiv.innerHTML = '<p class="text-[10px] text-red-400">담당 매장 데이터 없음</p>';
                 document.getElementById('review-summary').classList.add('hidden');
                 document.getElementById('review-container').innerHTML = `
                     <div class="text-center py-20 text-slate-400">
@@ -317,7 +317,138 @@
                         <span class="text-[10px]">수집된 매장 이름 예시: ${escapeHtml(allReviews[0]?.store_name || '없음')}</span>
                     </div>
                 `;
+                return;
             }
+
+            const cards = stores.map(storeName => {
+                const reviews = data.filter(
+                    r => (r.store_name || 'Unknown Store') === storeName
+                );
+
+                const totalReviews = reviews.length;
+
+                const lowReviews = reviews.filter(
+                    r => Number(r.rating || 0) <= 3
+                ).length;
+
+                const latestReview = getLatestReviewDate(reviews);
+
+                const collectedAt = getLatestCollectedAt(reviews);
+
+                const recent7Days = reviews.filter(r => {
+                    const score = estimateDateAgeScore(r.date);
+                    return score <= 7;
+                }).length;
+
+                const isActive = currentStore === storeName;
+
+                return `
+                    <button
+                        onclick="filterStore('${escapeForOnclick(storeName)}', this)"
+                        class="
+                            store-btn
+                            w-full
+                            text-left
+                            rounded-2xl
+                            border
+                            transition-all
+                            p-4
+                            ${isActive
+                                ? 'border-blue-500 bg-blue-50'
+                                : 'border-slate-200 bg-white hover:bg-slate-50'}
+                        "
+                    >
+                        <div class="flex items-start justify-between gap-2">
+                            <div class="min-w-0">
+                                <div class="text-sm font-black text-slate-800 leading-snug">
+                                    ${escapeHtml(storeName)}
+                                </div>
+
+                                <div class="text-[10px] text-slate-400 mt-1">
+                                    최근 리뷰: ${escapeHtml(latestReview)}
+                                </div>
+                            </div>
+
+                            ${
+                                lowReviews > 0
+                                ? `
+                                    <div class="px-2 py-1 rounded-full bg-red-100 text-red-600 text-[10px] font-black shrink-0">
+                                        LOW ${lowReviews}
+                                    </div>
+                                `
+                                : `
+                                    <div class="px-2 py-1 rounded-full bg-emerald-100 text-emerald-600 text-[10px] font-black shrink-0">
+                                        SAFE
+                                    </div>
+                                `
+                            }
+                        </div>
+
+                        <div class="grid grid-cols-2 gap-2 mt-4">
+                            <div class="bg-slate-50 rounded-xl p-3">
+                                <div class="text-[10px] text-slate-400 font-bold">
+                                    전체 리뷰
+                                </div>
+
+                                <div class="text-lg font-black text-slate-800 mt-1">
+                                    ${totalReviews}
+                                </div>
+                            </div>
+
+                            <div class="bg-slate-50 rounded-xl p-3">
+                                <div class="text-[10px] text-slate-400 font-bold">
+                                    최근 7일
+                                </div>
+
+                                <div class="text-lg font-black text-blue-600 mt-1">
+                                    ${recent7Days}
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="mt-3 text-[10px] text-slate-400">
+                            마지막 수집: ${escapeHtml(collectedAt)}
+                        </div>
+                    </button>
+                `;
+            });
+
+            storeListDiv.innerHTML = `
+                <button
+                    onclick="filterStore('ALL', this)"
+                    class="
+                        store-btn
+                        w-full
+                        text-left
+                        rounded-2xl
+                        border
+                        p-4
+                        mb-3
+                        transition-all
+                        ${currentStore === 'ALL'
+                            ? 'border-blue-500 bg-blue-50'
+                            : 'border-slate-200 bg-white hover:bg-slate-50'}
+                    "
+                >
+                    <div class="flex items-center justify-between">
+                        <div>
+                            <div class="text-sm font-black text-slate-800">
+                                🌍 전체 매장
+                            </div>
+
+                            <div class="text-[10px] text-slate-400 mt-1">
+                                전체 리뷰 모니터링
+                            </div>
+                        </div>
+
+                        <div class="text-xl font-black text-slate-800">
+                            ${data.length}
+                        </div>
+                    </div>
+                </button>
+
+                ${cards.join('')}
+            `;
         }
 
         function filterStore(name, btn) {
@@ -327,6 +458,7 @@
             document.querySelectorAll('.store-btn').forEach(b => b.classList.remove('active-store'));
             if (btn) btn.classList.add('active-store');
 
+            renderStoreList(currentSVReviews);
             refreshCurrentReviews();
         }
 
