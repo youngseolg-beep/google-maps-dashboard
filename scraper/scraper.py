@@ -358,6 +358,24 @@ def merge_reviews(existing, new_reviews):
     return merged
 
 
+def count_new_reviews(existing_reviews, new_reviews):
+    existing_keys = set()
+
+    for review in existing_reviews:
+        key = make_review_key(review)
+        if key:
+            existing_keys.add(key)
+
+    new_keys = set()
+
+    for review in new_reviews:
+        key = make_review_key(review)
+        if key:
+            new_keys.add(key)
+
+    return len(new_keys - existing_keys)
+
+
 def extract_reviews(page):
     collected = []
     processed_keys = set()
@@ -447,15 +465,17 @@ def save_reviews(new_reviews):
     existing_reviews = load_existing_reviews()
     merged_reviews = merge_reviews(existing_reviews, new_reviews)
 
+    new_added_count = count_new_reviews(existing_reviews, new_reviews)
+    duplicate_cleaned_count = len(existing_reviews) + len(new_reviews) - len(merged_reviews)
+
     with open(DATA_PATH, "w", encoding="utf-8") as f:
         json.dump(merged_reviews, f, ensure_ascii=False, indent=4)
-
-    added_count = len(merged_reviews) - len(existing_reviews)
 
     print(f"✨ 저장 완료: {DATA_PATH}")
     print(f"   - 기존 리뷰: {len(existing_reviews)}건")
     print(f"   - 이번 수집: {len(new_reviews)}건")
-    print(f"   - 신규 추가: {added_count}건")
+    print(f"   - 신규 추가: {new_added_count}건")
+    print(f"   - 중복 정리: {duplicate_cleaned_count}건")
     print(f"   - 최종 누적: {len(merged_reviews)}건")
 
 
