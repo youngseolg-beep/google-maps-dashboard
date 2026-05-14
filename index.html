@@ -16,7 +16,7 @@
             <div>
                 <h1 class="text-2xl font-black text-slate-800">
                     📊 SV REVIEW MASTER
-                    <span class="text-blue-500 text-sm font-normal ml-2">v1.5.0</span>
+                    <span class="text-blue-500 text-sm font-normal ml-2">v1.6.0</span>
                 </h1>
                 <p class="text-xs text-slate-400 mt-1">Google Maps 리뷰 자동 수집 · 담당 SV별 리뷰 관리</p>
             </div>
@@ -144,6 +144,7 @@
         let currentSort = 'latest';
         let currentKeyword = null;
         let lowRatingOnly = false;
+        let visibleReviewCount = 30;
 
         async function init() {
             const paths = ['data/reviews.json', 'public/data/reviews.json', 'reviews.json'];
@@ -199,6 +200,7 @@
             currentStore = 'ALL';
             currentKeyword = null;
             lowRatingOnly = false;
+            visibleReviewCount = 30;
 
             document.querySelectorAll('.sv-tab').forEach(b => b.classList.remove('active-sv'));
             btn.classList.add('active-sv');
@@ -261,6 +263,7 @@
 
         function filterStore(name, btn) {
             currentStore = name;
+            visibleReviewCount = 30;
 
             document.querySelectorAll('.store-btn').forEach(b => b.classList.remove('active-store'));
             if (btn) btn.classList.add('active-store');
@@ -270,6 +273,7 @@
 
         function applyKeywordFilter(keywordKey, btn) {
             currentKeyword = keywordKey;
+            visibleReviewCount = 30;
 
             document.querySelectorAll('.keyword-btn').forEach(b => b.classList.remove('active-keyword'));
             if (btn) btn.classList.add('active-keyword');
@@ -279,6 +283,7 @@
 
         function toggleLowRatingMode(btn) {
             lowRatingOnly = !lowRatingOnly;
+            visibleReviewCount = 30;
 
             if (lowRatingOnly) {
                 btn.classList.add('active-keyword');
@@ -291,6 +296,7 @@
 
         function clearKeywordFilter() {
             currentKeyword = null;
+            visibleReviewCount = 30;
 
             document.querySelectorAll('.keyword-btn').forEach(b => b.classList.remove('active-keyword'));
 
@@ -315,6 +321,11 @@
             return data.filter(review => Number(review.rating || 0) <= 3);
         }
 
+        function loadMoreReviews() {
+            visibleReviewCount += 30;
+            refreshCurrentReviews();
+        }
+
         function refreshCurrentReviews() {
             if (!currentSV) {
                 document.getElementById('review-container').innerHTML = '<div class="text-center py-20 text-slate-400 font-bold">상단 SV 버튼을 눌러주세요.</div>';
@@ -333,6 +344,7 @@
 
         function handleSortChange() {
             currentSort = document.getElementById('sort-select').value;
+            visibleReviewCount = 30;
             refreshCurrentReviews();
         }
 
@@ -374,6 +386,7 @@
 
         function renderReviews(data, selectedStoreLabel) {
             const sorted = sortReviews(data);
+            const visibleReviews = sorted.slice(0, visibleReviewCount);
             const container = document.getElementById('review-container');
 
             renderSummary(sorted, selectedStoreLabel);
@@ -383,7 +396,7 @@
                 return;
             }
 
-            container.innerHTML = sorted.map(r => {
+            container.innerHTML = visibleReviews.map(r => {
                 const rating = Number(r.rating || 5);
                 const safeRating = Math.max(0, Math.min(5, Math.round(rating)));
                 const stars = '★'.repeat(safeRating) + '☆'.repeat(5 - safeRating);
@@ -414,6 +427,19 @@
                     </div>
                 `;
             }).join('');
+
+            if (sorted.length > visibleReviewCount) {
+                container.innerHTML += `
+                    <div class="flex justify-center pt-2">
+                        <button
+                            onclick="loadMoreReviews()"
+                            class="px-5 py-3 rounded-xl bg-slate-900 text-white text-xs font-black hover:opacity-80 transition-all"
+                        >
+                            리뷰 더보기 (${sorted.length - visibleReviewCount}개 남음)
+                        </button>
+                    </div>
+                `;
+            }
         }
 
         function highlightKeywords(text) {
