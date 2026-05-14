@@ -330,12 +330,14 @@ def load_existing_reviews():
 
 
 def make_review_key(review):
-    author = normalize_spaces(review.get("author", ""))
-    text = normalize_spaces(review.get("text", ""))
-    date = normalize_spaces(review.get("date", ""))
+    author = normalize_spaces(review.get("author", "")).lower()
+    text = normalize_spaces(review.get("text", "")).lower()
 
-    if author and text and date:
-        return f"{author}|{date}|{text}"
+    text = re.sub(r"[^\w\s가-힣ㄱ-ㅎㅏ-ㅣ]", "", text)
+    text = re.sub(r"\s+", " ", text).strip()
+
+    if author and text:
+        return f"{author}|{text}"
 
     return text
 
