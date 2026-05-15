@@ -1,5 +1,71 @@
 [
     {
+        "store_name": "Bornga Brisbane",
+        "sv": "소도희",
+        "country": "Australia",
+        "city": "Brisbane",
+        "author": "Benie Watcharee",
+        "rating": 4,
+        "text": "I went to the restaurant today around 7:30 pm and received the food at about 8:00 pm. The food was really nice and tasty. The meat was very good, and all of the side dishes were delicious as well. …",
+        "date": "2 days ago",
+        "collected_at": "2026-05-15"
+    },
+    {
+        "store_name": "Bornga Cikarang",
+        "sv": "최성환",
+        "country": "Indonesia",
+        "city": "Cikarang",
+        "author": "aji setiawan",
+        "rating": 5,
+        "text": "The restaurant's vibe is comfortable, the food is comfort food, and the service is great. It's worth a try.",
+        "date": "18 hours ago",
+        "collected_at": "2026-05-15"
+    },
+    {
+        "store_name": "Bornga Lippo Mall Puri",
+        "sv": "최성환",
+        "country": "Indonesia",
+        "city": "Jakarta",
+        "author": "Kenneth Yip",
+        "rating": 5,
+        "text": "Had an amazing dining experience at BORNGA! The meats were grilled perfectly — juicy, tender, and packed with rich smoky flavor in every bite. The fresh lettuce and vegetables were incredibly crisp and refreshing, making the wraps taste …",
+        "date": "5 days ago",
+        "collected_at": "2026-05-15"
+    },
+    {
+        "store_name": "Bornga PIK",
+        "sv": "최성환",
+        "country": "Indonesia",
+        "city": "Jakarta",
+        "author": "Jessica Witjaksana",
+        "rating": 5,
+        "text": "There are so many side dishes, so satisfying! Japchae was superb, love it!",
+        "date": "Unknown",
+        "collected_at": "2026-05-15"
+    },
+    {
+        "store_name": "Bornga PIK",
+        "sv": "최성환",
+        "country": "Indonesia",
+        "city": "Jakarta",
+        "author": "Sun Ay",
+        "rating": 5,
+        "text": "This restaurant is a great choice for a family meal. The layout is spacious, complemented by superb banchan and high-quality meats. …",
+        "date": "4 days ago",
+        "collected_at": "2026-05-15"
+    },
+    {
+        "store_name": "Saemaeul SCBD",
+        "sv": "최성환",
+        "country": "Indonesia",
+        "city": "Jakarta",
+        "author": "Fransisca Nathania",
+        "rating": 5,
+        "text": "Really like eating at this Korbeq restaurant, all the meat is delicious and the service is very helpful, the banchan can be refilled as much as you like, basically this is the best restaurant, I will come back again🙌🏻🤗🥰",
+        "date": "Unknown",
+        "collected_at": "2026-05-15"
+    },
+    {
         "store_name": "Paik's Noodle Amsterdam",
         "sv": "강소영",
         "country": "Netherlands",
