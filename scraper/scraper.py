@@ -13,6 +13,13 @@ MAX_SCROLL_ROUNDS = 8
 STOP_STALLED_ROUNDS = 2
 MIN_REVIEWS_TARGET = 50
 
+# Recent-only mode settings
+# If a store already has saved reviews, the crawler checks only the latest area.
+RECENT_ONLY_MAX_REVIEWS = 20
+RECENT_ONLY_EXISTING_HIT_LIMIT = 3
+RECENT_ONLY_MIN_CHECKED = 10
+RECENT_ONLY_MAX_ROUNDS = 3
+
 KST = ZoneInfo("Asia/Seoul")
 
 
@@ -770,13 +777,44 @@ def count_new_reviews(existing_reviews, new_reviews):
     return len(new_keys - existing_keys)
 
 
-def extract_reviews(page, store):
+
+def get_existing_keys_for_store(existing_reviews, store_name):
+    target_store_name = normalize_spaces(store_name).lower()
+    keys = set()
+
+    for review in existing_reviews:
+        review_store_name = normalize_spaces(review.get("store_name", "")).lower()
+
+        if review_store_name != target_store_name:
+            continue
+
+        key = make_review_key(review)
+
+        if key:
+            keys.add(key)
+
+    return keys
+
+
+def extract_reviews(page, store, existing_keys=None):
     collected = []
     processed_keys = set()
     stalled_count = 0
     last_total = 0
+    checked_count = 0
+    existing_hit_count = 0
 
-    for round_no in range(MAX_SCROLL_ROUNDS):
+    existing_keys = existing_keys or set()
+    recent_only_mode = len(existing_keys) > 0
+
+    if recent_only_mode:
+        print(f"⚡ 최근 리뷰 모드 적용: {store['store_name']} / 기존 리뷰 key {len(existing_keys)}개")
+        max_rounds = min(MAX_SCROLL_ROUNDS, RECENT_ONLY_MAX_ROUNDS)
+    else:
+        print(f"📦 기존 리뷰 없음: {store['store_name']} / 초기 수집 모드")
+        max_rounds = MAX_SCROLL_ROUNDS
+
+    for round_no in range(max_rounds):
         click_more_buttons(page)
         click_original_review_buttons(page)
 
@@ -821,23 +859,48 @@ def extract_reviews(page, store):
 
                 key = make_review_key(review)
 
+                if not key:
+                    continue
+
                 if key in processed_keys:
                     continue
 
-                collected.append(review)
                 processed_keys.add(key)
+                checked_count += 1
+
+                if recent_only_mode and key in existing_keys:
+                    existing_hit_count += 1
+                    print(
+                        f"🟡 기존 리뷰 감지: {existing_hit_count}/{RECENT_ONLY_EXISTING_HIT_LIMIT} "
+                        f"/ 확인 {checked_count}/{RECENT_ONLY_MIN_CHECKED}"
+                    )
+
+                    if (
+                        checked_count >= RECENT_ONLY_MIN_CHECKED
+                        and existing_hit_count >= RECENT_ONLY_EXISTING_HIT_LIMIT
+                    ):
+                        print("✅ 기존 리뷰 충분히 감지. 이 매장 최근 리뷰 확인 종료.")
+                        return collected
+
+                    continue
+
+                collected.append(review)
                 found_this_turn += 1
+
+                if recent_only_mode and len(collected) >= RECENT_ONLY_MAX_REVIEWS:
+                    print(f"✅ 최근 리뷰 신규 후보 상한 도달: {RECENT_ONLY_MAX_REVIEWS}건")
+                    return collected
 
             except Exception as e:
                 print(f"⚠️ 개별 리뷰 추출 실패: {e}")
                 continue
 
         if found_this_turn > 0:
-            print(f"🔄 {round_no + 1}회차: {found_this_turn}건 추가 / 이번 매장 누적 {len(collected)}건")
+            print(f"🔄 {round_no + 1}회차: 신규 후보 {found_this_turn}건 / 이번 매장 누적 {len(collected)}건")
         else:
-            print(f"⚠️ {round_no + 1}회차: 신규 리뷰 없음 / 이번 매장 누적 {len(collected)}건")
+            print(f"⚠️ {round_no + 1}회차: 신규 후보 없음 / 이번 매장 누적 {len(collected)}건")
 
-        if len(collected) >= MIN_REVIEWS_TARGET:
+        if not recent_only_mode and len(collected) >= MIN_REVIEWS_TARGET:
             print(f"✅ 목표 수집량 도달: {len(collected)}건")
             break
 
@@ -851,12 +914,16 @@ def extract_reviews(page, store):
             print("✅ 추가 로딩 정체 감지. 빠른 수집 종료.")
             break
 
+        if recent_only_mode and round_no + 1 >= max_rounds:
+            print("✅ 최근 리뷰 모드 확인 라운드 완료. 다음 매장으로 이동.")
+            break
+
         scroll_reviews(page)
 
     return collected
 
 
-def scrape_store(page, store):
+def scrape_store(page, store, existing_reviews=None):
     print(f"\n==============================")
     print(f"🏪 매장 크롤링 시작: {store['store_name']}")
     print(f"👤 담당 SV: {store['sv']} / 국가: {store['country']}")
@@ -886,10 +953,15 @@ def scrape_store(page, store):
 
         if wait_for_reviews(page):
             set_reviews_sort_to_newest(page)
-            reviews = extract_reviews(page, store)
+            existing_keys = get_existing_keys_for_store(existing_reviews or [], store["store_name"])
+            reviews = extract_reviews(page, store, existing_keys)
 
-            if reviews:
-                print(f"✅ 매장 수집 성공: {store['store_name']} / {len(reviews)}건")
+            if reviews or existing_keys:
+                if reviews:
+                    print(f"✅ 매장 수집 성공: {store['store_name']} / 신규 후보 {len(reviews)}건")
+                else:
+                    print(f"✅ 매장 확인 완료: {store['store_name']} / 신규 리뷰 없음")
+
                 return {
                     "ok": True,
                     "store_name": store["store_name"],
@@ -979,6 +1051,7 @@ def save_crawl_status(results):
 def scrape():
     all_new_reviews = []
     crawl_results = []
+    existing_reviews = load_existing_reviews()
 
     with sync_playwright() as p:
         browser = p.chromium.launch(
@@ -1012,7 +1085,7 @@ def scrape():
 
         try:
             for store in STORES:
-                result = scrape_store(page, store)
+                result = scrape_store(page, store, existing_reviews)
                 crawl_results.append(result)
                 all_new_reviews.extend(result["reviews"])
 
