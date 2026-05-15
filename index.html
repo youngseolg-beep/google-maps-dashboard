@@ -17,7 +17,7 @@
             <div>
                 <h1 class="text-2xl font-black text-slate-800">
                     📊 SV REVIEW MASTER
-                    <span class="text-blue-500 text-sm font-normal ml-2">v1.9.1</span>
+                    <span class="text-blue-500 text-sm font-normal ml-2">v1.9.2</span>
                 </h1>
                 <p class="text-xs text-slate-400 mt-1">Google Maps 리뷰 자동 수집 · 담당 SV별 리뷰 관리 · Insight Dashboard</p>
             </div>
@@ -63,6 +63,8 @@
                 <div class="text-[10px] font-normal mt-1 text-slate-400">인도네시아 · 필리핀</div>
             </button>
         </div>
+
+        <div id="sv-store-count-summary" class="grid grid-cols-4 gap-4 mb-6"></div>
 
         <div class="bg-white p-4 rounded-2xl shadow-sm mb-6 flex flex-col gap-4">
             <div class="flex flex-wrap items-center justify-between gap-3">
@@ -320,6 +322,7 @@
             if (reviewsLoaded) {
                 status.innerText = `리뷰 데이터 연결됨`;
                 renderGlobalSummary();
+                renderSvStoreCountSummary();
                 document.getElementById('review-container').innerHTML = '<div class="text-center py-20 text-slate-400 font-bold">상단 SV 버튼을 눌러주세요.</div>';
                 renderInsights();
             } else {
@@ -375,6 +378,79 @@
             }
         }
 
+        function renderSvStoreCountSummary() {
+            const sourceStores = crawlStatus?.stores?.length
+                ? crawlStatus.stores
+                : Array.from(
+                    new Map(
+                        allReviews.map(r => [
+                            r.store_name,
+                            {
+                                store_name: r.store_name,
+                                sv: r.sv,
+                                country: r.country
+                            }
+                        ])
+                    ).values()
+                );
+
+            const grouped = {};
+            const countryOrder = {
+                '이여명': ['Taiwan', 'Singapore'],
+                '강소영': ['Mongolia', 'Netherlands'],
+                '소도희': ['Australia', 'Thailand', 'Cambodia'],
+                '최성환': ['Indonesia', 'Philippines']
+            };
+
+            sourceStores.forEach(store => {
+                const sv = store.sv || '미지정';
+                const country = store.country || 'Unknown';
+
+                if (!grouped[sv]) grouped[sv] = {};
+                if (!grouped[sv][country]) grouped[sv][country] = 0;
+
+                grouped[sv][country] += 1;
+            });
+
+            const order = ['이여명', '강소영', '소도희', '최성환'];
+
+            const html = order.map(sv => {
+                const countries = grouped[sv] || {};
+                const total = Object.values(countries).reduce((sum, count) => sum + count, 0);
+                const sortedCountries = [
+                    ...(countryOrder[sv] || []).filter(country => countries[country]),
+                    ...Object.keys(countries).filter(country => !(countryOrder[sv] || []).includes(country)).sort()
+                ];
+
+                return `
+                    <div class="bg-white rounded-2xl shadow-sm p-4">
+                        <div class="flex items-center justify-between mb-3">
+                            <div>
+                                <div class="text-sm font-black text-slate-800">${sv} SV</div>
+                                <div class="text-[10px] text-slate-400 font-bold mt-1">등록 매장 수</div>
+                            </div>
+                            <div class="text-2xl font-black text-blue-600">${total}</div>
+                        </div>
+
+                        <div class="space-y-1">
+                            ${sortedCountries.length
+                                ? sortedCountries.map(country => `
+                                    <div class="flex justify-between text-[11px]">
+                                        <span class="text-slate-500 font-bold">${escapeHtml(country)}</span>
+                                        <span class="text-slate-900 font-black">${countries[country]}개</span>
+                                    </div>
+                                `).join('')
+                                : `<div class="text-[11px] text-slate-400 font-bold">등록 매장 없음</div>`
+                            }
+                        </div>
+                    </div>
+                `;
+            }).join('');
+
+            const target = document.getElementById('sv-store-count-summary');
+            if (target) target.innerHTML = html;
+        }
+
         function normalizeText(value) {
             return String(value || '').toLowerCase();
         }
@@ -427,35 +503,35 @@
                 '강소영': '몽골 · 네덜란드',
                 '소도희': '호주 · 태국 · 캄보디아',
                 '최성환': '인도네시아 · 필리핀'
-           };
+            };
 
-return labels[svName] || '-';
-}
+            return labels[svName] || '-';
+        }
 
-const STORE_URL_MAP = {
-    "Bornga Dunhua South": "https://www.google.com/maps/place/%E6%9C%AC%E5%AE%B6BORNGA%E9%9F%93%E5%BC%8F%E7%87%92%E8%82%89+%E6%95%A6%E5%8D%97%E5%BA%97/@25.044463,121.5499789,17z/data=!3m1!5s0x3442abdb36c3dd57:0x31070c64b44f2f5c!4m8!3m7!1s0x3442ab0779763169:0x584a72379db46e23!8m2!3d25.044463!4d121.5499789!9m1!1b1!16s%2Fg%2F11s9g6zd8p?entry=ttu&g_ep=EgoyMDI2MDUxMS4wIKXMDSoASAFQAw%3D%3D",
-    "Bornga Dunnan Store": "https://www.google.com/maps/place/%E6%9C%AC%E5%AE%B6BORNGA%E9%9F%93%E5%BC%8F%E7%87%92%E8%82%89+%E6%95%A6%E5%8D%97%E5%BA%97/@25.044463,121.5499789,17z/data=!3m1!5s0x3442abdb36c3dd57:0x31070c64b44f2f5c!4m8!3m7!1s0x3442ab0779763169:0x584a72379db46e23!8m2!3d25.044463!4d121.5499789!9m1!1b1!16s%2Fg%2F11s9g6zd8p?entry=ttu&g_ep=EgoyMDI2MDUxMS4wIKXMDSoASAFQAw%3D%3D"
-};
+        const STORE_URL_MAP = {
+            "Bornga Dunhua South": "https://www.google.com/maps/place/%E6%9C%AC%E5%AE%B6BORNGA%E9%9F%93%E5%BC%8F%E7%87%92%E8%82%89+%E6%95%A6%E5%8D%97%E5%BA%97/@25.044463,121.5499789,17z/data=!3m1!5s0x3442abdb36c3dd57:0x31070c64b44f2f5c!4m8!3m7!1s0x3442ab0779763169:0x584a72379db46e23!8m2!3d25.044463!4d121.5499789!9m1!1b1!16s%2Fg%2F11s9g6zd8p?entry=ttu&g_ep=EgoyMDI2MDUxMS4wIKXMDSoASAFQAw%3D%3D",
+            "Bornga Dunnan Store": "https://www.google.com/maps/place/%E6%9C%AC%E5%AE%B6BORNGA%E9%9F%93%E5%BC%8F%E7%87%92%E8%82%89+%E6%95%A6%E5%8D%97%E5%BA%97/@25.044463,121.5499789,17z/data=!3m1!5s0x3442abdb36c3dd57:0x31070c64b44f2f5c!4m8!3m7!1s0x3442ab0779763169:0x584a72379db46e23!8m2!3d25.044463!4d121.5499789!9m1!1b1!16s%2Fg%2F11s9g6zd8p?entry=ttu&g_ep=EgoyMDI2MDUxMS4wIKXMDSoASAFQAw%3D%3D"
+        };
 
-function getGoogleMapsReviewUrl(storeName) {
-    if (STORE_URL_MAP[storeName]) {
-        return STORE_URL_MAP[storeName];
-    }
+        function getGoogleMapsReviewUrl(storeName) {
+            if (STORE_URL_MAP[storeName]) {
+                return STORE_URL_MAP[storeName];
+            }
 
-    const reviews = currentSVReviews.length ? currentSVReviews : allReviews;
-    const matched = reviews.find(
-        r => (r.store_name || "Unknown Store") === storeName
-    );
+            const reviews = currentSVReviews.length ? currentSVReviews : allReviews;
+            const matched = reviews.find(
+                r => (r.store_name || "Unknown Store") === storeName
+            );
 
-    if (matched && matched.url) {
-        return matched.url;
-    }
+            if (matched && matched.url) {
+                return matched.url;
+            }
 
-    const query = encodeURIComponent(`${storeName} Google Maps reviews`);
-    return `https://www.google.com/maps/search/?api=1&query=${query}`;
-}
+            const query = encodeURIComponent(`${storeName} Google Maps reviews`);
+            return `https://www.google.com/maps/search/?api=1&query=${query}`;
+        }
 
-function renderStoreList(data) {
+        function renderStoreList(data) {
             const stores = [...new Set(data.map(r => r.store_name || 'Unknown Store'))];
 
             const storeListDiv = document.getElementById('store-list');
