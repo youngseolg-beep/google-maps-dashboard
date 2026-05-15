@@ -432,10 +432,12 @@
             return labels[svName] || '-';
         }
 
-        function getGoogleMapsReviewUrl(storeName) {
-            const query = encodeURIComponent(`${storeName} Google Maps reviews`);
-            return `https://www.google.com/maps/search/?api=1&query=${query}`;
-        }
+      function getGoogleMapsReviewUrl(storeName) {
+    const reviews = currentSVReviews.length ? currentSVReviews : allReviews;
+    const matched = reviews.find(r => (r.store_name || 'Unknown Store') === storeName);
+
+    return matched?.url || `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(`${storeName} Google Maps reviews`)}`;
+}
 
         function renderStoreList(data) {
             const stores = [...new Set(data.map(r => r.store_name || 'Unknown Store'))];
