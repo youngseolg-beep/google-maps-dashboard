@@ -92,12 +92,7 @@ STORES = [{'store_name': "Paik's Noodle Amsterdam",
   'country': 'Australia',
   'city': 'Sydney',
   'url': 'https://www.google.com/maps/place/Bornga+Korean+BBQ+Restaurant+Rhodes+Central/@-33.8307287,151.0863827,17z/data=!3m1!5s0x6b12a4e4435ad5d7:0x79549d356444dece!4m8!3m7!1s0x6b12a5a90419a3d7:0x3941a9448836f0f6!8m2!3d-33.8307287!4d151.0863827!9m1!1b1!16s%2Fg%2F11sv7bpx95?entry=ttu&g_ep=EgoyMDI2MDUxMS4wIKXMDSoASAFQAw%3D%3D'},
- {'store_name': 'Bornga VivoCity',
-  'sv': '이여명',
-  'country': 'Singapore',
-  'city': 'Singapore',
-  'url': 'https://www.google.com/maps/place/Bornga+Singapore+@+VivoCity/@1.2633827,103.8226903,17z/data=!3m1!5s0x31da19589a627ead:0xfd38f5ec20125e95!4m8!3m7!1s0x31da1958a0bb240f:0x83089ebb709bd50d!8m2!3d1.2633827!4d103.8226903!9m1!1b1!16s%2Fg%2F11b5ytlhxv?entry=ttu&g_ep=EgoyMDI2MDUxMS4wIKXMDSoASAFQAw%3D%3D'},
- {'store_name': 'Bornga Dunnan Store',
+  {'store_name': 'Bornga Dunnan Store',
   'sv': '이여명',
   'country': 'Taiwan',
   'city': 'Taipei',
@@ -272,11 +267,6 @@ STORES = [{'store_name': "Paik's Noodle Amsterdam",
   'country': 'Singapore',
   'city': 'Singapore',
   'url': "https://www.google.com/maps/place/Paik's+Noodle+(Waterway+Point)/@1.4068821,103.9019981,17z/data=!3m1!5s0x31da15e4b0ea6aa5:0x7d8ff3824b33be60!4m8!3m7!1s0x31da15001e25059b:0x7a4b097bf7f2871b!8m2!3d1.4068821!4d103.9019981!9m1!1b1!16s%2Fg%2F11y3xll4xl?entry=ttu&g_ep=EgoyMDI2MDUxMS4wIKXMDSoASAFQAw%3D%3D"},
- {'store_name': "Paik's Noodle Clementi Mall",
-  'sv': '이여명',
-  'country': 'Singapore',
-  'city': 'Singapore',
-  'url': 'https://www.google.com/maps/place/Paik%E2%80%99s+Noodle+@+The+Clementi+Mall/@1.3155059,103.7644358,17z/data=!3m1!5s0x31da1a8e2efe8bcd:0xf60c56e4c8b1ec98!4m8!3m7!1s0x31da1b0022ec9609:0x15a9eef84c786a29!8m2!3d1.3155059!4d103.7644358!9m1!1b1!16s%2Fg%2F11vzrqmmzt?entry=ttu&g_ep=EgoyMDI2MDUxMS4wIKXMDSoASAFQAw%3D%3D'},
  {'store_name': "Paik's Noodle Taipei",
   'sv': '이여명',
   'country': 'Taiwan',
@@ -287,29 +277,42 @@ STORES = [{'store_name': "Paik's Noodle Amsterdam",
   'country': 'Cambodia',
   'city': 'Sihanoukville',
   'url': "https://www.google.com/maps/place/Paik's+Noodle+Sihanoukville+%ED%99%8D%EC%BD%A9%EB%B0%98%EC%A0%90+(%EC%8B%9C%ED%95%98%EB%88%84%ED%81%AC%EB%B9%8C)/@10.6030552,103.5308862,17z/data=!4m8!3m7!1s0x3107e10065008423:0x77702d6f926623c1!8m2!3d10.6030552!4d103.5308862!9m1!1b1!16s%2Fg%2F11x2hw733q?entry=ttu&g_ep=EgoyMDI2MDUxMS4wIKXMDSoASAFQAw%3D%3D"},
- {'store_name': "Paik's Noodle Phnom Penh",
+{
+  'store_name': "Paik's Noodle Phnom Penh",
   'sv': '소도희',
   'country': 'Cambodia',
   'city': 'Phnom Penh',
-  'url': 'https://www.google.com/maps/place/Paik%E2%80%99s+Noodle+(%ED%99%8D%EC%BD%A9%EB%B0%98%EC%A0%90)/@11.5480722,104.9273662,17z/data=!4m8!3m7!1s0x3109518dad18a92b:0x11d03d197ce8c0a9!8m2!3d11.5480722!4d104.9273662!9m1!1b1!16s%2Fg%2F11t6_lznnc?entry=ttu&g_ep=EgoyMDI2MDUxMS4wIKXMDSoASAFQAw%3D%3D'},
- {'store_name': "Paik's Noodle Melbourne CBD",
+  'url': 'https://www.google.com/maps/place/Paik%E2%80%99s+Noodle+(%ED%99%8D%EC%BD%A9%EB%B0%98%EC%A0%90)/@11.5480722,104.9273662,17z/data=!4m8!3m7!1s0x3109518dad18a92b:0x11d03d197ce8c0a9!8m2!3d11.5480722!4d104.9273662!9m1!1b1!16s%2Fg%2F11t6_lznnc?entry=ttu&g_ep=EgoyMDI2MDUxMS4wIKXMDSoASAFQAw%3D%3D'
+},
+{
+  'store_name': "Paik's Noodle Melbourne CBD",
   'sv': '소도희',
   'country': 'Australia',
   'city': 'Melbourne',
-  'url': "https://www.google.com/maps/place/Paik's+Noodle+CBD/@-37.8129948,144.9554991,17z/data=!3m1!5s0x6ad65d4962c360ad:0x1a7c865bc1a0483a!4m8!3m7!1s0x6ad65d6f9d6e42b3:0xa49b59731503e69a!8m2!3d-37.8129948!4d144.9554991!9m1!1b1!16s%2Fg%2F11pzs0dtg8?entry=ttu&g_ep=EgoyMDI2MDUxMS4wIKXMDSoASAFQAw%3D%3D"},
- {'store_name': "Paik's Noodle Glen Waverley",
+  'url': "https://www.google.com/maps/place/Paik's+Noodle+CBD/@-37.8129948,144.9554991,17z/data=!3m1!5s0x6ad65d4962c360ad:0x1a7c865bc1a0483a!4m8!3m7!1s0x6ad65d6f9d6e42b3:0xa49b59731503e69a!8m2!3d-37.8129948!4d144.9554991!9m1!1b1!16s%2Fg%2F11pzs0dtg8?entry=ttu&g_ep=EgoyMDI2MDUxMS4wIKXMDSoASAFQAw%3D%3D"
+},
+{
+  'store_name': "Paik's Noodle Glen Waverley",
   'sv': '소도희',
   'country': 'Australia',
   'city': 'Melbourne',
-  'url': "https://www.google.com/maps/place/Paik's+Noodle+Glen+Waverley/@-37.8790419,145.1647075,17z/data=!4m8!3m7!1s0x6ad63f2b5bc62569:0x12b0b8c774341f16!8m2!3d-37.8790419!4d145.1647075!9m1!1b1!16s%2Fg%2F11kbl425mz?entry=ttu&g_ep=EgoyMDI2MDUxMS4wIKXMDSoASAFQAw%3D%3D"},
- {'store_name': "Paik's Noodle Caulfield Village",
+  'url': "https://www.google.com/maps/place/Paik's+Noodle+Glen+Waverley/@-37.8790419,145.1647075,17z/data=!4m8!3m7!1s0x6ad63f2b5bc62569:0x12b0b8c774341f16!8m2!3d-37.8790419!4d145.1647075!9m1!1b1!16s%2Fg%2F11kbl425mz?entry=ttu&g_ep=EgoyMDI2MDUxMS4wIKXMDSoASAFQAw%3D%3D"
+},
+{
+  'store_name': "Paik's Bibim NTU",
+  'sv': '이여명',
+  'country': 'Singapore',
+  'city': 'Singapore',
+  'url': 'https://www.google.com/maps/place/Paik%27s+Bibim/@1.3471893,103.6781432,17z/data=!3m1!5s0x31da0f0acf7fffa7:0x1bd072911cb0b138!4m8!3m7!1s0x31da0fa07681b695:0x761051396477b994!8m2!3d1.3471893!4d103.6807181!9m1!1b1!16s%2Fg%2F11bwyxtrfh?entry=ttu&g_ep=EgoyMDI2MDUxMi4wIKXMDSoASAFQAw%3D%3D'
+},
+{
+  'store_name': "Paik's Noodle Caulfield Village",
   'sv': '소도희',
   'country': 'Australia',
   'city': 'Melbourne',
   'url': "https://www.google.com/maps/place/Paik's+Noodle+Caulfield+Village/@-37.8764159,145.0380412,17z/data=!3m1!5s0x6ad66992975a9dc5:0xff22e88c2ead0e54!4m8!3m7!1s0x6ad66916a9138f41:0x11695e2dde119ad3!8m2!3d-37.8764159!4d145.0380412!9m1!1b1!16s%2Fg%2F11sjrdh7y5?entry=ttu&g_ep=EgoyMDI2MDUxMS4wIKXMDSoASAFQAw%3D%3D"
- }
+}
 ]
-
 
 
 def build_url_candidates(url):
