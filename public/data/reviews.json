@@ -1,5 +1,115 @@
 [
     {
+        "store_name": "Saemaeul One Bangkok",
+        "sv": "소도희",
+        "country": "Thailand",
+        "city": "Bangkok",
+        "author": "One Trips",
+        "rating": 5,
+        "text": "The food is delicious. However, the kimchi soup wasn't soft enough, but it was still tasty. The restaurant atmosphere is nice, not too crowded, and the staff provides good service. You can ask for extra side dishes, but they give you a little too little vegetables. For two sets of food, we only got one plate of vegetables with two sesame leaves and two lettuce leaves, and refills of vegetables are not available. (It would be better if we got one plate of vegetables for one set of food, but one plate for two sets felt a bit insufficient.) #KoreanRestaurantSilomSathornRamaIVArea",
+        "date": "3 days ago",
+        "collected_at": "2026-05-22"
+    },
+    {
+        "store_name": "Paik's Noodle Mongolia",
+        "sv": "강소영",
+        "country": "Mongolia",
+        "city": "Ulaanbaatar",
+        "author": "Burenbayar Boldsukh",
+        "rating": 2,
+        "text": "Turn on that god forsaken air conditioner please",
+        "date": "2 days ago",
+        "collected_at": "2026-05-22"
+    },
+    {
+        "store_name": "Paik's Noodle Mongolia",
+        "sv": "강소영",
+        "country": "Mongolia",
+        "city": "Ulaanbaatar",
+        "author": "Bat-Ireedui Erdenejav",
+        "rating": 2,
+        "text": "waiting for 1 hour just 1 jajangmeon.",
+        "date": "3 days ago",
+        "collected_at": "2026-05-22"
+    },
+    {
+        "store_name": "Paik's Noodle Mongolia",
+        "sv": "강소영",
+        "country": "Mongolia",
+        "city": "Ulaanbaatar",
+        "author": "Khandaa Ye",
+        "rating": 1,
+        "text": "22:00aas haadag ch achaallaas bolood 20:00aas oird haj bgaa shuu geed post biched ch when you are in the middle of the road. Zorij ochood conditions murguud butsaj humus zunduu bgaa ter humus with zaviig hundelmeer bna.",
+        "date": "4 days ago",
+        "collected_at": "2026-05-22"
+    },
+    {
+        "store_name": "Paik's Noodle Mongolia",
+        "sv": "강소영",
+        "country": "Mongolia",
+        "city": "Ulaanbaatar",
+        "author": "Maral Oyunsuren",
+        "rating": 1,
+        "text": "Couldn’t find their working hours on Facebook or Instagram, so I checked Google and it said they close at 10pm every day. Went there at 8pm, but they were already closed. So disappointing.",
+        "date": "4 days ago",
+        "collected_at": "2026-05-22"
+    },
+    {
+        "store_name": "Paik's Noodle Mongolia",
+        "sv": "강소영",
+        "country": "Mongolia",
+        "city": "Ulaanbaatar",
+        "author": "saruul like",
+        "rating": 5,
+        "text": "The food tastes so good, it's the first time I've eaten like this in Mongolia.",
+        "date": "a week ago",
+        "collected_at": "2026-05-22"
+    },
+    {
+        "store_name": "Paik's Noodle Mongolia",
+        "sv": "강소영",
+        "country": "Mongolia",
+        "city": "Ulaanbaatar",
+        "author": "Badral Munkh",
+        "rating": 5,
+        "text": "So great to have first real Korean Jajjangmyon place so great",
+        "date": "a week ago",
+        "collected_at": "2026-05-22"
+    },
+    {
+        "store_name": "Paik's Noodle Mongolia",
+        "sv": "강소영",
+        "country": "Mongolia",
+        "city": "Ulaanbaatar",
+        "author": "Namuunzul",
+        "rating": 1,
+        "text": "Extremely disappointed with the service here! I tried to visit two days in a row and wasn't able to eat either time. On the first day, they were closed by 4:00 PM because they ran out of ingredients. I came back the next day during lunchtime, only to be told they weren't accepting guests due to a lack of staff and a high volume of orders. It’s very unreliable. I don’t recommend coming here if you’re actually hungry.",
+        "date": "a week ago",
+        "collected_at": "2026-05-22"
+    },
+    {
+        "store_name": "Paik's Noodle Mongolia",
+        "sv": "강소영",
+        "country": "Mongolia",
+        "city": "Ulaanbaatar",
+        "author": "김세강",
+        "rating": 2,
+        "text": "It looks good, and the food quality is excellent. However, while we were eating the sweet and sour pork, we waited over 40 minutes for the Jajangmyeon. It took a long time to clear the table next to us, and despite the staff's acquaintances …",
+        "date": "a week ago",
+        "collected_at": "2026-05-22"
+    },
+    {
+        "store_name": "Paik's Noodle Mongolia",
+        "sv": "강소영",
+        "country": "Mongolia",
+        "city": "Ulaanbaatar",
+        "author": "강소영",
+        "rating": 5,
+        "text": "I can't believe I can finally eat proper Jajangmyeon in Mongolia ㅠㅠㅠㅠㅠ I'm so happy. I think it tastes even better than in Korea. The staff are friendly too.",
+        "date": "a week ago",
+        "collected_at": "2026-05-22"
+    },
+    {
         "store_name": "Bornga Makati",
         "sv": "최성환",
         "country": "Philippines",
