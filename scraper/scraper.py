@@ -320,7 +320,7 @@ STORES = [{'store_name': "Paik's Noodle Amsterdam",
   'url': "https://www.google.com/maps/place/Paik's+Noodle+Caulfield+Village/@-37.8764159,145.0380412,17z/data=!3m1!5s0x6ad66992975a9dc5:0xff22e88c2ead0e54!4m8!3m7!1s0x6ad66916a9138f41:0x11695e2dde119ad3!8m2!3d-37.8764159!4d145.0380412!9m1!1b1!16s%2Fg%2F11sjrdh7y5?entry=ttu&g_ep=EgoyMDI2MDUxMS4wIKXMDSoASAFQAw%3D%3D"
 },
 {
-  'store_name': "Paik's Noodle Mongolia",
+  'store_name': 'Paiks Noodle Mongolia',
   'sv': '강소영',
   'country': 'Mongolia',
   'city': 'Ulaanbaatar',
