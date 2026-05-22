@@ -318,9 +318,15 @@ STORES = [{'store_name': "Paik's Noodle Amsterdam",
   'country': 'Australia',
   'city': 'Melbourne',
   'url': "https://www.google.com/maps/place/Paik's+Noodle+Caulfield+Village/@-37.8764159,145.0380412,17z/data=!3m1!5s0x6ad66992975a9dc5:0xff22e88c2ead0e54!4m8!3m7!1s0x6ad66916a9138f41:0x11695e2dde119ad3!8m2!3d-37.8764159!4d145.0380412!9m1!1b1!16s%2Fg%2F11sjrdh7y5?entry=ttu&g_ep=EgoyMDI2MDUxMS4wIKXMDSoASAFQAw%3D%3D"
+},
+{
+  'store_name': "Paik's Noodle Mongolia",
+  'sv': '강소영',
+  'country': 'Mongolia',
+  'city': 'Ulaanbaatar',
+  'url': "https://www.google.com/maps/place/PAIK'S+NOODLE/@47.8941214,106.905143,17z/data=!4m8!3m7!1s0x5d96930012621e1d:0xcf4424862316ba86!8m2!3d47.8941178!4d106.9077179!9m1!1b1!16s%2Fg%2F11njgt20b_?entry=ttu&g_ep=EgoyMDI2MDUxNy4wIKXMDSoASAFQAw%3D%3D"
 }
 ]
-
 
 def build_url_candidates(url):
     base = url.strip()
