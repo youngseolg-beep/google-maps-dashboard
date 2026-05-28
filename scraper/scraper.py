@@ -740,11 +740,11 @@ def make_review_key(review):
     text = re.sub(r"[^\w\s가-힣ㄱ-ㅎㅏ-ㅣ]", "", text)
     text = re.sub(r"\s+", " ", text).strip()
 
-    if store_name and author and text:
-        return f"{store_name}|{author}|{text}"
+    if store_name and author and author not in ["anonymous", ""]:
+        return f"{store_name}|{author}"
 
-    if author and text:
-        return f"{author}|{text}"
+    if store_name and text:
+        return f"{store_name}|{text[:180]}"
 
     return text
 
