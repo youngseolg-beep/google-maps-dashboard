@@ -9,6 +9,7 @@
         .active-store { background-color: #eff6ff !important; border-color: #2563eb !important; color: #1d4ed8 !important; }
         .active-keyword { box-shadow: 0 0 0 2px #111827 inset !important; transform: translateY(-1px); }
         .active-page { background-color: #111827 !important; color: white !important; }
+        .active-filter { background-color: #111827 !important; color: white !important; border-color: #111827 !important; }
     </style>
 </head>
 <body class="bg-slate-50 p-6">
@@ -17,7 +18,7 @@
             <div>
                 <h1 class="text-2xl font-black text-slate-800">
                     📊 SV REVIEW MASTER
-                    <span class="text-blue-500 text-sm font-normal ml-2">v1.9.4</span>
+                    <span class="text-blue-500 text-sm font-normal ml-2">v2.0.0</span>
                 </h1>
                 <p class="text-xs text-slate-400 mt-1">Google Maps 리뷰 자동 수집 · 담당 SV별 리뷰 관리 · Insight Dashboard</p>
             </div>
@@ -84,6 +85,41 @@
                 </div>
             </div>
 
+            <div class="grid grid-cols-1 xl:grid-cols-2 gap-4">
+                <div class="rounded-2xl border border-slate-100 bg-slate-50 p-4">
+                    <div class="text-[10px] font-black text-slate-400 mb-3">PERIOD FILTER</div>
+                    <div class="flex flex-wrap gap-2">
+                        <button onclick="setPeriodFilter('all', this)" class="period-btn active-filter px-3 py-2 rounded-full border border-slate-200 bg-white text-[11px] font-black">전체 기간</button>
+                        <button onclick="setPeriodFilter('today', this)" class="period-btn px-3 py-2 rounded-full border border-slate-200 bg-white text-[11px] font-black">오늘</button>
+                        <button onclick="setPeriodFilter('7d', this)" class="period-btn px-3 py-2 rounded-full border border-slate-200 bg-white text-[11px] font-black">최근 7일</button>
+                        <button onclick="setPeriodFilter('30d', this)" class="period-btn px-3 py-2 rounded-full border border-slate-200 bg-white text-[11px] font-black">최근 30일</button>
+                        <button onclick="setPeriodFilter('this-month', this)" class="period-btn px-3 py-2 rounded-full border border-slate-200 bg-white text-[11px] font-black">이번 달</button>
+                        <button onclick="setPeriodFilter('last-month', this)" class="period-btn px-3 py-2 rounded-full border border-slate-200 bg-white text-[11px] font-black">지난달</button>
+                        <button onclick="setPeriodFilter('custom', this)" class="period-btn px-3 py-2 rounded-full border border-slate-200 bg-white text-[11px] font-black">직접 선택</button>
+                    </div>
+                    <div id="custom-period-box" class="hidden mt-3 flex flex-wrap items-end gap-2">
+                        <label class="text-[10px] font-bold text-slate-500">
+                            시작일
+                            <input id="period-start" type="date" class="block mt-1 border border-slate-200 rounded-lg px-3 py-2 text-xs bg-white">
+                        </label>
+                        <label class="text-[10px] font-bold text-slate-500">
+                            종료일
+                            <input id="period-end" type="date" class="block mt-1 border border-slate-200 rounded-lg px-3 py-2 text-xs bg-white">
+                        </label>
+                        <button onclick="applyCustomPeriod()" class="px-4 py-2 rounded-lg bg-slate-900 text-white text-[11px] font-black">적용</button>
+                    </div>
+                    <div id="period-filter-label" class="text-[10px] text-blue-600 font-bold mt-3">전체 기간</div>
+                </div>
+
+                <div class="rounded-2xl border border-slate-100 bg-slate-50 p-4">
+                    <div class="text-[10px] font-black text-slate-400 mb-3">COUNTRY FILTER</div>
+                    <select id="country-select" onchange="handleCountryChange()" class="w-full text-xs font-bold border border-slate-200 rounded-xl px-3 py-3 bg-white text-slate-700 outline-none">
+                        <option value="ALL">전체 국가</option>
+                    </select>
+                    <div id="country-filter-label" class="text-[10px] text-blue-600 font-bold mt-3">전체 국가</div>
+                </div>
+            </div>
+
             <div>
                 <div class="flex items-center justify-between gap-3 flex-wrap mb-2">
                     <div class="text-[10px] font-black text-slate-400">KEYWORD FILTER</div>
@@ -105,6 +141,17 @@
                     <button onclick="clearKeywordFilter()" class="px-3 py-2 rounded-full bg-black text-white text-[11px] font-black hover:opacity-80 transition-all">✕ Reset</button>
                 </div>
             </div>
+        </div>
+
+        <div id="keyword-stat-panel" class="bg-white rounded-2xl shadow-sm p-4 mb-6 hidden">
+            <div class="flex items-center justify-between gap-3 mb-4">
+                <div>
+                    <div class="text-sm font-black text-slate-800">📊 키워드 통계</div>
+                    <div id="keyword-stat-scope" class="text-[10px] text-slate-400 font-bold mt-1">현재 선택 조건 기준</div>
+                </div>
+                <div class="text-[10px] text-slate-400 font-bold">리뷰 1건당 여러 키워드 중복 집계 가능</div>
+            </div>
+            <div id="keyword-stat-grid" class="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-5 gap-3"></div>
         </div>
 
         <div id="reviews-page">
@@ -161,7 +208,7 @@
                     <div class="flex items-start justify-between gap-3 mb-5">
                         <div>
                             <h3 class="text-base font-black text-slate-800">리뷰 시점 흐름</h3>
-                            <p class="text-[11px] text-slate-400 mt-1">Google Maps 상대 날짜를 기간 버킷으로 변환한 흐름입니다.</p>
+                            <p class="text-[11px] text-slate-400 mt-1">review_date 기준으로 계산한 기간별 리뷰 흐름입니다.</p>
                         </div>
                         <div class="text-[10px] text-slate-400 font-bold bg-slate-50 px-3 py-2 rounded-full">Timeline View</div>
                     </div>
@@ -281,6 +328,10 @@
         let currentSV = null;
         let currentSVReviews = [];
         let currentStore = 'ALL';
+        let currentCountry = 'ALL';
+        let currentPeriod = 'all';
+        let customPeriodStart = '';
+        let customPeriodEnd = '';
         let currentSort = 'latest';
         let currentKeyword = null;
         let lowRatingOnly = false;
@@ -319,6 +370,11 @@
                 status.innerText = `리뷰 데이터 연결됨`;
                 renderGlobalSummary();
                 renderSvStoreCountSummary();
+                const today = formatDateYmd(new Date());
+                document.getElementById('period-end').value = today;
+                const defaultStart = new Date();
+                defaultStart.setDate(defaultStart.getDate() - 29);
+                document.getElementById('period-start').value = formatDateYmd(defaultStart);
                 document.getElementById('review-container').innerHTML = '<div class="text-center py-20 text-slate-400 font-bold">상단 SV 버튼을 눌러주세요.</div>';
                 renderInsights();
             } else {
@@ -472,6 +528,7 @@
         function selectSV(svName, btn) {
             currentSV = svName;
             currentStore = 'ALL';
+            currentCountry = 'ALL';
             currentKeyword = null;
             lowRatingOnly = false;
             visibleReviewCount = 30;
@@ -488,9 +545,8 @@
             document.getElementById('current-title').innerText = `${svName} SV 담당 리뷰`;
             document.getElementById('current-subtitle').innerText = `담당 국가: ${getCountryLabel(svName)}`;
 
-            renderStoreList(currentSVReviews);
-            refreshCurrentReviews();
-            renderInsights();
+            renderCountryOptions();
+            refreshAllViews();
         }
 
         function getCountryLabel(svName) {
@@ -527,6 +583,198 @@
             return `https://www.google.com/maps/search/?api=1&query=${query}`;
         }
 
+
+        function parseReviewDate(review) {
+            const raw = String(review?.review_date || estimateGoogleReviewDate(review) || '').trim();
+            const match = raw.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+            if (!match) return null;
+            const date = new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]));
+            return Number.isNaN(date.getTime()) ? null : date;
+        }
+
+        function startOfDay(date) {
+            return new Date(date.getFullYear(), date.getMonth(), date.getDate());
+        }
+
+        function getPeriodRange() {
+            const today = startOfDay(new Date());
+
+            if (currentPeriod === 'all') return { start: null, end: null, label: '전체 기간' };
+            if (currentPeriod === 'today') return { start: today, end: today, label: '오늘' };
+
+            if (currentPeriod === '7d' || currentPeriod === '30d') {
+                const days = currentPeriod === '7d' ? 7 : 30;
+                const start = new Date(today);
+                start.setDate(start.getDate() - (days - 1));
+                return { start, end: today, label: `최근 ${days}일` };
+            }
+
+            if (currentPeriod === 'this-month') {
+                return {
+                    start: new Date(today.getFullYear(), today.getMonth(), 1),
+                    end: today,
+                    label: '이번 달'
+                };
+            }
+
+            if (currentPeriod === 'last-month') {
+                return {
+                    start: new Date(today.getFullYear(), today.getMonth() - 1, 1),
+                    end: new Date(today.getFullYear(), today.getMonth(), 0),
+                    label: '지난달'
+                };
+            }
+
+            if (currentPeriod === 'custom') {
+                const start = parseCollectedDate(customPeriodStart);
+                const end = parseCollectedDate(customPeriodEnd);
+                return {
+                    start,
+                    end,
+                    label: start && end ? `${formatDateYmd(start)} ~ ${formatDateYmd(end)}` : '직접 선택'
+                };
+            }
+
+            return { start: null, end: null, label: '전체 기간' };
+        }
+
+        function filterByPeriod(data) {
+            const { start, end } = getPeriodRange();
+            if (!start || !end) return data;
+
+            return data.filter(review => {
+                const date = parseReviewDate(review);
+                return date && date >= start && date <= end;
+            });
+        }
+
+        function filterByCountry(data) {
+            if (currentCountry === 'ALL') return data;
+            return data.filter(review => String(review.country || '').toLowerCase() === currentCountry.toLowerCase());
+        }
+
+        function getCountryFilteredSVReviews() {
+            return filterByCountry(currentSVReviews);
+        }
+
+        function getStoreListSourceReviews() {
+            return filterByPeriod(getCountryFilteredSVReviews());
+        }
+
+        function renderCountryOptions() {
+            const select = document.getElementById('country-select');
+            const countries = [...new Set(currentSVReviews.map(r => r.country).filter(Boolean))].sort();
+            select.innerHTML = `<option value="ALL">전체 국가</option>` + countries.map(country =>
+                `<option value="${escapeHtml(country)}">${escapeHtml(country)}</option>`
+            ).join('');
+            select.value = currentCountry;
+            document.getElementById('country-filter-label').innerText = currentCountry === 'ALL' ? '전체 국가' : currentCountry;
+        }
+
+        function handleCountryChange() {
+            currentCountry = document.getElementById('country-select').value;
+            currentStore = 'ALL';
+            visibleReviewCount = 30;
+            document.getElementById('country-filter-label').innerText = currentCountry === 'ALL' ? '전체 국가' : currentCountry;
+            refreshAllViews();
+        }
+
+        function setPeriodFilter(period, btn) {
+            currentPeriod = period;
+            visibleReviewCount = 30;
+            document.querySelectorAll('.period-btn').forEach(b => b.classList.remove('active-filter'));
+            if (btn) btn.classList.add('active-filter');
+            document.getElementById('custom-period-box').classList.toggle('hidden', period !== 'custom');
+
+            if (period !== 'custom') {
+                document.getElementById('period-filter-label').innerText = getPeriodRange().label;
+                refreshAllViews();
+            }
+        }
+
+        function applyCustomPeriod() {
+            customPeriodStart = document.getElementById('period-start').value;
+            customPeriodEnd = document.getElementById('period-end').value;
+
+            if (!customPeriodStart || !customPeriodEnd) {
+                alert('시작일과 종료일을 모두 선택해주세요.');
+                return;
+            }
+
+            if (customPeriodStart > customPeriodEnd) {
+                alert('시작일은 종료일보다 늦을 수 없습니다.');
+                return;
+            }
+
+            currentPeriod = 'custom';
+            document.getElementById('period-filter-label').innerText = getPeriodRange().label;
+            visibleReviewCount = 30;
+            refreshAllViews();
+        }
+
+        function refreshAllViews() {
+            const storeSource = getStoreListSourceReviews();
+
+            if (currentStore !== 'ALL') {
+                const exists = storeSource.some(r => (r.store_name || 'Unknown Store') === currentStore);
+                if (!exists) currentStore = 'ALL';
+            }
+
+            renderStoreList(storeSource);
+            refreshCurrentReviews();
+            renderKeywordStats();
+            renderInsights();
+        }
+
+        function getKeywordStatBaseReviews() {
+            let data = getCurrentBaseReviews();
+            data = filterLowRatings(data);
+            return data;
+        }
+
+        function renderKeywordStats() {
+            const panel = document.getElementById('keyword-stat-panel');
+            const grid = document.getElementById('keyword-stat-grid');
+
+            if (!currentSV) {
+                panel.classList.add('hidden');
+                return;
+            }
+
+            panel.classList.remove('hidden');
+            const data = getKeywordStatBaseReviews();
+            const labelMap = {
+                food: '메뉴/음식',
+                taste: '맛',
+                value: '가격/가치',
+                service: '서비스',
+                operation: '운영',
+                reservation: '예약/대기',
+                hygiene: '위생',
+                revisit: '재방문',
+                authentic: '정통성'
+            };
+
+            const stats = Object.keys(KEYWORD_GROUPS).map(key => {
+                const keywords = KEYWORD_GROUPS[key] || [];
+                const count = data.filter(review => {
+                    const text = normalizeText(review.text || '');
+                    return keywords.some(keyword => text.includes(keyword.toLowerCase()));
+                }).length;
+                return { key, label: labelMap[key] || key, count };
+            }).sort((a, b) => b.count - a.count);
+
+            document.getElementById('keyword-stat-scope').innerText =
+                `${getPeriodRange().label} · ${currentCountry === 'ALL' ? '전체 국가' : currentCountry} · ${currentStore === 'ALL' ? '전체 매장' : currentStore}${lowRatingOnly ? ' · 3점 이하' : ''}`;
+
+            grid.innerHTML = stats.map(item => `
+                <button onclick="applyKeywordFromInsight('${item.key}')" class="rounded-2xl border border-slate-100 bg-slate-50 p-4 text-left hover:border-slate-300 transition-all">
+                    <div class="text-[10px] text-slate-400 font-bold">${escapeHtml(item.label)}</div>
+                    <div class="text-xl font-black text-slate-800 mt-1">${item.count}<span class="text-xs ml-1 text-slate-400">건</span></div>
+                </button>
+            `).join('');
+        }
+
         function renderStoreList(data) {
             const stores = [...new Set(data.map(r => r.store_name || 'Unknown Store'))];
 
@@ -556,7 +804,14 @@
                 const totalReviews = reviews.length;
                 const lowReviews = reviews.filter(r => Number(r.rating || 0) <= 3).length;
                 const latestReview = getLatestReviewDate(reviews);
-                const recent7Days = reviews.filter(r => estimateDateAgeScore(r.date) <= 7).length;
+                const recent7Days = reviews.filter(r => {
+                    const date = parseReviewDate(r);
+                    if (!date) return false;
+                    const today = startOfDay(new Date());
+                    const start = new Date(today);
+                    start.setDate(start.getDate() - 6);
+                    return date >= start && date <= today;
+                }).length;
                 const isActive = currentStore === storeName;
                 const mapsUrl = getGoogleMapsReviewUrl(storeName);
 
@@ -652,9 +907,7 @@
             currentStore = name;
             visibleReviewCount = 30;
 
-            renderStoreList(currentSVReviews);
-            refreshCurrentReviews();
-            renderInsights();
+            refreshAllViews();
         }
 
         function applyKeywordFilter(keywordKey, btn) {
@@ -665,6 +918,7 @@
             if (btn) btn.classList.add('active-keyword');
 
             refreshCurrentReviews();
+            renderKeywordStats();
             renderInsights();
         }
 
@@ -679,6 +933,7 @@
             }
 
             refreshCurrentReviews();
+            renderKeywordStats();
             renderInsights();
         }
 
@@ -689,6 +944,7 @@
             document.querySelectorAll('.keyword-btn').forEach(b => b.classList.remove('active-keyword'));
 
             refreshCurrentReviews();
+            renderKeywordStats();
             renderInsights();
         }
 
@@ -714,17 +970,21 @@
         }
 
         function getCurrentBaseReviews() {
-            if (!currentSV) return allReviews;
-            if (currentStore === 'ALL') return currentSVReviews;
-            return currentSVReviews.filter(r => (r.store_name || 'Unknown Store') === currentStore);
+            let data = currentSV ? currentSVReviews : allReviews;
+            data = filterByCountry(data);
+            data = filterByPeriod(data);
+
+            if (currentStore !== 'ALL') {
+                data = data.filter(r => (r.store_name || 'Unknown Store') === currentStore);
+            }
+
+            return data;
         }
 
         function getCurrentFilteredReviews() {
             let data = getCurrentBaseReviews();
-
             data = filterByKeyword(data);
             data = filterLowRatings(data);
-
             return data;
         }
 
@@ -756,11 +1016,13 @@
                 return copied.sort((a, b) => Number(a.rating || 0) - Number(b.rating || 0));
             }
 
+            const toTime = review => parseReviewDate(review)?.getTime() || 0;
+
             if (currentSort === 'oldest') {
-                return copied.sort((a, b) => estimateDateAgeScore(b.date) - estimateDateAgeScore(a.date));
+                return copied.sort((a, b) => toTime(a) - toTime(b));
             }
 
-            return copied.sort((a, b) => estimateDateAgeScore(a.date) - estimateDateAgeScore(b.date));
+            return copied.sort((a, b) => toTime(b) - toTime(a));
         }
 
         function estimateDateAgeScore(dateText) {
@@ -806,6 +1068,8 @@
         }
 
         function estimateGoogleReviewDate(review) {
+            if (review?.review_date) return review.review_date;
+
             const baseDate = parseCollectedDate(review?.collected_at);
 
             if (!baseDate) {
@@ -874,8 +1138,12 @@
         }
 
         function getLatestReviewDate(data) {
-            const sorted = [...data].sort((a, b) => estimateDateAgeScore(a.date) - estimateDateAgeScore(b.date));
-            return sorted[0] ? estimateGoogleReviewDate(sorted[0]) : '-';
+            const dated = data
+                .map(review => ({ review, date: parseReviewDate(review) }))
+                .filter(item => item.date)
+                .sort((a, b) => b.date - a.date);
+
+            return dated[0] ? formatDateYmd(dated[0].date) : '-';
         }
 
         function renderReviews(data, selectedStoreLabel) {
@@ -964,12 +1232,19 @@
 
             const totalCount = data.length;
             const lowCount = data.filter(r => Number(r.rating || 0) <= 3).length;
-            const recent7 = data.filter(r => estimateDateAgeScore(r.date) <= 7).length;
+            const recent7 = data.filter(r => {
+                const date = parseReviewDate(r);
+                if (!date) return false;
+                const today = startOfDay(new Date());
+                const start = new Date(today);
+                start.setDate(start.getDate() - 6);
+                return date >= start && date <= today;
+            }).length;
             const latestReview = getLatestReviewDate(data);
 
             const scopeLabel = currentSV
-                ? `${currentSV} SV · ${currentStore === 'ALL' ? '전체 매장' : currentStore}`
-                : '전체 데이터';
+                ? `${currentSV} SV · ${currentCountry === 'ALL' ? '전체 국가' : currentCountry} · ${currentStore === 'ALL' ? '전체 매장' : currentStore} · ${getPeriodRange().label}`
+                : `전체 데이터 · ${getPeriodRange().label}`;
 
             document.getElementById('insight-title').innerText = currentSV ? `${currentSV} SV 리뷰 인사이트` : '전체 리뷰 인사이트';
             document.getElementById('insight-subtitle').innerText = currentKeyword
@@ -1011,8 +1286,13 @@
                 { label: '6개월+', count: 0 }
             ];
 
-            data.forEach(r => {
-                const score = estimateDateAgeScore(r.date);
+            const today = startOfDay(new Date());
+
+            data.forEach(review => {
+                const date = parseReviewDate(review);
+                if (!date) return;
+
+                const score = Math.max(0, Math.floor((today - date) / 86400000));
 
                 if (score <= 7) buckets[0].count += 1;
                 else if (score <= 30) buckets[1].count += 1;
