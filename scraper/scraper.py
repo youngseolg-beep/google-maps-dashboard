@@ -27,9 +27,11 @@ def now_kst():
     return datetime.now(KST)
 
 
-def estimate_review_date(relative_date):
-    """Convert Google Maps relative time text to an estimated KST calendar date."""
-    base_date = now_kst().date()
+def estimate_review_date(relative_date, base_date=None):
+    """Convert Google Maps relative time text to an estimated calendar date."""
+    if base_date is None:
+        base_date = now_kst().date()
+
     text = normalize_spaces(relative_date).lower()
 
     if not text or text in {"unknown", "recent"}:
@@ -764,6 +766,66 @@ def load_existing_reviews():
     return []
 
 
+def parse_collected_date(value):
+    """Return a date from collected_at, falling back to today's KST date."""
+    text = normalize_spaces(value)
+
+    if not text:
+        return now_kst().date()
+
+    for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d"):
+        try:
+            return datetime.strptime(text, fmt).date()
+        except ValueError:
+            continue
+
+    return now_kst().date()
+
+
+def migrate_existing_review_dates(existing_reviews):
+    """Backfill review_date for legacy reviews using their first collected date."""
+    migrated_count = 0
+    fallback_count = 0
+
+    for review in existing_reviews:
+        if review.get("review_date"):
+            continue
+
+        relative_date = review.get("date", "Unknown")
+        collected_at = review.get("collected_at", "")
+        base_date = parse_collected_date(collected_at)
+
+        review["review_date"] = estimate_review_date(relative_date, base_date)
+        review["review_date_source"] = "estimated_from_collected_at"
+        migrated_count += 1
+
+        if not collected_at:
+            fallback_count += 1
+
+    return migrated_count, fallback_count
+
+
+def save_migrated_existing_reviews(existing_reviews):
+    """Persist legacy review_date migration before the crawl starts."""
+    migrated_count, fallback_count = migrate_existing_review_dates(existing_reviews)
+
+    if migrated_count == 0:
+        print("✅ 기존 리뷰 날짜 마이그레이션 불필요: 모든 리뷰에 review_date 존재")
+        return 0
+
+    os.makedirs("public/data", exist_ok=True)
+
+    with open(DATA_PATH, "w", encoding="utf-8") as f:
+        json.dump(existing_reviews, f, ensure_ascii=False, indent=4)
+
+    print(f"🗓️ 기존 리뷰 날짜 마이그레이션 완료: {migrated_count}건")
+
+    if fallback_count > 0:
+        print(f"⚠️ collected_at 없음으로 오늘 날짜를 기준으로 보정: {fallback_count}건")
+
+    return migrated_count
+
+
 def make_review_key(review):
     store_name = normalize_spaces(review.get("store_name", "")).lower()
     author = normalize_spaces(review.get("author", "")).lower()
@@ -1094,6 +1156,7 @@ def scrape():
     all_new_reviews = []
     crawl_results = []
     existing_reviews = load_existing_reviews()
+    save_migrated_existing_reviews(existing_reviews)
 
     with sync_playwright() as p:
         browser = p.chromium.launch(
