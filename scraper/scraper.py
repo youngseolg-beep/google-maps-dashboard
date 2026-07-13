@@ -2,7 +2,7 @@ import os
 import json
 import time
 import re
-from datetime import datetime
+from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 from playwright.sync_api import sync_playwright
 
@@ -25,6 +25,38 @@ KST = ZoneInfo("Asia/Seoul")
 
 def now_kst():
     return datetime.now(KST)
+
+
+def estimate_review_date(relative_date):
+    """Convert Google Maps relative time text to an estimated KST calendar date."""
+    base_date = now_kst().date()
+    text = normalize_spaces(relative_date).lower()
+
+    if not text or text in {"unknown", "recent"}:
+        return base_date.strftime("%Y-%m-%d")
+
+    # Words used when Google omits a number, e.g. "a day ago".
+    text = re.sub(r"\b(?:a|an|one|een|satu)\b", "1", text)
+
+    unit_patterns = [
+        (r"(\d+)\s*(?:second|seconds|초|detik|seconde|seconden)", 0),
+        (r"(\d+)\s*(?:minute|minutes|분|menit|minuut|minuten)", 0),
+        (r"(\d+)\s*(?:hour|hours|시간|jam|uur)", 0),
+        (r"(\d+)\s*(?:day|days|일|hari|dag|dagen)", 1),
+        (r"(\d+)\s*(?:week|weeks|주|minggu|weken)", 7),
+        (r"(\d+)\s*(?:month|months|개월|달|bulan|maand|maanden)", 30),
+        (r"(\d+)\s*(?:year|years|년|tahun|jaar|jaren)", 365),
+    ]
+
+    for pattern, days_per_unit in unit_patterns:
+        match = re.search(pattern, text, re.I)
+        if match:
+            amount = int(match.group(1))
+            estimated = base_date - timedelta(days=amount * days_per_unit)
+            return estimated.strftime("%Y-%m-%d")
+
+    # Unrecognized relative values remain usable, but are marked as estimated today.
+    return base_date.strftime("%Y-%m-%d")
 
 
 # Replace the existing STORES section in scraper/scraper.py with this block.
@@ -851,6 +883,8 @@ def extract_reviews(page, store, existing_keys=None):
                 if any(word in text for word in noise_words):
                     continue
 
+                relative_date = get_review_date(card)
+
                 review = {
                     "store_name": store["store_name"],
                     "sv": store["sv"],
@@ -859,7 +893,9 @@ def extract_reviews(page, store, existing_keys=None):
                     "author": get_review_author(card),
                     "rating": get_review_rating(card),
                     "text": text,
-                    "date": get_review_date(card),
+                    "date": relative_date,
+                    "review_date": estimate_review_date(relative_date),
+                    "review_date_source": "estimated",
                     "collected_at": now_kst().strftime("%Y-%m-%d"),
                 }
 
