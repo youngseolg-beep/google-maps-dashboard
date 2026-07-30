@@ -1,15 +1,9 @@
 {
-    "last_crawled_at": "2026-07-30 12:17:37",
+    "last_crawled_at": "2026-07-30 12:59:06",
     "total_stores": 58,
-    "success_count": 56,
-    "failed_count": 2,
+    "success_count": 57,
+    "failed_count": 1,
     "failed_stores": [
-        {
-            "store_name": "Saemaeul Naadam",
-            "sv": "강소영",
-            "country": "Mongolia",
-            "error": "리뷰 DOM 감지 실패 또는 리뷰 없음"
-        },
         {
             "store_name": "Saemaeul Ayud",
             "sv": "강소영",
@@ -25,16 +19,16 @@
             "ok": true,
             "collected_count": 0,
             "error": "",
-            "crawled_at": "2026-07-30 11:47:49"
+            "crawled_at": "2026-07-30 12:30:45"
         },
         {
             "store_name": "Bornga Wolter Monginsidi",
             "sv": "최성환",
             "country": "Indonesia",
             "ok": true,
-            "collected_count": 3,
+            "collected_count": 0,
             "error": "",
-            "crawled_at": "2026-07-30 11:48:19"
+            "crawled_at": "2026-07-30 12:31:15"
         },
         {
             "store_name": "Saemaeul Thailand",
@@ -43,43 +37,43 @@
             "ok": true,
             "collected_count": 0,
             "error": "",
-            "crawled_at": "2026-07-30 11:48:49"
+            "crawled_at": "2026-07-30 12:31:46"
         },
         {
             "store_name": "Paik's Noodle Singapore",
             "sv": "이여명",
             "country": "Singapore",
             "ok": true,
-            "collected_count": 4,
+            "collected_count": 0,
             "error": "",
-            "crawled_at": "2026-07-30 11:49:21"
+            "crawled_at": "2026-07-30 12:32:17"
         },
         {
             "store_name": "Bornga Makati",
             "sv": "최성환",
             "country": "Philippines",
             "ok": true,
-            "collected_count": 6,
+            "collected_count": 0,
             "error": "",
-            "crawled_at": "2026-07-30 11:49:49"
+            "crawled_at": "2026-07-30 12:32:45"
         },
         {
             "store_name": "Bornga Siam Discovery",
             "sv": "소도희",
             "country": "Thailand",
             "ok": true,
-            "collected_count": 2,
+            "collected_count": 0,
             "error": "",
-            "crawled_at": "2026-07-30 11:50:17"
+            "crawled_at": "2026-07-30 12:33:13"
         },
         {
             "store_name": "Bornga Bangkok Sukhumvit",
             "sv": "소도희",
             "country": "Thailand",
             "ok": true,
-            "collected_count": 4,
+            "collected_count": 0,
             "error": "",
-            "crawled_at": "2026-07-30 11:50:46"
+            "crawled_at": "2026-07-30 12:33:42"
         },
         {
             "store_name": "Bornga Phnom Penh",
@@ -88,70 +82,70 @@
             "ok": true,
             "collected_count": 0,
             "error": "",
-            "crawled_at": "2026-07-30 11:51:16"
+            "crawled_at": "2026-07-30 12:34:12"
         },
         {
             "store_name": "Bornga Sihanoukville",
             "sv": "소도희",
             "country": "Cambodia",
             "ok": true,
-            "collected_count": 8,
+            "collected_count": 0,
             "error": "",
-            "crawled_at": "2026-07-30 11:51:48"
+            "crawled_at": "2026-07-30 12:34:39"
         },
         {
             "store_name": "Bornga Adelaide",
             "sv": "소도희",
             "country": "Australia",
             "ok": true,
-            "collected_count": 5,
+            "collected_count": 0,
             "error": "",
-            "crawled_at": "2026-07-30 11:52:14"
+            "crawled_at": "2026-07-30 12:35:06"
         },
         {
             "store_name": "Bornga Brisbane",
             "sv": "소도희",
             "country": "Australia",
             "ok": true,
-            "collected_count": 1,
+            "collected_count": 0,
             "error": "",
-            "crawled_at": "2026-07-30 11:52:42"
+            "crawled_at": "2026-07-30 12:35:34"
         },
         {
             "store_name": "Bornga Melbourne",
             "sv": "소도희",
             "country": "Australia",
             "ok": true,
-            "collected_count": 4,
+            "collected_count": 0,
             "error": "",
-            "crawled_at": "2026-07-30 11:53:11"
+            "crawled_at": "2026-07-30 12:36:03"
         },
         {
             "store_name": "Bornga Sydney",
             "sv": "소도희",
             "country": "Australia",
             "ok": true,
-            "collected_count": 3,
+            "collected_count": 0,
             "error": "",
-            "crawled_at": "2026-07-30 11:53:38"
+            "crawled_at": "2026-07-30 12:36:29"
         },
         {
             "store_name": "Bornga Rhodes Central",
             "sv": "소도희",
             "country": "Australia",
             "ok": true,
-            "collected_count": 1,
+            "collected_count": 0,
             "error": "",
-            "crawled_at": "2026-07-30 11:54:14"
+            "crawled_at": "2026-07-30 12:36:58"
         },
         {
             "store_name": "Bornga Dunnan Store",
             "sv": "이여명",
             "country": "Taiwan",
             "ok": true,
-            "collected_count": 7,
+            "collected_count": 0,
             "error": "",
-            "crawled_at": "2026-07-30 11:54:44"
+            "crawled_at": "2026-07-30 12:37:28"
         },
         {
             "store_name": "Bornga Central Park 2",
@@ -160,16 +154,16 @@
             "ok": true,
             "collected_count": 0,
             "error": "",
-            "crawled_at": "2026-07-30 11:55:13"
+            "crawled_at": "2026-07-30 12:37:57"
         },
         {
             "store_name": "Bornga Cikarang",
             "sv": "최성환",
             "country": "Indonesia",
             "ok": true,
-            "collected_count": 1,
+            "collected_count": 0,
             "error": "",
-            "crawled_at": "2026-07-30 11:55:43"
+            "crawled_at": "2026-07-30 12:38:27"
         },
         {
             "store_name": "Bornga Gading Serpong",
@@ -178,43 +172,43 @@
             "ok": true,
             "collected_count": 0,
             "error": "",
-            "crawled_at": "2026-07-30 11:56:12"
+            "crawled_at": "2026-07-30 12:38:57"
         },
         {
             "store_name": "Bornga Lippo Mall Puri",
             "sv": "최성환",
             "country": "Indonesia",
             "ok": true,
-            "collected_count": 1,
+            "collected_count": 0,
             "error": "",
-            "crawled_at": "2026-07-30 11:56:42"
+            "crawled_at": "2026-07-30 12:39:27"
         },
         {
             "store_name": "Bornga Kelapa Gading",
             "sv": "최성환",
             "country": "Indonesia",
             "ok": true,
-            "collected_count": 5,
+            "collected_count": 0,
             "error": "",
-            "crawled_at": "2026-07-30 11:57:09"
+            "crawled_at": "2026-07-30 12:39:53"
         },
         {
             "store_name": "Bornga PIK",
             "sv": "최성환",
             "country": "Indonesia",
             "ok": true,
-            "collected_count": 4,
+            "collected_count": 0,
             "error": "",
-            "crawled_at": "2026-07-30 11:57:45"
+            "crawled_at": "2026-07-30 12:40:22"
         },
         {
             "store_name": "Bornga Blok M",
             "sv": "최성환",
             "country": "Indonesia",
             "ok": true,
-            "collected_count": 3,
+            "collected_count": 0,
             "error": "",
-            "crawled_at": "2026-07-30 11:58:14"
+            "crawled_at": "2026-07-30 12:40:51"
         },
         {
             "store_name": "Bornga Yogyakarta",
@@ -223,52 +217,52 @@
             "ok": true,
             "collected_count": 0,
             "error": "",
-            "crawled_at": "2026-07-30 11:58:44"
+            "crawled_at": "2026-07-30 12:41:20"
         },
         {
             "store_name": "Bornga Bandung",
             "sv": "최성환",
             "country": "Indonesia",
             "ok": true,
-            "collected_count": 3,
+            "collected_count": 0,
             "error": "",
-            "crawled_at": "2026-07-30 11:59:11"
+            "crawled_at": "2026-07-30 12:41:48"
         },
         {
             "store_name": "Saemaeul Melbourne",
             "sv": "소도희",
             "country": "Australia",
             "ok": true,
-            "collected_count": 4,
+            "collected_count": 0,
             "error": "",
-            "crawled_at": "2026-07-30 11:59:39"
+            "crawled_at": "2026-07-30 12:42:15"
         },
         {
             "store_name": "Saemaeul Emerald",
             "sv": "강소영",
             "country": "Mongolia",
             "ok": true,
-            "collected_count": 7,
+            "collected_count": 0,
             "error": "",
-            "crawled_at": "2026-07-30 12:00:06"
+            "crawled_at": "2026-07-30 12:42:43"
         },
         {
             "store_name": "Saemaeul Seoul St.",
             "sv": "강소영",
             "country": "Mongolia",
             "ok": true,
-            "collected_count": 3,
+            "collected_count": 0,
             "error": "",
-            "crawled_at": "2026-07-30 12:00:35"
+            "crawled_at": "2026-07-30 12:43:12"
         },
         {
             "store_name": "Saemaeul Naadam",
             "sv": "강소영",
             "country": "Mongolia",
-            "ok": false,
-            "collected_count": 0,
-            "error": "리뷰 DOM 감지 실패 또는 리뷰 없음",
-            "crawled_at": "2026-07-30 12:01:59"
+            "ok": true,
+            "collected_count": 5,
+            "error": "",
+            "crawled_at": "2026-07-30 12:43:38"
         },
         {
             "store_name": "Saemaeul Central Chaengwattana",
@@ -277,7 +271,7 @@
             "ok": true,
             "collected_count": 0,
             "error": "",
-            "crawled_at": "2026-07-30 12:02:28"
+            "crawled_at": "2026-07-30 12:44:08"
         },
         {
             "store_name": "Saemaeul Central Bangna",
@@ -286,7 +280,7 @@
             "ok": true,
             "collected_count": 0,
             "error": "",
-            "crawled_at": "2026-07-30 12:03:01"
+            "crawled_at": "2026-07-30 12:44:41"
         },
         {
             "store_name": "Saemaeul Central Park",
@@ -295,7 +289,7 @@
             "ok": true,
             "collected_count": 0,
             "error": "",
-            "crawled_at": "2026-07-30 12:03:30"
+            "crawled_at": "2026-07-30 12:45:10"
         },
         {
             "store_name": "Saemaeul Central Rama 3",
@@ -304,25 +298,25 @@
             "ok": true,
             "collected_count": 0,
             "error": "",
-            "crawled_at": "2026-07-30 12:03:57"
+            "crawled_at": "2026-07-30 12:45:37"
         },
         {
             "store_name": "Saemaeul PIK",
             "sv": "최성환",
             "country": "Indonesia",
             "ok": true,
-            "collected_count": 1,
+            "collected_count": 0,
             "error": "",
-            "crawled_at": "2026-07-30 12:04:37"
+            "crawled_at": "2026-07-30 12:46:06"
         },
         {
             "store_name": "Saemaeul Gading Serpong",
             "sv": "최성환",
             "country": "Indonesia",
             "ok": true,
-            "collected_count": 6,
+            "collected_count": 0,
             "error": "",
-            "crawled_at": "2026-07-30 12:05:04"
+            "crawled_at": "2026-07-30 12:46:33"
         },
         {
             "store_name": "Saemaeul SCBD",
@@ -331,7 +325,7 @@
             "ok": true,
             "collected_count": 0,
             "error": "",
-            "crawled_at": "2026-07-30 12:05:34"
+            "crawled_at": "2026-07-30 12:47:03"
         },
         {
             "store_name": "Saemaeul One Bangkok",
@@ -340,7 +334,7 @@
             "ok": true,
             "collected_count": 0,
             "error": "",
-            "crawled_at": "2026-07-30 12:06:04"
+            "crawled_at": "2026-07-30 12:47:33"
         },
         {
             "store_name": "Saemaeul Bangkok Siam",
@@ -349,7 +343,7 @@
             "ok": true,
             "collected_count": 0,
             "error": "",
-            "crawled_at": "2026-07-30 12:06:35"
+            "crawled_at": "2026-07-30 12:48:04"
         },
         {
             "store_name": "Saemaeul Central Westville",
@@ -358,7 +352,7 @@
             "ok": true,
             "collected_count": 0,
             "error": "",
-            "crawled_at": "2026-07-30 12:07:05"
+            "crawled_at": "2026-07-30 12:48:33"
         },
         {
             "store_name": "Saemaeul Mega Bangna",
@@ -367,7 +361,7 @@
             "ok": true,
             "collected_count": 0,
             "error": "",
-            "crawled_at": "2026-07-30 12:07:34"
+            "crawled_at": "2026-07-30 12:49:03"
         },
         {
             "store_name": "Saemaeul Central Eastville",
@@ -376,7 +370,7 @@
             "ok": true,
             "collected_count": 0,
             "error": "",
-            "crawled_at": "2026-07-30 12:08:05"
+            "crawled_at": "2026-07-30 12:49:34"
         },
         {
             "store_name": "Saemaeul Bangkok Ratchada",
@@ -385,7 +379,7 @@
             "ok": true,
             "collected_count": 0,
             "error": "",
-            "crawled_at": "2026-07-30 12:08:36"
+            "crawled_at": "2026-07-30 12:50:05"
         },
         {
             "store_name": "Saemaeul Central Pinklao",
@@ -394,7 +388,7 @@
             "ok": true,
             "collected_count": 0,
             "error": "",
-            "crawled_at": "2026-07-30 12:09:07"
+            "crawled_at": "2026-07-30 12:50:35"
         },
         {
             "store_name": "Saemaeul Central Nakhonpathom",
@@ -403,7 +397,7 @@
             "ok": true,
             "collected_count": 0,
             "error": "",
-            "crawled_at": "2026-07-30 12:09:34"
+            "crawled_at": "2026-07-30 12:51:02"
         },
         {
             "store_name": "Saemaeul Charn At The Avenue",
@@ -412,16 +406,16 @@
             "ok": true,
             "collected_count": 0,
             "error": "",
-            "crawled_at": "2026-07-30 12:10:04"
+            "crawled_at": "2026-07-30 12:51:33"
         },
         {
             "store_name": "Saemaeul The Mall Lifestore Bangkae",
             "sv": "소도희",
             "country": "Thailand",
             "ok": true,
-            "collected_count": 1,
+            "collected_count": 0,
             "error": "",
-            "crawled_at": "2026-07-30 12:10:33"
+            "crawled_at": "2026-07-30 12:52:01"
         },
         {
             "store_name": "Saemaeul Central Rama 2",
@@ -430,7 +424,7 @@
             "ok": true,
             "collected_count": 0,
             "error": "",
-            "crawled_at": "2026-07-30 12:11:00"
+            "crawled_at": "2026-07-30 12:52:29"
         },
         {
             "store_name": "Saemaeul The Circle Ratchapruk",
@@ -439,7 +433,7 @@
             "ok": true,
             "collected_count": 0,
             "error": "",
-            "crawled_at": "2026-07-30 12:11:30"
+            "crawled_at": "2026-07-30 12:52:58"
         },
         {
             "store_name": "Saemaeul Central Westgate",
@@ -448,88 +442,88 @@
             "ok": true,
             "collected_count": 0,
             "error": "",
-            "crawled_at": "2026-07-30 12:12:00"
+            "crawled_at": "2026-07-30 12:53:29"
         },
         {
             "store_name": "Paik's Noodle Waterway Point",
             "sv": "이여명",
             "country": "Singapore",
             "ok": true,
-            "collected_count": 1,
+            "collected_count": 0,
             "error": "",
-            "crawled_at": "2026-07-30 12:12:27"
+            "crawled_at": "2026-07-30 12:53:56"
         },
         {
             "store_name": "Paik's Noodle Taipei",
             "sv": "이여명",
             "country": "Taiwan",
             "ok": true,
-            "collected_count": 1,
+            "collected_count": 0,
             "error": "",
-            "crawled_at": "2026-07-30 12:12:57"
+            "crawled_at": "2026-07-30 12:54:25"
         },
         {
             "store_name": "Paik's Noodle Sihanoukville",
             "sv": "소도희",
             "country": "Cambodia",
             "ok": true,
-            "collected_count": 3,
+            "collected_count": 0,
             "error": "",
-            "crawled_at": "2026-07-30 12:13:27"
+            "crawled_at": "2026-07-30 12:54:55"
         },
         {
             "store_name": "Paik's Noodle Phnom Penh",
             "sv": "소도희",
             "country": "Cambodia",
             "ok": true,
-            "collected_count": 6,
+            "collected_count": 0,
             "error": "",
-            "crawled_at": "2026-07-30 12:13:53"
+            "crawled_at": "2026-07-30 12:55:22"
         },
         {
             "store_name": "Paik's Noodle Melbourne CBD",
             "sv": "소도희",
             "country": "Australia",
             "ok": true,
-            "collected_count": 2,
+            "collected_count": 0,
             "error": "",
-            "crawled_at": "2026-07-30 12:14:21"
+            "crawled_at": "2026-07-30 12:55:50"
         },
         {
             "store_name": "Paik's Noodle Glen Waverley",
             "sv": "소도희",
             "country": "Australia",
             "ok": true,
-            "collected_count": 2,
+            "collected_count": 0,
             "error": "",
-            "crawled_at": "2026-07-30 12:14:48"
+            "crawled_at": "2026-07-30 12:56:17"
         },
         {
             "store_name": "Paik's Bibim NTU",
             "sv": "이여명",
             "country": "Singapore",
             "ok": true,
-            "collected_count": 2,
+            "collected_count": 0,
             "error": "",
-            "crawled_at": "2026-07-30 12:15:15"
+            "crawled_at": "2026-07-30 12:56:43"
         },
         {
             "store_name": "Paik's Noodle Caulfield Village",
             "sv": "소도희",
             "country": "Australia",
             "ok": true,
-            "collected_count": 2,
+            "collected_count": 0,
             "error": "",
-            "crawled_at": "2026-07-30 12:15:43"
+            "crawled_at": "2026-07-30 12:57:11"
         },
         {
             "store_name": "Paik's Noodle Sila",
             "sv": "강소영",
             "country": "Mongolia",
             "ok": true,
-            "collected_count": 4,
+            "collected_count": 0,
             "error": "",
-            "crawled_at": "2026-07-30 12:16:10"
+            "crawled_at": "2026-07-30 12:57:38"
         },
         {
             "store_name": "Saemaeul Ayud",
@@ -538,7 +532,7 @@
             "ok": false,
             "collected_count": 0,
             "error": "리뷰 DOM 감지 실패 또는 리뷰 없음",
-            "crawled_at": "2026-07-30 12:17:34"
+            "crawled_at": "2026-07-30 12:59:02"
         }
     ]
 }
