@@ -188,21 +188,27 @@ STORES = [{'store_name': "Paik's Noodle Amsterdam",
   'country': 'Australia',
   'city': 'Melbourne',
   'url': 'https://www.google.com/maps/place/%EC%83%88%EB%A7%88%EC%9D%84%EC%8B%9D%EB%8B%B9+%EB%A9%9C%EB%B2%84%EB%A5%B8%EC%A0%90/@-37.8130562,144.956322,17z/data=!4m8!3m7!1s0x6ad65df435d2aa6d:0xe79cd4f63f32382a!8m2!3d-37.8130562!4d144.956322!9m1!1b1!16s%2Fg%2F11f8cl2v6v?entry=ttu&g_ep=EgoyMDI2MDUxMS4wIKXMDSoASAFQAw%3D%3D'},
- {'store_name': 'Saemaeul Ulaanbaatar 1',
+ {
+  'store_name': 'Saemaeul Emerald',
   'sv': '강소영',
   'country': 'Mongolia',
   'city': 'Ulaanbaatar',
-  'url': 'https://www.google.com/maps/place/Saemaeul+Korean+Restaurant/@47.9047889,106.9359956,17z/data=!4m8!3m7!1s0x5d96930014bcf947:0xc3d0c5670c5a93a8!8m2!3d47.9047889!4d106.9359956!9m1!1b1!16s%2Fg%2F11ybzw1s2p?entry=ttu&g_ep=EgoyMDI2MDUxMS4wIKXMDSoASAFQAw%3D%3D'},
- {'store_name': 'Saemaeul Ulaanbaatar 2',
+  'url': 'https://maps.app.goo.gl/hY9a51eS63j1batY7'
+},
+ {
+  'store_name': 'Saemaeul Seoul St.',
   'sv': '강소영',
   'country': 'Mongolia',
   'city': 'Ulaanbaatar',
-  'url': 'https://www.google.com/maps/place/%EC%83%88%EB%A7%88%EC%9D%84%EC%8B%9D%EB%8B%B9/@47.9150234,106.9061509,17z/data=!4m8!3m7!1s0x5d96930046343faf:0x451dbdf138d3e19d!8m2!3d47.9150234!4d106.9061509!9m1!1b1!16s%2Fg%2F11xf9zwz8h?entry=ttu&g_ep=EgoyMDI2MDUxMS4wIKXMDSoASAFQAw%3D%3D'},
- {'store_name': 'Saemaeul Mongolia',
+  'url': 'https://maps.app.goo.gl/u3fr4P6RS3ZYYyj39'
+},
+ {
+  'store_name': 'Saemaeul Naadam',
   'sv': '강소영',
   'country': 'Mongolia',
   'city': 'Ulaanbaatar',
-  'url': 'https://www.google.com/maps/place/Saemaeul+Sikdang+Mongolia/@47.9028125,106.9123126,17z/data=!4m8!3m7!1s0x5d969326f6301cef:0x90899d73cbacfe34!8m2!3d47.9028125!4d106.9123126!9m1!1b1!16s%2Fg%2F11lcd8y4gc?entry=ttu&g_ep=EgoyMDI2MDUxMS4wIKXMDSoASAFQAw%3D%3D'},
+  'url': 'https://maps.app.goo.gl/oze7kDjJEmwrGADr8'
+},
  {'store_name': 'Saemaeul Central Chaengwattana',
   'sv': '소도희',
   'country': 'Thailand',
@@ -354,11 +360,18 @@ STORES = [{'store_name': "Paik's Noodle Amsterdam",
   'url': "https://www.google.com/maps/place/Paik's+Noodle+Caulfield+Village/@-37.8764159,145.0380412,17z/data=!3m1!5s0x6ad66992975a9dc5:0xff22e88c2ead0e54!4m8!3m7!1s0x6ad66916a9138f41:0x11695e2dde119ad3!8m2!3d-37.8764159!4d145.0380412!9m1!1b1!16s%2Fg%2F11sjrdh7y5?entry=ttu&g_ep=EgoyMDI2MDUxMS4wIKXMDSoASAFQAw%3D%3D"
 },
 {
-  'store_name': 'Paiks Noodle Mongolia',
+  'store_name': "Paik's Noodle Sila",
   'sv': '강소영',
   'country': 'Mongolia',
   'city': 'Ulaanbaatar',
-  'url': "https://www.google.com/maps/place/PAIK'S+NOODLE/@47.8941214,106.905143,17z/data=!4m8!3m7!1s0x5d96930012621e1d:0xcf4424862316ba86!8m2!3d47.8941178!4d106.9077179!9m1!1b1!16s%2Fg%2F11njgt20b_?entry=ttu&g_ep=EgoyMDI2MDUxNy4wIKXMDSoASAFQAw%3D%3D"
+  'url': 'https://maps.app.goo.gl/58Xyt6L4Ci12sWqS9'
+},
+{
+  'store_name': 'Saemaeul Ayud',
+  'sv': '강소영',
+  'country': 'Mongolia',
+  'city': 'Ulaanbaatar',
+  'url': 'https://maps.app.goo.gl/TZkBdJpNoYyAXbVB8'
 }
 ]
 
@@ -782,12 +795,43 @@ def parse_collected_date(value):
     return now_kst().date()
 
 
+
+STORE_NAME_MIGRATIONS = {
+    "Paiks Noodle Mongolia": "Paik's Noodle Sila",
+    "Paik's Noodle Mongolia": "Paik's Noodle Sila",
+    "Paiks noodle mongolia": "Paik's Noodle Sila",
+    "Saemaeul Ulaanbaarar 2": "Saemaeul Seoul St.",
+    "Saemaeul Ulaanbaatar 2": "Saemaeul Seoul St.",
+    "Saemaeul Mongolia": "Saemaeul Naadam",
+    "Saemaeul Ulaanbaatar 1": "Saemaeul Emerald",
+    "Saemaeul Emaerald": "Saemaeul Emerald",
+}
+
+
+def migrate_existing_store_names(existing_reviews):
+    """Normalize legacy Mongolia store names without losing saved review history."""
+    migrated_count = 0
+
+    for review in existing_reviews:
+        current_name = normalize_spaces(review.get("store_name", ""))
+        new_name = STORE_NAME_MIGRATIONS.get(current_name)
+
+        if new_name and new_name != current_name:
+            review["store_name"] = new_name
+            migrated_count += 1
+
+    return migrated_count
+
+
 def migrate_existing_review_dates(existing_reviews):
     """Backfill review_date for legacy reviews using their first collected date."""
     migrated_count = 0
     fallback_count = 0
 
     for review in existing_reviews:
+        if "has_text" not in review:
+            review["has_text"] = bool(normalize_spaces(review.get("text", "")))
+
         if review.get("review_date"):
             continue
 
@@ -806,11 +850,12 @@ def migrate_existing_review_dates(existing_reviews):
 
 
 def save_migrated_existing_reviews(existing_reviews):
-    """Persist legacy review_date migration before the crawl starts."""
+    """Persist legacy review-date and store-name migrations before crawling."""
+    store_name_migrated_count = migrate_existing_store_names(existing_reviews)
     migrated_count, fallback_count = migrate_existing_review_dates(existing_reviews)
 
-    if migrated_count == 0:
-        print("✅ 기존 리뷰 날짜 마이그레이션 불필요: 모든 리뷰에 review_date 존재")
+    if migrated_count == 0 and store_name_migrated_count == 0:
+        print("✅ 기존 리뷰 마이그레이션 불필요")
         return 0
 
     os.makedirs("public/data", exist_ok=True)
@@ -818,12 +863,16 @@ def save_migrated_existing_reviews(existing_reviews):
     with open(DATA_PATH, "w", encoding="utf-8") as f:
         json.dump(existing_reviews, f, ensure_ascii=False, indent=4)
 
-    print(f"🗓️ 기존 리뷰 날짜 마이그레이션 완료: {migrated_count}건")
+    if store_name_migrated_count > 0:
+        print(f"🏪 기존 리뷰 매장명 마이그레이션 완료: {store_name_migrated_count}건")
+
+    if migrated_count > 0:
+        print(f"🗓️ 기존 리뷰 날짜 마이그레이션 완료: {migrated_count}건")
 
     if fallback_count > 0:
         print(f"⚠️ collected_at 없음으로 오늘 날짜를 기준으로 보정: {fallback_count}건")
 
-    return migrated_count
+    return migrated_count + store_name_migrated_count
 
 
 def make_review_key(review):
@@ -929,9 +978,7 @@ def extract_reviews(page, store, existing_keys=None):
                 card = cards.nth(i)
 
                 text = get_review_text(card)
-
-                if not text or len(text) < 3:
-                    continue
+                has_text = bool(text and len(text) >= 3)
 
                 noise_words = [
                     "Drag to change",
@@ -942,19 +989,25 @@ def extract_reviews(page, store, existing_keys=None):
                     "Privacy",
                 ]
 
-                if any(word in text for word in noise_words):
+                if has_text and any(word in text for word in noise_words):
                     continue
 
                 relative_date = get_review_date(card)
+                author = get_review_author(card)
+                rating = get_review_rating(card)
+
+                if not has_text and rating <= 0:
+                    continue
 
                 review = {
                     "store_name": store["store_name"],
                     "sv": store["sv"],
                     "country": store["country"],
                     "city": store["city"],
-                    "author": get_review_author(card),
-                    "rating": get_review_rating(card),
-                    "text": text,
+                    "author": author,
+                    "rating": rating,
+                    "text": text if has_text else "",
+                    "has_text": has_text,
                     "date": relative_date,
                     "review_date": estimate_review_date(relative_date),
                     "review_date_source": "estimated",
