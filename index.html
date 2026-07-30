@@ -18,7 +18,7 @@
             <div>
                 <h1 class="text-2xl font-black text-slate-800">
                     📊 SV REVIEW MASTER
-                    <span class="text-blue-500 text-sm font-normal ml-2">v2.0.0</span>
+                    <span class="text-blue-500 text-sm font-normal ml-2">v2.0.1</span>
                 </h1>
                 <p class="text-xs text-slate-400 mt-1">Google Maps 리뷰 자동 수집 · 담당 SV별 리뷰 관리 · Insight Dashboard</p>
             </div>
@@ -562,7 +562,12 @@
 
         const STORE_URL_MAP = {
             "Bornga Dunhua South": "https://www.google.com/maps/place/%E6%9C%AC%E5%AE%B6BORNGA%E9%9F%93%E5%BC%8F%E7%87%92%E8%82%89+%E6%95%A6%E5%8D%97%E5%BA%97/@25.044463,121.5499789,17z/data=!3m1!5s0x3442abdb36c3dd57:0x31070c64b44f2f5c!4m8!3m7!1s0x3442ab0779763169:0x584a72379db46e23!8m2!3d25.044463!4d121.5499789!9m1!1b1!16s%2Fg%2F11s9g6zd8p?entry=ttu&g_ep=EgoyMDI2MDUxMS4wIKXMDSoASAFQAw%3D%3D",
-            "Bornga Dunnan Store": "https://www.google.com/maps/place/%E6%9C%AC%E5%AE%B6BORNGA%E9%9F%93%E5%BC%8F%E7%87%92%E8%82%89+%E6%95%A6%E5%8D%97%E5%BA%97/@25.044463,121.5499789,17z/data=!3m1!5s0x3442abdb36c3dd57:0x31070c64b44f2f5c!4m8!3m7!1s0x3442ab0779763169:0x584a72379db46e23!8m2!3d25.044463!4d121.5499789!9m1!1b1!16s%2Fg%2F11s9g6zd8p?entry=ttu&g_ep=EgoyMDI2MDUxMS4wIKXMDSoASAFQAw%3D%3D"
+            "Bornga Dunnan Store": "https://www.google.com/maps/place/%E6%9C%AC%E5%AE%B6BORNGA%E9%9F%93%E5%BC%8F%E7%87%92%E8%82%89+%E6%95%A6%E5%8D%97%E5%BA%97/@25.044463,121.5499789,17z/data=!3m1!5s0x3442abdb36c3dd57:0x31070c64b44f2f5c!4m8!3m7!1s0x3442ab0779763169:0x584a72379db46e23!8m2!3d25.044463!4d121.5499789!9m1!1b1!16s%2Fg%2F11s9g6zd8p?entry=ttu&g_ep=EgoyMDI2MDUxMS4wIKXMDSoASAFQAw%3D%3D",
+            "Paik's Noodle Sila": "https://maps.app.goo.gl/58Xyt6L4Ci12sWqS9",
+            "Saemaeul Seoul St.": "https://maps.app.goo.gl/u3fr4P6RS3ZYYyj39",
+            "Saemaeul Naadam": "https://maps.app.goo.gl/oze7kDjJEmwrGADr8",
+            "Saemaeul Emerald": "https://maps.app.goo.gl/hY9a51eS63j1batY7",
+            "Saemaeul Ayud": "https://maps.app.goo.gl/TZkBdJpNoYyAXbVB8"
         };
 
         function getGoogleMapsReviewUrl(storeName) {
@@ -1183,7 +1188,11 @@
                             </div>
                         </div>
 
-                        <p class="text-sm text-slate-700 leading-relaxed whitespace-pre-line">${highlightKeywords(escapeHtml(r.text || ''))}</p>
+                        ${
+                            r.text
+                                ? `<p class="text-sm text-slate-700 leading-relaxed whitespace-pre-line">${highlightKeywords(escapeHtml(r.text))}</p>`
+                                : `<div class="rounded-xl bg-slate-50 border border-slate-100 px-4 py-3 text-xs font-bold text-slate-400">리뷰 내용 없음 · 별점만 등록된 리뷰</div>`
+                        }
                     </div>
                 `;
             }).join('');
