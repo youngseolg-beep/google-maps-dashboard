@@ -337,36 +337,122 @@
         let lowRatingOnly = false;
         let visibleReviewCount = 30;
 
+        const SUPABASE_REST_URL = 'https://fourqytbdjxlpwzgvphy.supabase.co/rest/v1';
+        const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImZvdXJxeXRiZGp4bHB3emd2cGh5Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODUzOTc4MDksImV4cCI6MjEwMDk3MzgwOX0.i762pa8UOS9YTQ5owXylCZhpZ7pgN2UdnsHpAjzXloU';
+        const SUPABASE_PAGE_SIZE = 1000;
+
+        function getSupabaseHeaders(extraHeaders = {}) {
+            return {
+                apikey: SUPABASE_ANON_KEY,
+                Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
+                ...extraHeaders
+            };
+        }
+
+        async function fetchSupabaseRows(table, query = '', range = null) {
+            const headers = getSupabaseHeaders();
+
+            if (range) {
+                headers.Range = `${range.from}-${range.to}`;
+                headers['Range-Unit'] = 'items';
+            }
+
+            const url = `${SUPABASE_REST_URL}/${table}${query ? `?${query}` : ''}`;
+            const response = await fetch(url, { headers });
+
+            if (!response.ok) {
+                const detail = await response.text();
+                throw new Error(`${table} 조회 실패 (${response.status}): ${detail}`);
+            }
+
+            return response.json();
+        }
+
+        async function loadReviewsFromSupabase() {
+            const reviews = [];
+            let from = 0;
+
+            while (true) {
+                const batch = await fetchSupabaseRows(
+                    'reviews',
+                    'select=*',
+                    { from, to: from + SUPABASE_PAGE_SIZE - 1 }
+                );
+
+                reviews.push(...batch);
+
+                if (batch.length < SUPABASE_PAGE_SIZE) break;
+                from += SUPABASE_PAGE_SIZE;
+            }
+
+            return reviews;
+        }
+
+        function getCrawlRunTimestamp(row) {
+            return row?.last_crawled_at
+                || row?.finished_at
+                || row?.completed_at
+                || row?.created_at
+                || row?.started_at
+                || '';
+        }
+
+        function normalizeCrawlRun(row) {
+            if (!row) return null;
+
+            const failedStores = Array.isArray(row.failed_stores) ? row.failed_stores : [];
+            const stores = Array.isArray(row.stores) ? row.stores : [];
+            const totalStores = row.total_stores ?? row.store_count ?? row.total_count ?? stores.length;
+            const successCount = row.success_count ?? row.succeeded_count ?? row.successful_stores ?? null;
+            const failedCount = row.failed_count ?? row.failure_count ?? row.failed_stores_count ?? failedStores.length;
+
+            return {
+                ...row,
+                last_crawled_at: getCrawlRunTimestamp(row),
+                total_stores: totalStores,
+                success_count: successCount,
+                failed_count: failedCount,
+                failed_stores: failedStores,
+                stores
+            };
+        }
+
+        async function loadLatestCrawlRunFromSupabase() {
+            const orderColumns = ['finished_at', 'last_crawled_at', 'completed_at', 'created_at', 'started_at'];
+
+            for (const column of orderColumns) {
+                try {
+                    const rows = await fetchSupabaseRows(
+                        'crawl_runs',
+                        `select=*&order=${column}.desc&limit=1`
+                    );
+
+                    if (rows.length) return normalizeCrawlRun(rows[0]);
+                } catch (error) {
+                    console.warn(`crawl_runs ${column} 정렬 조회 건너뜀`, error);
+                }
+            }
+
+            const rows = await fetchSupabaseRows('crawl_runs', 'select=*&limit=1000');
+            rows.sort((a, b) => String(getCrawlRunTimestamp(b)).localeCompare(String(getCrawlRunTimestamp(a))));
+            return normalizeCrawlRun(rows[0] || null);
+        }
+
         async function init() {
-            const reviewPaths = ['data/reviews.json', 'public/data/reviews.json', 'reviews.json'];
-            const statusPaths = ['data/crawl_status.json', 'public/data/crawl_status.json', 'crawl_status.json'];
-
-            let reviewsLoaded = false;
-
-            for (let p of reviewPaths) {
-                try {
-                    const res = await fetch(p);
-                    if (res.ok) {
-                        allReviews = await res.json();
-                        reviewsLoaded = true;
-                        break;
-                    }
-                } catch(e) {}
-            }
-
-            for (let p of statusPaths) {
-                try {
-                    const res = await fetch(p);
-                    if (res.ok) {
-                        crawlStatus = await res.json();
-                        break;
-                    }
-                } catch(e) {}
-            }
-
             const status = document.getElementById('status-tag');
 
-            if (reviewsLoaded) {
+            try {
+                const [reviews, latestCrawlRun] = await Promise.all([
+                    loadReviewsFromSupabase(),
+                    loadLatestCrawlRunFromSupabase().catch(error => {
+                        console.error('crawl_runs 조회 실패', error);
+                        return null;
+                    })
+                ]);
+
+                allReviews = reviews;
+                crawlStatus = latestCrawlRun;
+
                 status.innerText = `리뷰 데이터 연결됨`;
                 renderGlobalSummary();
                 renderSvStoreCountSummary();
@@ -377,10 +463,11 @@
                 document.getElementById('period-start').value = formatDateYmd(defaultStart);
                 document.getElementById('review-container').innerHTML = '<div class="text-center py-20 text-slate-400 font-bold">상단 SV 버튼을 눌러주세요.</div>';
                 renderInsights();
-            } else {
+            } catch (error) {
+                console.error('Supabase 데이터 연결 실패', error);
                 status.innerText = '데이터 연결 실패';
                 status.className = 'px-3 py-1 bg-red-100 rounded-full text-[10px] font-bold text-red-600';
-                document.getElementById('review-container').innerHTML = '<div class="text-center py-20 text-red-400 font-bold">reviews.json을 불러오지 못했습니다.</div>';
+                document.getElementById('review-container').innerHTML = '<div class="text-center py-20 text-red-400 font-bold">Supabase 리뷰 데이터를 불러오지 못했습니다.</div>';
             }
         }
 
@@ -423,10 +510,10 @@
                     failedEl.innerText = `실패 매장: ${failedStores.map(s => s.store_name).join(', ')}`;
                 }
             } else {
-                statusEl.innerText = '상태 파일 없음';
+                statusEl.innerText = '크롤링 상태 없음';
                 statusEl.className = 'text-sm font-black text-amber-500 mt-2';
                 failedEl.classList.remove('hidden');
-                failedEl.innerText = 'crawl_status.json을 찾지 못했습니다.';
+                failedEl.innerText = 'crawl_runs 최신 실행 기록을 찾지 못했습니다.';
             }
         }
 
