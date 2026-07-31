@@ -1356,17 +1356,12 @@ def save_crawl_status(results, started_at):
     failed_stores = [row for row in store_rows if not row["ok"]]
     success_count = len(store_rows) - len(failed_stores)
 
-    run_row = {
-        "started_at": started_at.isoformat(),
-        "finished_at": finished_at.isoformat(),
-        "last_crawled_at": finished_at.strftime("%Y-%m-%d %H:%M:%S"),
+    run_row = {        "last_crawled_at": finished_at.strftime("%Y-%m-%d %H:%M:%S"),
         "total_stores": len(store_rows),
         "success_count": success_count,
         "failed_count": len(failed_stores),
         "failed_stores": failed_stores,
-        "stores": store_rows,
-        "status": "SUCCESS" if not failed_stores else "PARTIAL_FAILURE",
-    }
+        "stores": store_rows,    }
 
     supabase_request(
         "POST",
