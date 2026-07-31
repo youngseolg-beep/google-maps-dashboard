@@ -128,6 +128,36 @@ def make_review_key(review):
     return "||".join([store_name, author, text, date, rating])
 
 
+
+def infer_brand(store_name):
+    """Derive a non-null brand value from the existing store name."""
+    name = normalize_spaces(store_name).casefold()
+
+    rules = [
+        ("paik's noodle", "Paik's Noodle"),
+        ("paiks noodle", "Paik's Noodle"),
+        ("bornga", "Bornga"),
+        ("saemaeul", "Saemaeul"),
+        ("paik's coffee", "Paik's Coffee"),
+        ("paiks coffee", "Paik's Coffee"),
+        ("paik's bibim", "Paik's Bibim"),
+        ("paiks bibim", "Paik's Bibim"),
+        ("hong kong banjum", "Hong Kong Banjum"),
+        ("rolling pasta", "Rolling Pasta"),
+        ("baek's beer", "Baek's Beer"),
+        ("baeks beer", "Baek's Beer"),
+    ]
+
+    for token, brand in rules:
+        if token in name:
+            return brand
+
+    # The DB requires a value. For an unknown name, use the first two words
+    # rather than writing NULL and failing the whole migration.
+    words = normalize_spaces(store_name).split()
+    return " ".join(words[:2]) if words else "Unknown"
+
+
 def seed_stores(stores):
     existing = supabase_request(
         "GET", "stores", query={"select": "id,store_name", "limit": "1000"}
@@ -140,11 +170,12 @@ def seed_stores(stores):
         if not name or name.casefold() in existing_names:
             continue
         rows.append({
-            "store_name": name,
-            "sv": normalize_spaces(store.get("sv")),
+            "brand": infer_brand(name),
             "country": normalize_spaces(store.get("country")),
-            "city": normalize_spaces(store.get("city")),
-            "url": normalize_spaces(store.get("url")),
+            "sv": normalize_spaces(store.get("sv")),
+            "store_name": name,
+            "google_maps_url": normalize_spaces(store.get("url")),
+            "is_active": True,
         })
         existing_names.add(name.casefold())
 
