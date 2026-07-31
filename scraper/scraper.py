@@ -2,12 +2,17 @@ import os
 import json
 import time
 import re
+import hashlib
+from urllib.error import HTTPError, URLError
+from urllib.parse import urlencode
+from urllib.request import Request, urlopen
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 from playwright.sync_api import sync_playwright
 
-DATA_PATH = "public/data/reviews.json"
-STATUS_PATH = "public/data/crawl_status.json"
+LEGACY_DATA_PATH = "public/data/reviews.json"
+SUPABASE_URL = os.environ.get("SUPABASE_URL", "").rstrip("/")
+SUPABASE_SERVICE_ROLE_KEY = os.environ.get("SUPABASE_SERVICE_ROLE_KEY", "")
 
 MAX_SCROLL_ROUNDS = 8
 STOP_STALLED_ROUNDS = 2
@@ -762,21 +767,80 @@ def scroll_reviews(page):
     page.wait_for_timeout(1400)
 
 
-def load_existing_reviews():
-    if not os.path.exists(DATA_PATH):
+def require_supabase_config():
+    if not SUPABASE_URL or not SUPABASE_SERVICE_ROLE_KEY:
+        raise RuntimeError(
+            "SUPABASE_URL 또는 SUPABASE_SERVICE_ROLE_KEY 환경변수가 없습니다."
+        )
+
+
+def supabase_request(method, table, *, query=None, body=None, prefer=None):
+    require_supabase_config()
+
+    url = f"{SUPABASE_URL}/rest/v1/{table}"
+    if query:
+        url += "?" + urlencode(query, safe=",.*()")
+
+    headers = {
+        "apikey": SUPABASE_SERVICE_ROLE_KEY,
+        "Authorization": f"Bearer {SUPABASE_SERVICE_ROLE_KEY}",
+        "Accept": "application/json",
+    }
+
+    payload = None
+    if body is not None:
+        payload = json.dumps(body, ensure_ascii=False).encode("utf-8")
+        headers["Content-Type"] = "application/json"
+
+    if prefer:
+        headers["Prefer"] = prefer
+
+    request = Request(url, data=payload, headers=headers, method=method)
+
+    try:
+        with urlopen(request, timeout=120) as response:
+            raw = response.read().decode("utf-8")
+            return json.loads(raw) if raw else None
+    except HTTPError as exc:
+        detail = exc.read().decode("utf-8", errors="replace")
+        raise RuntimeError(
+            f"Supabase 요청 실패 ({exc.code} {exc.reason}): {detail}"
+        ) from exc
+    except URLError as exc:
+        raise RuntimeError(f"Supabase 연결 실패: {exc.reason}") from exc
+
+
+def load_legacy_reviews():
+    if not os.path.exists(LEGACY_DATA_PATH):
         return []
 
     try:
-        with open(DATA_PATH, "r", encoding="utf-8") as f:
+        with open(LEGACY_DATA_PATH, "r", encoding="utf-8") as f:
             data = json.load(f)
-
-        if isinstance(data, list):
-            print(f"📦 기존 리뷰 로드: {len(data)}건")
-            return data
+        return data if isinstance(data, list) else []
     except Exception as e:
-        print(f"⚠️ 기존 JSON 로드 실패. 새로 저장 진행: {e}")
+        print(f"⚠️ 기존 JSON seed 로드 실패: {e}")
+        return []
 
-    return []
+
+def load_existing_reviews():
+    rows = supabase_request(
+        "GET",
+        "reviews",
+        query={
+            "select": "store_name,sv,country,city,author,rating,text,has_text,date,review_date,review_date_source,collected_at",
+            "order": "review_date.desc,collected_at.desc",
+        },
+    ) or []
+
+    if rows:
+        print(f"📦 Supabase 기존 리뷰 로드: {len(rows)}건")
+        return rows
+
+    legacy = load_legacy_reviews()
+    if legacy:
+        print(f"📦 Supabase가 비어 있어 기존 JSON {len(legacy)}건을 초기 seed로 사용")
+    return legacy
 
 
 def parse_collected_date(value):
@@ -850,7 +914,7 @@ def migrate_existing_review_dates(existing_reviews):
 
 
 def save_migrated_existing_reviews(existing_reviews):
-    """Persist legacy review-date and store-name migrations before crawling."""
+    """Apply legacy normalization in memory before the Supabase upsert."""
     store_name_migrated_count = migrate_existing_store_names(existing_reviews)
     migrated_count, fallback_count = migrate_existing_review_dates(existing_reviews)
 
@@ -858,17 +922,10 @@ def save_migrated_existing_reviews(existing_reviews):
         print("✅ 기존 리뷰 마이그레이션 불필요")
         return 0
 
-    os.makedirs("public/data", exist_ok=True)
-
-    with open(DATA_PATH, "w", encoding="utf-8") as f:
-        json.dump(existing_reviews, f, ensure_ascii=False, indent=4)
-
     if store_name_migrated_count > 0:
-        print(f"🏪 기존 리뷰 매장명 마이그레이션 완료: {store_name_migrated_count}건")
-
+        print(f"🏪 기존 리뷰 매장명 마이그레이션 준비: {store_name_migrated_count}건")
     if migrated_count > 0:
-        print(f"🗓️ 기존 리뷰 날짜 마이그레이션 완료: {migrated_count}건")
-
+        print(f"🗓️ 기존 리뷰 날짜 마이그레이션 준비: {migrated_count}건")
     if fallback_count > 0:
         print(f"⚠️ collected_at 없음으로 오늘 날짜를 기준으로 보정: {fallback_count}건")
 
@@ -1145,19 +1202,50 @@ def scrape_store(page, store, existing_reviews=None):
     }
 
 
-def save_reviews(new_reviews):
-    os.makedirs("public/data", exist_ok=True)
+def prepare_review_row(review):
+    row = {
+        "review_key": hashlib.sha256(make_review_key(review).encode("utf-8")).hexdigest(),
+        "store_name": normalize_spaces(review.get("store_name", "")),
+        "sv": normalize_spaces(review.get("sv", "")),
+        "country": normalize_spaces(review.get("country", "")),
+        "city": normalize_spaces(review.get("city", "")),
+        "author": normalize_spaces(review.get("author", "Anonymous")) or "Anonymous",
+        "rating": review.get("rating"),
+        "text": review.get("text", ""),
+        "has_text": bool(review.get("has_text", normalize_spaces(review.get("text", "")))),
+        "date": review.get("date", "Unknown"),
+        "review_date": review.get("review_date"),
+        "review_date_source": review.get("review_date_source", "estimated"),
+        "collected_at": review.get("collected_at") or now_kst().strftime("%Y-%m-%d"),
+        "scraped_at": now_kst().isoformat(),
+        "source": "google_maps",
+    }
+    return row
 
-    existing_reviews = load_existing_reviews()
+
+def upsert_review_batch(rows, batch_size=500):
+    for start in range(0, len(rows), batch_size):
+        batch = rows[start:start + batch_size]
+        supabase_request(
+            "POST",
+            "reviews",
+            query={"on_conflict": "review_key"},
+            body=batch,
+            prefer="resolution=merge-duplicates,return=minimal",
+        )
+
+
+def save_reviews(new_reviews, existing_reviews=None):
+    existing_reviews = existing_reviews if existing_reviews is not None else load_existing_reviews()
     merged_reviews = merge_reviews(existing_reviews, new_reviews)
 
     new_added_count = count_new_reviews(existing_reviews, new_reviews)
     duplicate_cleaned_count = len(existing_reviews) + len(new_reviews) - len(merged_reviews)
+    rows = [prepare_review_row(review) for review in merged_reviews if make_review_key(review)]
 
-    with open(DATA_PATH, "w", encoding="utf-8") as f:
-        json.dump(merged_reviews, f, ensure_ascii=False, indent=4)
+    upsert_review_batch(rows)
 
-    print(f"\n✨ 저장 완료: {DATA_PATH}")
+    print("\n✨ Supabase 저장 완료")
     print(f"   - 기존 리뷰: {len(existing_reviews)}건")
     print(f"   - 이번 수집: {len(new_reviews)}건")
     print(f"   - 신규 추가: {new_added_count}건")
@@ -1166,43 +1254,32 @@ def save_reviews(new_reviews):
 
 
 def save_crawl_status(results):
-    os.makedirs("public/data", exist_ok=True)
+    rows = [
+        {
+            "store_name": r["store_name"],
+            "sv": r["sv"],
+            "country": r["country"],
+            "ok": r["ok"],
+            "collected_count": r["collected_count"],
+            "error": r["error"],
+            "crawled_at": r["crawled_at"],
+        }
+        for r in results
+    ]
 
-    status = {
-        "last_crawled_at": now_kst().strftime("%Y-%m-%d %H:%M:%S"),
-        "total_stores": len(results),
-        "success_count": len([r for r in results if r["ok"]]),
-        "failed_count": len([r for r in results if not r["ok"]]),
-        "failed_stores": [
-            {
-                "store_name": r["store_name"],
-                "sv": r["sv"],
-                "country": r["country"],
-                "error": r["error"],
-            }
-            for r in results
-            if not r["ok"]
-        ],
-        "stores": [
-            {
-                "store_name": r["store_name"],
-                "sv": r["sv"],
-                "country": r["country"],
-                "ok": r["ok"],
-                "collected_count": r["collected_count"],
-                "error": r["error"],
-                "crawled_at": r["crawled_at"],
-            }
-            for r in results
-        ],
-    }
+    supabase_request(
+        "POST",
+        "crawl_status",
+        query={"on_conflict": "store_name"},
+        body=rows,
+        prefer="resolution=merge-duplicates,return=minimal",
+    )
 
-    with open(STATUS_PATH, "w", encoding="utf-8") as f:
-        json.dump(status, f, ensure_ascii=False, indent=4)
-
-    print(f"🧾 크롤링 상태 저장 완료: {STATUS_PATH}")
-    print(f"   - 성공: {status['success_count']}/{status['total_stores']}")
-    print(f"   - 실패: {status['failed_count']}건")
+    success_count = len([r for r in results if r["ok"]])
+    failed_count = len(results) - success_count
+    print("🧾 Supabase 크롤링 상태 저장 완료")
+    print(f"   - 성공: {success_count}/{len(results)}")
+    print(f"   - 실패: {failed_count}건")
 
 
 def scrape():
@@ -1249,10 +1326,10 @@ def scrape():
 
                 page.wait_for_timeout(3000)
 
-            if all_new_reviews:
-                save_reviews(all_new_reviews)
+            if all_new_reviews or existing_reviews:
+                save_reviews(all_new_reviews, existing_reviews)
             else:
-                print("❌ 이번 실행에서 수집된 리뷰가 없습니다.")
+                print("❌ 저장할 기존/신규 리뷰가 없습니다.")
 
             save_crawl_status(crawl_results)
 
