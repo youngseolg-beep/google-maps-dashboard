@@ -55,6 +55,57 @@ def supabase_request(method, table, *, query=None, body=None, prefer=None):
         raise RuntimeError(f"Supabase 연결 실패: {exc.reason}") from exc
 
 
+def write_rows_adaptive(table, rows, *, query=None, prefer=None):
+    """
+    Write rows while automatically removing columns that do not exist
+    in the current Supabase table schema (PGRST204).
+    """
+    if not rows:
+        return
+
+    working_rows = [dict(row) for row in rows]
+    removed_columns = []
+
+    while True:
+        try:
+            supabase_request(
+                "POST",
+                table,
+                query=query,
+                body=working_rows,
+                prefer=prefer,
+            )
+            if removed_columns:
+                print(
+                    f"ℹ️ {table} 미사용 컬럼 자동 제외: "
+                    + ", ".join(removed_columns)
+                )
+            return
+        except RuntimeError as exc:
+            message = str(exc)
+            match = re.search(
+                r"Could not find the '([^']+)' column of '[^']+' in the schema cache",
+                message,
+            )
+            if not match:
+                raise
+
+            missing_column = match.group(1)
+            if missing_column in removed_columns:
+                raise
+
+            removed_columns.append(missing_column)
+            working_rows = [
+                {key: value for key, value in row.items() if key != missing_column}
+                for row in working_rows
+            ]
+
+            if not working_rows or not any(working_rows):
+                raise RuntimeError(
+                    f"{table}에 저장 가능한 컬럼이 남아 있지 않습니다."
+                ) from exc
+
+
 def load_stores_from_scraper():
     tree = ast.parse(SCRAPER_PATH.read_text(encoding="utf-8"), filename=str(SCRAPER_PATH))
     for node in tree.body:
@@ -98,7 +149,7 @@ def seed_stores(stores):
         existing_names.add(name.casefold())
 
     if rows:
-        supabase_request("POST", "stores", body=rows, prefer="return=minimal")
+        write_rows_adaptive("stores", rows, prefer="return=minimal")
     print(f"🏪 stores 저장 완료: 신규 {len(rows)}건")
 
 
@@ -146,11 +197,10 @@ def prepare_review_row(review, store_map):
 def upload_reviews(rows, batch_size=500):
     for start in range(0, len(rows), batch_size):
         batch = rows[start:start + batch_size]
-        supabase_request(
-            "POST",
+        write_rows_adaptive(
             "reviews",
+            batch,
             query={"on_conflict": "review_key"},
-            body=batch,
             prefer="resolution=merge-duplicates,return=minimal",
         )
         print(f"📦 reviews 업로드: {min(start + len(batch), len(rows))}/{len(rows)}")
