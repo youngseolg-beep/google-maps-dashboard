@@ -199,21 +199,21 @@ STORES = [{'store_name': "Paik's Noodle Amsterdam",
   'sv': '강소영',
   'country': 'Mongolia',
   'city': 'Ulaanbaatar',
-  'url': 'https://maps.app.goo.gl/hY9a51eS63j1batY7'
+  'url': 'https://www.google.com/maps/place/Saemaeul+Korean+Restaurant/@47.9047889,106.9179712,15z/data=!4m7!3m6!1s0x5d96930014bcf947:0xc3d0c5670c5a93a8!8m2!3d47.9047889!4d106.9359956!15sCghTYWVtYWV1bFoKIghzYWVtYWV1bJIBEWtvcmVhbl9yZXN0YXVyYW50mgFEQ2k5RFFVbFJRVU52WkVOb2RIbGpSamx2VDJwbk1HSXpUa3RhYmxaRVpVZG9ORlV3T1RCYVZHeFZWa2RrZDJGc1JSQULgAQD6AQQIbxAP!16s%2Fg%2F11ybzw1s2p'
 },
  {
   'store_name': 'Saemaeul Seoul St.',
   'sv': '강소영',
   'country': 'Mongolia',
   'city': 'Ulaanbaatar',
-  'url': 'https://maps.app.goo.gl/u3fr4P6RS3ZYYyj39'
+  'url': 'https://www.google.com/maps/place/%EC%83%88%EB%A7%88%EC%9D%84%EC%8B%9D%EB%8B%B9/@47.9028125,106.8942882,15z/data=!4m7!3m6!1s0x5d96930046343faf:0x451dbdf138d3e19d!8m2!3d47.9150234!4d106.9061509!15sCghTYWVtYWV1bFoKIghzYWVtYWV1bJIBGmtvcmVhbl9iYXJiZWN1ZV9yZXN0YXVyYW50mgFEQ2k5RFFVbFJRVU52WkVOb2RIbGpSamx2VDI1U1psRXhWbkpTUjBVd1ZXcGtiMVJHU2xSVlJtTXhXVEExTUU1WVl4QULgAQD6AQUIhAMQHQ!16s%2Fg%2F11xf9zwz8h'
 },
  {
   'store_name': 'Saemaeul Naadam',
   'sv': '강소영',
   'country': 'Mongolia',
   'city': 'Ulaanbaatar',
-  'url': 'https://maps.app.goo.gl/oze7kDjJEmwrGADr8'
+  'url': 'https://www.google.com/maps/place/Saemaeul+Sikdang+Mongolia/@47.9028125,106.8942882,15z/data=!4m7!3m6!1s0x5d969326f6301cef:0x90899d73cbacfe34!8m2!3d47.9028125!4d106.9123126!15sCghTYWVtYWV1bFoKIghzYWVtYWV1bJIBGmtvcmVhbl9iYXJiZWN1ZV9yZXN0YXVyYW50mgEkQ2hkRFNVaE5NRzluUzBWSlEwRm5UVVJ2ZVZwNVJHdDNSUkFC4AEA-gEECAAQEg!16s%2Fg%2F11lcd8y4gc'
 },
  {'store_name': 'Saemaeul Central Chaengwattana',
   'sv': '소도희',
@@ -370,14 +370,14 @@ STORES = [{'store_name': "Paik's Noodle Amsterdam",
   'sv': '강소영',
   'country': 'Mongolia',
   'city': 'Ulaanbaatar',
-  'url': 'https://maps.app.goo.gl/58Xyt6L4Ci12sWqS9'
+  'url': 'https://www.google.com/maps/place/PAIK'S+NOODLE/@47.8941178,106.905143,17z/data=!4m6!3m5!1s0x5d96930012621e1d:0xcf4424862316ba86!8m2!3d47.8941178!4d106.9077179!16s%2Fg%2F11njgt20b_'
 },
 {
   'store_name': 'Saemaeul Ayud',
   'sv': '강소영',
   'country': 'Mongolia',
   'city': 'Ulaanbaatar',
-  'url': 'https://maps.app.goo.gl/TZkBdJpNoYyAXbVB8'
+  'url': 'https://www.google.com/maps/place/Saemaeul/@47.9159567,106.9022416,15z/data=!4m7!3m6!1s0x5d9693003f600c55:0x8fc7d52efee2724b!8m2!3d47.9159567!4d106.920266!15sCghTYWVtYWV1bJIBGmtvcmVhbl9iYXJiZWN1ZV9yZXN0YXVyYW504AEA!16s%2Fg%2F11nr8x6syl'
 }
 ]
 
