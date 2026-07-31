@@ -26,8 +26,9 @@ jobs:
           pip install -r scraper/requirements.txt
           playwright install chromium
 
-      - name: Run scraper and save to Supabase
+      - name: Save crawl status only
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          STATUS_ONLY: "true"
         run: python scraper/scraper.py
