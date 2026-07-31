@@ -13,6 +13,7 @@ from playwright.sync_api import sync_playwright
 LEGACY_DATA_PATH = "public/data/reviews.json"
 SUPABASE_URL = os.environ.get("SUPABASE_URL", "").rstrip("/")
 SUPABASE_SERVICE_ROLE_KEY = os.environ.get("SUPABASE_SERVICE_ROLE_KEY", "")
+MIGRATE_ONLY = os.environ.get("MIGRATE_ONLY", "").strip().lower() in {"1", "true", "yes", "on"}
 
 MAX_SCROLL_ROUNDS = 8
 STOP_STALLED_ROUNDS = 2
@@ -855,24 +856,30 @@ def load_legacy_reviews():
         return []
 
 
-def load_existing_reviews():
-    rows = supabase_request(
-        "GET",
-        "reviews",
-        query={
-            "select": "store_name,sv,country,city,author,rating,text,has_text,date,review_date,review_date_source,collected_at",
-            "order": "review_date.desc,collected_at.desc",
-        },
-    ) or []
+def load_existing_reviews(page_size=1000):
+    """Load every Supabase review row without the PostgREST 1,000-row cap."""
+    rows = []
+    offset = 0
 
-    if rows:
-        print(f"📦 Supabase 기존 리뷰 로드: {len(rows)}건")
-        return rows
+    while True:
+        batch = supabase_request(
+            "GET",
+            "reviews",
+            query={
+                "select": "store_name,sv,country,city,author,rating,text,has_text,date,review_date,review_date_source,collected_at",
+                "order": "review_date.desc,collected_at.desc",
+                "limit": str(page_size),
+                "offset": str(offset),
+            },
+        ) or []
 
-    legacy = load_legacy_reviews()
-    if legacy:
-        print(f"📦 Supabase가 비어 있어 기존 JSON {len(legacy)}건을 초기 seed로 사용")
-    return legacy
+        rows.extend(batch)
+        if len(batch) < page_size:
+            break
+        offset += page_size
+
+    print(f"📦 Supabase 기존 리뷰 전체 로드: {len(rows)}건")
+    return rows
 
 
 def parse_collected_date(value):
@@ -1276,6 +1283,38 @@ def upsert_review_batch(rows, batch_size=500):
         )
 
 
+def migrate_legacy_reviews_to_supabase(existing_reviews=None):
+    """Backfill reviews.json once, safely, and skip it after Supabase catches up."""
+    legacy_reviews = load_legacy_reviews()
+    if not legacy_reviews:
+        print("ℹ️ 기존 reviews.json이 없어 초기 이관을 건너뜁니다.")
+        return existing_reviews if existing_reviews is not None else load_existing_reviews()
+
+    existing_reviews = existing_reviews if existing_reviews is not None else load_existing_reviews()
+    save_migrated_existing_reviews(legacy_reviews)
+
+    legacy_keys = {make_review_key(r) for r in legacy_reviews if make_review_key(r)}
+    existing_keys = {make_review_key(r) for r in existing_reviews if make_review_key(r)}
+    missing_count = len(legacy_keys - existing_keys)
+
+    if missing_count == 0:
+        print(f"✅ 기존 JSON 이관 확인 완료: {len(legacy_keys)}건 모두 Supabase에 존재")
+        return existing_reviews
+
+    merged_reviews = merge_reviews(existing_reviews, legacy_reviews)
+    store_id_map = load_store_id_map()
+    rows = [prepare_review_row(review, store_id_map) for review in merged_reviews if make_review_key(review)]
+    upsert_review_batch(rows)
+
+    print("🚚 기존 reviews.json → Supabase 초기 이관 완료")
+    print(f"   - JSON 유효 리뷰: {len(legacy_keys)}건")
+    print(f"   - 이관 전 Supabase: {len(existing_keys)}건")
+    print(f"   - 누락 이관 대상: {missing_count}건")
+    print(f"   - 이관 후 예상 누적: {len(merged_reviews)}건")
+
+    return merged_reviews
+
+
 def save_reviews(new_reviews, existing_reviews=None):
     existing_reviews = existing_reviews if existing_reviews is not None else load_existing_reviews()
     merged_reviews = merge_reviews(existing_reviews, new_reviews)
@@ -1299,8 +1338,10 @@ def save_reviews(new_reviews, existing_reviews=None):
     print(f"   - 최종 누적: {len(merged_reviews)}건")
 
 
-def save_crawl_status(results):
-    rows = [
+def save_crawl_status(results, started_at):
+    """Append one complete crawl run record for the dashboard."""
+    finished_at = now_kst()
+    store_rows = [
         {
             "store_name": r["store_name"],
             "sv": r["sv"],
@@ -1312,27 +1353,44 @@ def save_crawl_status(results):
         }
         for r in results
     ]
+    failed_stores = [row for row in store_rows if not row["ok"]]
+    success_count = len(store_rows) - len(failed_stores)
+
+    run_row = {
+        "started_at": started_at.isoformat(),
+        "finished_at": finished_at.isoformat(),
+        "last_crawled_at": finished_at.strftime("%Y-%m-%d %H:%M:%S"),
+        "total_stores": len(store_rows),
+        "success_count": success_count,
+        "failed_count": len(failed_stores),
+        "failed_stores": failed_stores,
+        "stores": store_rows,
+        "status": "SUCCESS" if not failed_stores else "PARTIAL_FAILURE",
+    }
 
     supabase_request(
         "POST",
-        "crawl_status",
-        query={"on_conflict": "store_name"},
-        body=rows,
-        prefer="resolution=merge-duplicates,return=minimal",
+        "crawl_runs",
+        body=run_row,
+        prefer="return=minimal",
     )
 
-    success_count = len([r for r in results if r["ok"]])
-    failed_count = len(results) - success_count
-    print("🧾 Supabase 크롤링 상태 저장 완료")
-    print(f"   - 성공: {success_count}/{len(results)}")
-    print(f"   - 실패: {failed_count}건")
+    print("🧾 Supabase crawl_runs 저장 완료")
+    print(f"   - 성공: {success_count}/{len(store_rows)}")
+    print(f"   - 실패: {len(failed_stores)}건")
 
 
 def scrape():
+    started_at = now_kst()
     all_new_reviews = []
     crawl_results = []
     existing_reviews = load_existing_reviews()
+    existing_reviews = migrate_legacy_reviews_to_supabase(existing_reviews)
     save_migrated_existing_reviews(existing_reviews)
+
+    if MIGRATE_ONLY:
+        print("✅ MIGRATE_ONLY 모드 완료: 크롤링 없이 기존 JSON 이관만 수행했습니다.")
+        return
 
     with sync_playwright() as p:
         browser = p.chromium.launch(
@@ -1377,7 +1435,7 @@ def scrape():
             else:
                 print("❌ 저장할 기존/신규 리뷰가 없습니다.")
 
-            save_crawl_status(crawl_results)
+            save_crawl_status(crawl_results, started_at)
 
         except Exception as e:
             print(f"🔥 치명적 오류: {e}")
