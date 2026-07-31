@@ -810,6 +810,38 @@ def supabase_request(method, table, *, query=None, body=None, prefer=None):
         raise RuntimeError(f"Supabase 연결 실패: {exc.reason}") from exc
 
 
+
+def normalize_store_lookup_key(value):
+    return normalize_spaces(value).casefold()
+
+
+def load_store_id_map():
+    """Load Supabase stores.id keyed by normalized stores.store_name."""
+    rows = supabase_request(
+        "GET",
+        "stores",
+        query={
+            "select": "id,store_name",
+            "limit": "1000",
+        },
+    ) or []
+
+    store_id_map = {}
+    for row in rows:
+        store_id = row.get("id")
+        store_name = normalize_spaces(row.get("store_name", ""))
+        if store_id and store_name:
+            store_id_map[normalize_store_lookup_key(store_name)] = store_id
+
+    if not store_id_map:
+        raise RuntimeError(
+            'Supabase stores 테이블에서 "id, store_name" 데이터를 찾지 못했습니다.'
+        )
+
+    print(f"🏪 Supabase 매장 ID 로드: {len(store_id_map)}개")
+    return store_id_map
+
+
 def load_legacy_reviews():
     if not os.path.exists(LEGACY_DATA_PATH):
         return []
@@ -1202,10 +1234,19 @@ def scrape_store(page, store, existing_reviews=None):
     }
 
 
-def prepare_review_row(review):
+def prepare_review_row(review, store_id_map):
+    store_name = normalize_spaces(review.get("store_name", ""))
+    store_id = store_id_map.get(normalize_store_lookup_key(store_name))
+
+    if not store_id:
+        raise RuntimeError(
+            f'Supabase stores 테이블에서 매장 ID를 찾지 못했습니다: "{store_name}"'
+        )
+
     row = {
         "review_key": hashlib.sha256(make_review_key(review).encode("utf-8")).hexdigest(),
-        "store_name": normalize_spaces(review.get("store_name", "")),
+        "store_id": store_id,
+        "store_name": store_name,
         "sv": normalize_spaces(review.get("sv", "")),
         "country": normalize_spaces(review.get("country", "")),
         "city": normalize_spaces(review.get("city", "")),
@@ -1241,7 +1282,12 @@ def save_reviews(new_reviews, existing_reviews=None):
 
     new_added_count = count_new_reviews(existing_reviews, new_reviews)
     duplicate_cleaned_count = len(existing_reviews) + len(new_reviews) - len(merged_reviews)
-    rows = [prepare_review_row(review) for review in merged_reviews if make_review_key(review)]
+    store_id_map = load_store_id_map()
+    rows = [
+        prepare_review_row(review, store_id_map)
+        for review in merged_reviews
+        if make_review_key(review)
+    ]
 
     upsert_review_batch(rows)
 
