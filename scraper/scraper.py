@@ -1,6 +1,5 @@
 import os
 import json
-import time
 import re
 import hashlib
 from urllib.error import HTTPError, URLError
@@ -10,10 +9,9 @@ from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 from playwright.sync_api import sync_playwright
 
-LEGACY_DATA_PATH = "public/data/reviews.json"
 SUPABASE_URL = os.environ.get("SUPABASE_URL", "").rstrip("/")
 SUPABASE_SERVICE_ROLE_KEY = os.environ.get("SUPABASE_SERVICE_ROLE_KEY", "")
-MIGRATE_ONLY = os.environ.get("MIGRATE_ONLY", "").strip().lower() in {"1", "true", "yes", "on"}
+STATUS_ONLY = os.environ.get("STATUS_ONLY", "").strip().lower() in {"1", "true", "yes", "on"}
 
 MAX_SCROLL_ROUNDS = 8
 STOP_STALLED_ROUNDS = 2
@@ -66,8 +64,6 @@ def estimate_review_date(relative_date, base_date=None):
     # Unrecognized relative values remain usable, but are marked as estimated today.
     return base_date.strftime("%Y-%m-%d")
 
-
-# Replace the existing STORES section in scraper/scraper.py with this block.
 
 STORES = [{'store_name': "Paik's Noodle Amsterdam",
   'sv': '강소영',
@@ -370,7 +366,7 @@ STORES = [{'store_name': "Paik's Noodle Amsterdam",
   'sv': '강소영',
   'country': 'Mongolia',
   'city': 'Ulaanbaatar',
-  'url': 'https://www.google.com/maps/place/PAIK'S+NOODLE/@47.8941178,106.905143,17z/data=!4m6!3m5!1s0x5d96930012621e1d:0xcf4424862316ba86!8m2!3d47.8941178!4d106.9077179!16s%2Fg%2F11njgt20b_'
+  'url': "https://www.google.com/maps/place/PAIK'S+NOODLE/@47.8941178,106.905143,17z/data=!4m6!3m5!1s0x5d96930012621e1d:0xcf4424862316ba86!8m2!3d47.8941178!4d106.9077179!16s%2Fg%2F11njgt20b_"
 },
 {
   'store_name': 'Saemaeul Ayud',
@@ -843,19 +839,6 @@ def load_store_id_map():
     return store_id_map
 
 
-def load_legacy_reviews():
-    if not os.path.exists(LEGACY_DATA_PATH):
-        return []
-
-    try:
-        with open(LEGACY_DATA_PATH, "r", encoding="utf-8") as f:
-            data = json.load(f)
-        return data if isinstance(data, list) else []
-    except Exception as e:
-        print(f"⚠️ 기존 JSON seed 로드 실패: {e}")
-        return []
-
-
 def load_existing_reviews(page_size=1000):
     """Load every Supabase review row without the PostgREST 1,000-row cap."""
     rows = []
@@ -1283,38 +1266,6 @@ def upsert_review_batch(rows, batch_size=500):
         )
 
 
-def migrate_legacy_reviews_to_supabase(existing_reviews=None):
-    """Backfill reviews.json once, safely, and skip it after Supabase catches up."""
-    legacy_reviews = load_legacy_reviews()
-    if not legacy_reviews:
-        print("ℹ️ 기존 reviews.json이 없어 초기 이관을 건너뜁니다.")
-        return existing_reviews if existing_reviews is not None else load_existing_reviews()
-
-    existing_reviews = existing_reviews if existing_reviews is not None else load_existing_reviews()
-    save_migrated_existing_reviews(legacy_reviews)
-
-    legacy_keys = {make_review_key(r) for r in legacy_reviews if make_review_key(r)}
-    existing_keys = {make_review_key(r) for r in existing_reviews if make_review_key(r)}
-    missing_count = len(legacy_keys - existing_keys)
-
-    if missing_count == 0:
-        print(f"✅ 기존 JSON 이관 확인 완료: {len(legacy_keys)}건 모두 Supabase에 존재")
-        return existing_reviews
-
-    merged_reviews = merge_reviews(existing_reviews, legacy_reviews)
-    store_id_map = load_store_id_map()
-    rows = [prepare_review_row(review, store_id_map) for review in merged_reviews if make_review_key(review)]
-    upsert_review_batch(rows)
-
-    print("🚚 기존 reviews.json → Supabase 초기 이관 완료")
-    print(f"   - JSON 유효 리뷰: {len(legacy_keys)}건")
-    print(f"   - 이관 전 Supabase: {len(existing_keys)}건")
-    print(f"   - 누락 이관 대상: {missing_count}건")
-    print(f"   - 이관 후 예상 누적: {len(merged_reviews)}건")
-
-    return merged_reviews
-
-
 def save_reviews(new_reviews, existing_reviews=None):
     existing_reviews = existing_reviews if existing_reviews is not None else load_existing_reviews()
     merged_reviews = merge_reviews(existing_reviews, new_reviews)
@@ -1356,12 +1307,14 @@ def save_crawl_status(results, started_at):
     failed_stores = [row for row in store_rows if not row["ok"]]
     success_count = len(store_rows) - len(failed_stores)
 
-    run_row = {        "last_crawled_at": finished_at.strftime("%Y-%m-%d %H:%M:%S"),
+    run_row = {
+        "last_crawled_at": finished_at.strftime("%Y-%m-%d %H:%M:%S"),
         "total_stores": len(store_rows),
         "success_count": success_count,
         "failed_count": len(failed_stores),
         "failed_stores": failed_stores,
-        "stores": store_rows,    }
+        "stores": store_rows,
+    }
 
     supabase_request(
         "POST",
@@ -1370,22 +1323,120 @@ def save_crawl_status(results, started_at):
         prefer="return=minimal",
     )
 
+    elapsed_seconds = max(0, int((finished_at - started_at).total_seconds()))
     print("🧾 Supabase crawl_runs 저장 완료")
     print(f"   - 성공: {success_count}/{len(store_rows)}")
     print(f"   - 실패: {len(failed_stores)}건")
+    print(f"   - 실행 시간: {elapsed_seconds}초")
+
+
+def validate_store_configuration(store_id_map):
+    """Validate configured stores against Supabase without changing review data."""
+    configured_names = []
+    configured_urls = []
+    missing_store_names = []
+
+    for store in STORES:
+        store_name = normalize_spaces(store.get("store_name", ""))
+        store_url = normalize_spaces(store.get("url", ""))
+        configured_names.append(normalize_store_lookup_key(store_name))
+        configured_urls.append(store_url)
+
+        if not store_name or not store_url:
+            raise RuntimeError(f"필수 매장 설정이 비어 있습니다: {store}")
+
+        if normalize_store_lookup_key(store_name) not in store_id_map:
+            missing_store_names.append(store_name)
+
+    duplicate_names = sorted(
+        {name for name in configured_names if configured_names.count(name) > 1}
+    )
+    duplicate_urls = sorted(
+        {url for url in configured_urls if url and configured_urls.count(url) > 1}
+    )
+
+    if duplicate_names:
+        raise RuntimeError(
+            "STORES 설정에 중복 매장명이 있습니다: " + ", ".join(duplicate_names)
+        )
+
+    if duplicate_urls:
+        raise RuntimeError(
+            "STORES 설정에 중복 Google Maps URL이 있습니다: " + ", ".join(duplicate_urls)
+        )
+
+    if missing_store_names:
+        raise RuntimeError(
+            "Supabase stores 테이블과 매칭되지 않는 매장이 있습니다: "
+            + ", ".join(missing_store_names)
+        )
+
+    print(f"✅ STORES 설정 검증 완료: {len(STORES)}개")
+
+
+def run_status_only():
+    """Check Supabase connectivity and store mapping without opening Google Maps."""
+    print("⚡ STATUS_ONLY 모드 시작")
+    require_supabase_config()
+
+    store_id_map = load_store_id_map()
+    validate_store_configuration(store_id_map)
+
+    review_probe = supabase_request(
+        "GET",
+        "reviews",
+        query={
+            "select": "review_key,store_name,review_date",
+            "order": "review_date.desc",
+            "limit": "1",
+        },
+    ) or []
+
+    crawl_probe = supabase_request(
+        "GET",
+        "crawl_runs",
+        query={
+            "select": "last_crawled_at,total_stores,success_count,failed_count",
+            "order": "last_crawled_at.desc",
+            "limit": "1",
+        },
+    ) or []
+
+    if review_probe:
+        latest_review = review_probe[0]
+        print(
+            "✅ reviews 조회 성공: "
+            f"{latest_review.get('store_name', 'Unknown')} / "
+            f"{latest_review.get('review_date', 'Unknown')}"
+        )
+    else:
+        print("⚠️ reviews 조회는 성공했지만 저장된 리뷰가 없습니다.")
+
+    if crawl_probe:
+        latest_run = crawl_probe[0]
+        print(
+            "✅ crawl_runs 조회 성공: "
+            f"{latest_run.get('success_count', 0)}/"
+            f"{latest_run.get('total_stores', 0)} 성공 / "
+            f"실패 {latest_run.get('failed_count', 0)}건 / "
+            f"{latest_run.get('last_crawled_at', 'Unknown')}"
+        )
+    else:
+        print("⚠️ crawl_runs 조회는 성공했지만 저장된 실행 이력이 없습니다.")
+
+    print("✅ STATUS_ONLY 완료: Google Maps 크롤링 및 reviews 변경 없음")
 
 
 def scrape():
+    if STATUS_ONLY:
+        run_status_only()
+        return
+
     started_at = now_kst()
     all_new_reviews = []
     crawl_results = []
     existing_reviews = load_existing_reviews()
-    existing_reviews = migrate_legacy_reviews_to_supabase(existing_reviews)
     save_migrated_existing_reviews(existing_reviews)
-
-    if MIGRATE_ONLY:
-        print("✅ MIGRATE_ONLY 모드 완료: 크롤링 없이 기존 JSON 이관만 수행했습니다.")
-        return
 
     with sync_playwright() as p:
         browser = p.chromium.launch(
