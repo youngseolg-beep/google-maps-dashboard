@@ -9,6 +9,12 @@ on:
         default: false
         type: boolean
 
+      repair_only:
+        description: "Supabase 리뷰 중복 및 review_key 정합성 복구"
+        required: true
+        default: false
+        type: boolean
+
   schedule:
     - cron: "0 22 * * *"
 
@@ -39,12 +45,11 @@ jobs:
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
-
-          # 수동 실행에서만 선택값을 전달합니다.
-          # 정기 실행(schedule)은 항상 false로 처리되어 전체 크롤링을 수행합니다.
           STATUS_ONLY: ${{ github.event_name == 'workflow_dispatch' && inputs.status_only || false }}
+          REPAIR_ONLY: ${{ github.event_name == 'workflow_dispatch' && inputs.repair_only || false }}
 
         run: |
           echo "Event: ${{ github.event_name }}"
           echo "STATUS_ONLY: ${STATUS_ONLY}"
+          echo "REPAIR_ONLY: ${REPAIR_ONLY}"
           python scraper/scraper.py
