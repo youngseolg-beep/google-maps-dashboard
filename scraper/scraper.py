@@ -12,6 +12,7 @@ from playwright.sync_api import sync_playwright
 SUPABASE_URL = os.environ.get("SUPABASE_URL", "").rstrip("/")
 SUPABASE_SERVICE_ROLE_KEY = os.environ.get("SUPABASE_SERVICE_ROLE_KEY", "")
 STATUS_ONLY = os.environ.get("STATUS_ONLY", "").strip().lower() in {"1", "true", "yes", "on"}
+REPAIR_ONLY = os.environ.get("REPAIR_ONLY", "").strip().lower() in {"1", "true", "yes", "on"}
 
 MAX_SCROLL_ROUNDS = 8
 STOP_STALLED_ROUNDS = 2
@@ -849,7 +850,7 @@ def load_existing_reviews(page_size=1000):
             "GET",
             "reviews",
             query={
-                "select": "store_name,sv,country,city,author,rating,text,has_text,date,review_date,review_date_source,collected_at",
+                "select": "id,review_key,store_name,sv,country,city,author,rating,text,has_text,date,review_date,review_date_source,collected_at",
                 "order": "review_date.desc,collected_at.desc",
                 "limit": str(page_size),
                 "offset": str(offset),
@@ -955,21 +956,78 @@ def save_migrated_existing_reviews(existing_reviews):
 
 
 def make_review_key(review):
-    store_name = normalize_spaces(review.get("store_name", "")).lower()
-    author = normalize_spaces(review.get("author", "")).lower()
-    text = normalize_spaces(review.get("text", "")).lower()
+    """Canonical dedupe key: author + text + store_name."""
+    store_name = normalize_spaces(review.get("store_name", "")).casefold()
+    author = normalize_spaces(review.get("author", "Anonymous")).casefold()
+    text = normalize_spaces(review.get("text", "")).casefold()
 
-    text = re.sub(r"[^\w\s가-힣ㄱ-ㅎㅏ-ㅣ]", "", text)
-    text = re.sub(r"\s+", " ", text).strip()
+    # Keep the original three-field constitution while normalizing spacing/case.
+    return f"{author}|{text}|{store_name}" if store_name else ""
 
-    if store_name and author and author not in ["anonymous", ""]:
-        return f"{store_name}|{author}"
 
-    if store_name and text:
-        return f"{store_name}|{text[:180]}"
 
-    return text
+def canonical_review_hash(review):
+    return hashlib.sha256(make_review_key(review).encode("utf-8")).hexdigest()
 
+
+def delete_review_ids(review_ids, batch_size=200):
+    for start in range(0, len(review_ids), batch_size):
+        batch = review_ids[start:start + batch_size]
+        if not batch:
+            continue
+        supabase_request(
+            "DELETE",
+            "reviews",
+            query={"id": f"in.({','.join(batch)})"},
+            prefer="return=minimal",
+        )
+
+
+def patch_review_by_id(review_id, body):
+    supabase_request(
+        "PATCH",
+        "reviews",
+        query={"id": f"eq.{review_id}"},
+        body=body,
+        prefer="return=minimal",
+    )
+
+
+def reconcile_existing_reviews(existing_reviews):
+    """Physically dedupe Supabase and restore canonical review_key values."""
+    groups = {}
+    for review in existing_reviews:
+        key = make_review_key(review)
+        if key:
+            groups.setdefault(key, []).append(review)
+
+    canonical_reviews = []
+    duplicate_ids = []
+    rekey_count = 0
+
+    for key, group in groups.items():
+        canonical_hash = hashlib.sha256(key.encode("utf-8")).hexdigest()
+        keeper = next((r for r in group if r.get("review_key") == canonical_hash), group[0])
+        canonical_reviews.append(keeper)
+
+        for row in group:
+            if row is not keeper and row.get("id"):
+                duplicate_ids.append(str(row["id"]))
+
+        if keeper.get("id") and keeper.get("review_key") != canonical_hash:
+            patch_review_by_id(str(keeper["id"]), {"review_key": canonical_hash})
+            keeper["review_key"] = canonical_hash
+            rekey_count += 1
+
+    if duplicate_ids:
+        delete_review_ids(duplicate_ids)
+
+    print("🧹 Supabase 기존 리뷰 정합성 정리 완료")
+    print(f"   - 정리 전: {len(existing_reviews)}건")
+    print(f"   - 실제 중복 삭제: {len(duplicate_ids)}건")
+    print(f"   - canonical review_key 복구: {rekey_count}건")
+    print(f"   - 정리 후: {len(canonical_reviews)}건")
+    return canonical_reviews
 
 def merge_reviews(existing, new_reviews):
     merged = []
@@ -1234,7 +1292,7 @@ def prepare_review_row(review, store_id_map):
         )
 
     row = {
-        "review_key": hashlib.sha256(make_review_key(review).encode("utf-8")).hexdigest(),
+        "review_key": canonical_review_hash(review),
         "store_id": store_id,
         "store_name": store_name,
         "sv": normalize_spaces(review.get("sv", "")),
@@ -1268,25 +1326,24 @@ def upsert_review_batch(rows, batch_size=500):
 
 def save_reviews(new_reviews, existing_reviews=None):
     existing_reviews = existing_reviews if existing_reviews is not None else load_existing_reviews()
-    merged_reviews = merge_reviews(existing_reviews, new_reviews)
-
-    new_added_count = count_new_reviews(existing_reviews, new_reviews)
-    duplicate_cleaned_count = len(existing_reviews) + len(new_reviews) - len(merged_reviews)
-    store_id_map = load_store_id_map()
-    rows = [
-        prepare_review_row(review, store_id_map)
-        for review in merged_reviews
-        if make_review_key(review)
+    existing_keys = {make_review_key(r) for r in existing_reviews if make_review_key(r)}
+    unique_new_reviews = merge_reviews([], new_reviews)
+    rows_to_insert = [
+        review for review in unique_new_reviews
+        if make_review_key(review) not in existing_keys
     ]
 
-    upsert_review_batch(rows)
+    store_id_map = load_store_id_map()
+    rows = [prepare_review_row(review, store_id_map) for review in rows_to_insert]
+    if rows:
+        upsert_review_batch(rows)
 
     print("\n✨ Supabase 저장 완료")
     print(f"   - 기존 리뷰: {len(existing_reviews)}건")
-    print(f"   - 이번 수집: {len(new_reviews)}건")
-    print(f"   - 신규 추가: {new_added_count}건")
-    print(f"   - 중복 정리: {duplicate_cleaned_count}건")
-    print(f"   - 최종 누적: {len(merged_reviews)}건")
+    print(f"   - 이번 수집 후보: {len(new_reviews)}건")
+    print(f"   - 수집 내 중복 제외: {len(new_reviews) - len(unique_new_reviews)}건")
+    print(f"   - 신규 추가: {len(rows_to_insert)}건")
+    print(f"   - 최종 누적: {len(existing_reviews) + len(rows_to_insert)}건")
 
 
 def save_crawl_status(results, started_at):
@@ -1427,9 +1484,21 @@ def run_status_only():
     print("✅ STATUS_ONLY 완료: Google Maps 크롤링 및 reviews 변경 없음")
 
 
+def run_repair_only():
+    print("🧹 REPAIR_ONLY 모드 시작")
+    existing_reviews = load_existing_reviews()
+    save_migrated_existing_reviews(existing_reviews)
+    canonical_reviews = reconcile_existing_reviews(existing_reviews)
+    print(f"✅ REPAIR_ONLY 완료: Supabase reviews {len(canonical_reviews)}건 / Google Maps 크롤링 없음")
+
+
 def scrape():
     if STATUS_ONLY:
         run_status_only()
+        return
+
+    if REPAIR_ONLY:
+        run_repair_only()
         return
 
     started_at = now_kst()
@@ -1437,6 +1506,7 @@ def scrape():
     crawl_results = []
     existing_reviews = load_existing_reviews()
     save_migrated_existing_reviews(existing_reviews)
+    existing_reviews = reconcile_existing_reviews(existing_reviews)
 
     with sync_playwright() as p:
         browser = p.chromium.launch(
