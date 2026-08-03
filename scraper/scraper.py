@@ -463,6 +463,57 @@ def has_review_dom(page):
     return False
 
 
+def is_valid_google_maps_place_page(page):
+    """Return True only when a real Google Maps place detail page is visible.
+
+    A valid place may legitimately have zero reviews. Search result pages, consent
+    screens, CAPTCHA pages, and broken URLs must not be treated as successful stores.
+    """
+    try:
+        current_url = (page.url or "").lower()
+    except Exception:
+        current_url = ""
+
+    if "google." not in current_url or "/maps" not in current_url:
+        return False
+
+    # Strong place-detail signals used by Google Maps desktop layouts.
+    strong_selectors = [
+        "h1.DUwDvf",
+        "button[data-item-id^='address']",
+        "button[data-item-id^='phone']",
+        "button[data-item-id^='authority']",
+        "button[data-item-id='oh']",
+    ]
+
+    for selector in strong_selectors:
+        try:
+            if page.locator(selector).count() > 0:
+                return True
+        except Exception:
+            pass
+
+    # Fallback: a place URL plus a visible heading and at least one place action.
+    if "/maps/place/" in current_url:
+        try:
+            heading = page.locator("h1").first
+            heading_text = normalize_spaces(safe_inner_text(heading, ""))
+            action_count = page.locator(
+                "button[aria-label*='Directions'], "
+                "button[aria-label*='Save'], "
+                "button[aria-label*='Share'], "
+                "button[aria-label*='경로'], "
+                "button[aria-label*='저장'], "
+                "button[aria-label*='공유']"
+            ).count()
+            if heading_text and action_count > 0:
+                return True
+        except Exception:
+            pass
+
+    return False
+
+
 def open_reviews_panel(page):
     print("🔘 리뷰 패널 열기 시도 중...")
 
@@ -1224,6 +1275,7 @@ def scrape_store(page, store, existing_reviews=None):
     print(f"==============================")
 
     url_candidates = build_url_candidates(store["url"])
+    valid_place_detected = False
 
     for idx, target_url in enumerate(url_candidates):
         print(f"🌐 URL 후보 {idx + 1}/{len(url_candidates)} 진입 시도: {target_url}")
@@ -1238,6 +1290,10 @@ def scrape_store(page, store, existing_reviews=None):
 
         print("⏳ Google Maps 기본 페이지 렌더링 대기 중...")
         page.wait_for_timeout(7000)
+
+        if is_valid_google_maps_place_page(page):
+            valid_place_detected = True
+            print("✅ Google Maps 매장 상세 페이지 확인")
 
         if not has_review_dom(page):
             open_reviews_panel(page)
@@ -1269,6 +1325,20 @@ def scrape_store(page, store, existing_reviews=None):
 
         print(f"⚠️ URL 후보 {idx + 1}에서 리뷰 DOM 감지 실패 또는 리뷰 없음")
 
+    # A real place page with no review DOM is a valid zero-review store, not a crawl failure.
+    if valid_place_detected:
+        print(f"✅ 리뷰 0건 매장 확인: {store['store_name']} / 정상 성공 처리")
+        return {
+            "ok": True,
+            "store_name": store["store_name"],
+            "sv": store["sv"],
+            "country": store["country"],
+            "collected_count": 0,
+            "error": "",
+            "crawled_at": now_kst().strftime("%Y-%m-%d %H:%M:%S"),
+            "reviews": [],
+        }
+
     print(f"❌ 매장 수집 실패: {store['store_name']}")
     return {
         "ok": False,
@@ -1276,7 +1346,7 @@ def scrape_store(page, store, existing_reviews=None):
         "sv": store["sv"],
         "country": store["country"],
         "collected_count": 0,
-        "error": "리뷰 DOM 감지 실패 또는 리뷰 없음",
+        "error": "Google Maps 매장 상세 페이지 또는 리뷰 DOM 감지 실패",
         "crawled_at": now_kst().strftime("%Y-%m-%d %H:%M:%S"),
         "reviews": [],
     }
