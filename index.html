@@ -18,7 +18,7 @@
             <div>
                 <h1 class="text-2xl font-black text-slate-800">
                     📊 SV REVIEW MASTER
-                    <span class="text-blue-500 text-sm font-normal ml-2">v2.0.1</span>
+                    <span class="text-blue-500 text-sm font-normal ml-2">v2.0.2</span>
                 </h1>
                 <p class="text-xs text-slate-400 mt-1">Google Maps 리뷰 자동 수집 · 담당 SV별 리뷰 관리 · Insight Dashboard</p>
             </div>
@@ -895,6 +895,7 @@
 
                 const totalReviews = reviews.length;
                 const lowReviews = reviews.filter(r => Number(r.rating || 0) <= 3).length;
+                const newReviews = reviews.filter(isNewReview).length;
                 const latestReview = getLatestReviewDate(reviews);
                 const recent7Days = reviews.filter(r => {
                     const date = parseReviewDate(r);
@@ -934,11 +935,17 @@
                                     </div>
                                 </div>
 
-                                ${
-                                    lowReviews > 0
-                                    ? `<div class="px-2 py-1 rounded-full bg-red-100 text-red-600 text-[10px] font-black shrink-0">LOW ${lowReviews}</div>`
-                                    : `<div class="px-2 py-1 rounded-full bg-emerald-100 text-emerald-600 text-[10px] font-black shrink-0">SAFE</div>`
-                                }
+                                <div class="flex flex-col items-end gap-1 shrink-0">
+                                    ${newReviews > 0
+                                        ? `<div class="px-2 py-1 rounded-full bg-blue-100 text-blue-600 text-[10px] font-black">NEW ${newReviews}</div>`
+                                        : ''
+                                    }
+                                    ${
+                                        lowReviews > 0
+                                        ? `<div class="px-2 py-1 rounded-full bg-red-100 text-red-600 text-[10px] font-black">LOW ${lowReviews}</div>`
+                                        : `<div class="px-2 py-1 rounded-full bg-emerald-100 text-emerald-600 text-[10px] font-black">SAFE</div>`
+                                    }
+                                </div>
                             </div>
 
                             <div class="grid grid-cols-2 gap-2 mt-4">
@@ -1149,6 +1156,43 @@
             return new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]));
         }
 
+        function parseCollectedDateTime(value) {
+            const raw = String(value || '').trim();
+            if (!raw) return null;
+
+            const normalized = raw.includes('T') ? raw : raw.replace(' ', 'T');
+            const parsed = new Date(normalized);
+            if (!Number.isNaN(parsed.getTime())) return parsed;
+
+            const match = raw.match(/(\d{4})-(\d{2})-(\d{2})(?:[ T](\d{2}):(\d{2})(?::(\d{2}))?)?/);
+            if (!match) return null;
+
+            return new Date(
+                Number(match[1]),
+                Number(match[2]) - 1,
+                Number(match[3]),
+                Number(match[4] || 0),
+                Number(match[5] || 0),
+                Number(match[6] || 0)
+            );
+        }
+
+        function getLatestCrawlFinishedAt() {
+            return parseCollectedDateTime(crawlStatus?.last_crawled_at || '');
+        }
+
+        function isNewReview(review) {
+            const crawlFinishedAt = getLatestCrawlFinishedAt();
+            const collectedAt = parseCollectedDateTime(review?.collected_at);
+
+            if (!crawlFinishedAt || !collectedAt) return false;
+
+            const differenceMs = crawlFinishedAt.getTime() - collectedAt.getTime();
+            const maxWindowMs = 3 * 60 * 60 * 1000;
+
+            return differenceMs >= 0 && differenceMs <= maxWindowMs;
+        }
+
         function formatDateYmd(date) {
             if (!(date instanceof Date) || Number.isNaN(date.getTime())) return '-';
 
@@ -1254,6 +1298,7 @@
                 const rating = Number(r.rating || 5);
                 const safeRating = Math.max(0, Math.min(5, Math.round(rating)));
                 const stars = '★'.repeat(safeRating) + '☆'.repeat(5 - safeRating);
+                const newReview = isNewReview(r);
                 const lowRatingClass = rating <= 3 ? 'border-red-200 bg-red-50/40' : 'border-slate-100 bg-white';
 
                 return `
@@ -1263,6 +1308,7 @@
                                 <div class="flex flex-wrap items-center gap-2">
                                     <span class="text-[10px] font-bold text-blue-600 bg-blue-50 px-2 py-0.5 rounded">${escapeHtml(r.store_name || 'Unknown Store')}</span>
                                     <span class="text-[10px] font-bold text-slate-500 bg-slate-100 px-2 py-0.5 rounded">${escapeHtml(r.author || 'Anonymous')}</span>
+                                    ${newReview ? '<span class="text-[10px] font-black text-blue-600 bg-blue-100 px-2 py-0.5 rounded">NEW</span>' : ''}
                                     ${rating <= 3 ? '<span class="text-[10px] font-black text-red-600 bg-red-100 px-2 py-0.5 rounded">LOW RATING</span>' : ''}
                                 </div>
                                 <div class="text-[10px] text-slate-400 mt-2">
