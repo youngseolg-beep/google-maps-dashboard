@@ -2,6 +2,13 @@ name: scrape-and-update
 
 on:
   workflow_dispatch:
+    inputs:
+      status_only:
+        description: "Supabase 연결 및 설정만 빠르게 검증"
+        required: true
+        default: false
+        type: boolean
+
   schedule:
     - cron: "0 22 * * *"
 
@@ -11,6 +18,7 @@ permissions:
 jobs:
   scrape:
     runs-on: ubuntu-latest
+    timeout-minutes: 90
 
     steps:
       - name: Checkout
@@ -23,11 +31,20 @@ jobs:
 
       - name: Install dependencies
         run: |
+          python -m pip install --upgrade pip
           pip install -r scraper/requirements.txt
-          playwright install chromium
+          playwright install --with-deps chromium
 
       - name: Run scraper and save to Supabase
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
-        run: python scraper/scraper.py
+
+          # 수동 실행에서만 선택값을 전달합니다.
+          # 정기 실행(schedule)은 항상 false로 처리되어 전체 크롤링을 수행합니다.
+          STATUS_ONLY: ${{ github.event_name == 'workflow_dispatch' && inputs.status_only || false }}
+
+        run: |
+          echo "Event: ${{ github.event_name }}"
+          echo "STATUS_ONLY: ${STATUS_ONLY}"
+          python scraper/scraper.py
