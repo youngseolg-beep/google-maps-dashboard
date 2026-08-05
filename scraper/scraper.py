@@ -631,7 +631,7 @@ def load_existing_reviews(page_size=1000):
             "GET",
             "reviews",
             query={
-                "select": "id,review_key,store_name,sv,country,city,author,rating,text,has_text,date,review_date,review_date_source,collected_at",
+                "select": "id,review_key,store_name,sv,country,city,author,rating,text,has_text,date,review_date,review_date_source,collected_at,first_seen_run_id",
                 "order": "review_date.desc,collected_at.desc",
                 "limit": str(page_size),
                 "offset": str(offset),
@@ -1082,7 +1082,7 @@ def scrape_store(page, store, existing_reviews=None):
     }
 
 
-def prepare_review_row(review, store_id_map):
+def prepare_review_row(review, store_id_map, crawl_run_id):
     store_name = normalize_spaces(review.get("store_name", ""))
     store_id = store_id_map.get(normalize_store_lookup_key(store_name))
 
@@ -1108,6 +1108,7 @@ def prepare_review_row(review, store_id_map):
         "collected_at": review.get("collected_at") or now_kst().strftime("%Y-%m-%d"),
         "scraped_at": now_kst().isoformat(),
         "source": "google_maps",
+        "first_seen_run_id": crawl_run_id,
     }
     return row
 
@@ -1124,7 +1125,7 @@ def upsert_review_batch(rows, batch_size=500):
         )
 
 
-def save_reviews(new_reviews, existing_reviews=None):
+def save_reviews(new_reviews, crawl_run_id, existing_reviews=None):
     existing_reviews = existing_reviews if existing_reviews is not None else load_existing_reviews()
     existing_keys = {make_review_key(r) for r in existing_reviews if make_review_key(r)}
     unique_new_reviews = merge_reviews([], new_reviews)
@@ -1134,11 +1135,12 @@ def save_reviews(new_reviews, existing_reviews=None):
     ]
 
     store_id_map = load_store_id_map()
-    rows = [prepare_review_row(review, store_id_map) for review in rows_to_insert]
+    rows = [prepare_review_row(review, store_id_map, crawl_run_id) for review in rows_to_insert]
     if rows:
         upsert_review_batch(rows)
 
     print("\n✨ Supabase 저장 완료")
+    print(f"   - crawl_run_id: {crawl_run_id}")
     print(f"   - 기존 리뷰: {len(existing_reviews)}건")
     print(f"   - 이번 수집 후보: {len(new_reviews)}건")
     print(f"   - 수집 내 중복 제외: {len(new_reviews) - len(unique_new_reviews)}건")
@@ -1146,8 +1148,35 @@ def save_reviews(new_reviews, existing_reviews=None):
     print(f"   - 최종 누적: {len(existing_reviews) + len(rows_to_insert)}건")
 
 
-def save_crawl_status(results, started_at):
-    """Append one complete crawl run record for the dashboard."""
+def create_crawl_run(total_stores):
+    """Create the crawl run first and return its bigint id."""
+    started_at = now_kst()
+    initial_row = {
+        "last_crawled_at": started_at.strftime("%Y-%m-%d %H:%M:%S"),
+        "total_stores": total_stores,
+        "success_count": 0,
+        "failed_count": 0,
+        "failed_stores": [],
+        "stores": [],
+    }
+
+    created = supabase_request(
+        "POST",
+        "crawl_runs",
+        body=initial_row,
+        prefer="return=representation",
+    ) or []
+
+    if not created or not created[0].get("id"):
+        raise RuntimeError("crawl_runs 생성 후 id를 반환받지 못했습니다.")
+
+    crawl_run_id = int(created[0]["id"])
+    print(f"🧾 crawl_runs 실행 레코드 생성 완료: id={crawl_run_id}")
+    return crawl_run_id
+
+
+def finish_crawl_run(crawl_run_id, results, started_at):
+    """Update the pre-created crawl run with final crawl results."""
     finished_at = now_kst()
     store_rows = [
         {
@@ -1174,18 +1203,19 @@ def save_crawl_status(results, started_at):
     }
 
     supabase_request(
-        "POST",
+        "PATCH",
         "crawl_runs",
+        query={"id": f"eq.{crawl_run_id}"},
         body=run_row,
         prefer="return=minimal",
     )
 
     elapsed_seconds = max(0, int((finished_at - started_at).total_seconds()))
-    print("🧾 Supabase crawl_runs 저장 완료")
+    print("🧾 Supabase crawl_runs 업데이트 완료")
+    print(f"   - id: {crawl_run_id}")
     print(f"   - 성공: {success_count}/{len(store_rows)}")
     print(f"   - 실패: {len(failed_stores)}건")
     print(f"   - 실행 시간: {elapsed_seconds}초")
-
 
 def validate_store_configuration(stores, store_id_map):
     """Validate Supabase-driven crawler stores without changing review data."""
@@ -1316,6 +1346,7 @@ def scrape():
     existing_reviews = load_existing_reviews()
     save_migrated_existing_reviews(existing_reviews)
     existing_reviews = reconcile_existing_reviews(existing_reviews)
+    crawl_run_id = create_crawl_run(len(stores))
 
     with sync_playwright() as p:
         browser = p.chromium.launch(
@@ -1356,14 +1387,19 @@ def scrape():
                 page.wait_for_timeout(3000)
 
             if all_new_reviews or existing_reviews:
-                save_reviews(all_new_reviews, existing_reviews)
+                save_reviews(all_new_reviews, crawl_run_id, existing_reviews)
             else:
                 print("❌ 저장할 기존/신규 리뷰가 없습니다.")
 
-            save_crawl_status(crawl_results, started_at)
+            finish_crawl_run(crawl_run_id, crawl_results, started_at)
 
         except Exception as e:
             print(f"🔥 치명적 오류: {e}")
+            try:
+                finish_crawl_run(crawl_run_id, crawl_results, started_at)
+            except Exception as finish_error:
+                print(f"⚠️ 실패 상태 crawl_runs 업데이트 실패: {finish_error}")
+            raise
 
         finally:
             browser.close()
