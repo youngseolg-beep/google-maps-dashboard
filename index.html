@@ -18,7 +18,7 @@
             <div>
                 <h1 class="text-2xl font-black text-slate-800">
                     📊 SV REVIEW MASTER
-                    <span class="text-blue-500 text-sm font-normal ml-2">v2.0.4</span>
+                    <span class="text-blue-500 text-sm font-normal ml-2">v2.0.5</span>
                 </h1>
                 <p class="text-xs text-slate-400 mt-1">Google Maps 리뷰 자동 수집 · 담당 SV별 리뷰 관리 · Insight Dashboard</p>
             </div>
@@ -435,7 +435,20 @@
         }
 
         async function loadLatestCrawlRunFromSupabase() {
-            const orderColumns = ['finished_at', 'last_crawled_at', 'completed_at', 'created_at', 'started_at'];
+            // first_seen_run_id is linked to crawl_runs.id, so the latest run must
+            // be selected by the monotonically increasing bigint id first.
+            try {
+                const rows = await fetchSupabaseRows(
+                    'crawl_runs',
+                    'select=*&order=id.desc&limit=1'
+                );
+
+                if (rows.length) return normalizeCrawlRun(rows[0]);
+            } catch (error) {
+                console.warn('crawl_runs id 정렬 조회 실패', error);
+            }
+
+            const orderColumns = ['last_crawled_at', 'created_at', 'started_at', 'completed_at', 'finished_at'];
 
             for (const column of orderColumns) {
                 try {
@@ -451,7 +464,7 @@
             }
 
             const rows = await fetchSupabaseRows('crawl_runs', 'select=*&limit=1000');
-            rows.sort((a, b) => String(getCrawlRunTimestamp(b)).localeCompare(String(getCrawlRunTimestamp(a))));
+            rows.sort((a, b) => Number(b?.id || 0) - Number(a?.id || 0));
             return normalizeCrawlRun(rows[0] || null);
         }
 
