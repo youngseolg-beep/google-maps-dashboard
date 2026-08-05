@@ -1,1693 +1,250 @@
-<!DOCTYPE html>
-<html lang="ko">
-<head>
-    <meta charset="UTF-8">
-    <title>SV 통합 리뷰 관리 시스템</title>
-    <script src="https://cdn.tailwindcss.com"></script>
-    <style>
-        .active-sv { background-color: #2563eb !important; color: white !important; }
-        .active-store { background-color: #eff6ff !important; border-color: #2563eb !important; color: #1d4ed8 !important; }
-        .active-keyword { box-shadow: 0 0 0 2px #111827 inset !important; transform: translateY(-1px); }
-        .active-page { background-color: #111827 !important; color: white !important; }
-        .active-filter { background-color: #111827 !important; color: white !important; border-color: #111827 !important; }
-    </style>
-</head>
-<body class="bg-slate-50 p-6">
-    <div class="max-w-7xl mx-auto">
-        <header class="mb-6 flex flex-wrap justify-between items-center gap-4 bg-white p-6 rounded-2xl shadow-sm">
-            <div>
-                <h1 class="text-2xl font-black text-slate-800">
-                    📊 SV REVIEW MASTER
-                    <span class="text-blue-500 text-sm font-normal ml-2">v2.0.3</span>
-                </h1>
-                <p class="text-xs text-slate-400 mt-1">Google Maps 리뷰 자동 수집 · 담당 SV별 리뷰 관리 · Insight Dashboard</p>
-            </div>
-
-            <div class="flex items-center gap-2">
-                <button id="reviews-page-tab" onclick="switchPage('reviews')" class="active-page px-4 py-2 rounded-full bg-slate-100 text-slate-600 text-xs font-black transition-all">
-                    Reviews
-                </button>
-                <button id="insights-page-tab" onclick="switchPage('insights')" class="px-4 py-2 rounded-full bg-slate-100 text-slate-600 text-xs font-black transition-all">
-                    Insights
-                </button>
-                <div id="status-tag" class="px-3 py-1 bg-green-100 rounded-full text-[10px] font-bold text-green-600">데이터 연결 중...</div>
-            </div>
-        </header>
-
-        <div id="global-summary" class="grid grid-cols-2 gap-4 mb-6 hidden">
-            <div class="bg-white rounded-2xl shadow-sm p-4">
-                <div class="text-[10px] text-slate-400 font-bold">전체 리뷰 마지막 크롤링 시간</div>
-                <div id="global-crawled-at" class="text-sm font-black text-blue-600 mt-2">-</div>
-            </div>
-            <div class="bg-white rounded-2xl shadow-sm p-4">
-                <div class="text-[10px] text-slate-400 font-bold">크롤링 성공 여부</div>
-                <div id="global-crawl-status" class="text-sm font-black text-emerald-600 mt-2">-</div>
-                <div id="global-failed-stores" class="text-[10px] text-red-500 mt-2 hidden"></div>
-            </div>
-        </div>
-
-        <div class="grid grid-cols-4 gap-4 mb-6">
-            <button onclick="selectSV('이여명', this)" class="sv-tab p-4 bg-white rounded-xl shadow-sm font-bold text-slate-600 transition-all">
-                이여명 SV
-                <div class="text-[10px] font-normal mt-1 text-slate-400">대만 · 싱가포르</div>
-            </button>
-            <button onclick="selectSV('강소영', this)" class="sv-tab p-4 bg-white rounded-xl shadow-sm font-bold text-slate-600 transition-all">
-                강소영 SV
-                <div class="text-[10px] font-normal mt-1 text-slate-400">몽골 · 네덜란드</div>
-            </button>
-            <button onclick="selectSV('소도희', this)" class="sv-tab p-4 bg-white rounded-xl shadow-sm font-bold text-slate-600 transition-all">
-                소도희 SV
-                <div class="text-[10px] font-normal mt-1 text-slate-400">호주 · 태국 · 캄보디아</div>
-            </button>
-            <button onclick="selectSV('최성환', this)" class="sv-tab p-4 bg-white rounded-xl shadow-sm font-bold text-slate-600 transition-all">
-                최성환 SV
-                <div class="text-[10px] font-normal mt-1 text-slate-400">인도네시아 · 필리핀</div>
-            </button>
-        </div>
-
-        <div id="sv-store-count-summary" class="grid grid-cols-4 gap-4 mb-6"></div>
-
-        <div class="bg-white p-4 rounded-2xl shadow-sm mb-6 flex flex-col gap-4">
-            <div class="flex flex-wrap items-center justify-between gap-3">
-                <div>
-                    <div id="current-title" class="text-sm font-black text-slate-700">SV를 선택해주세요</div>
-                    <div id="current-subtitle" class="text-[11px] text-slate-400 mt-1">담당 국가 기준으로 리뷰가 자동 분류됩니다.</div>
-                </div>
-
-                <div class="flex items-center gap-2">
-                    <span class="text-[11px] font-bold text-slate-400">정렬</span>
-                    <select id="sort-select" onchange="handleSortChange()" class="text-xs font-bold border border-slate-200 rounded-lg px-3 py-2 bg-white text-slate-700 outline-none">
-                        <option value="latest">날짜 순 · 최신순</option>
-                        <option value="rating-high">별점 높은 순</option>
-                        <option value="rating-low">별점 낮은 순</option>
-                        <option value="oldest">날짜 순 · 오래된순</option>
-                    </select>
-                </div>
-            </div>
-
-            <div class="grid grid-cols-1 xl:grid-cols-2 gap-4">
-                <div class="rounded-2xl border border-slate-100 bg-slate-50 p-4">
-                    <div class="text-[10px] font-black text-slate-400 mb-3">PERIOD FILTER</div>
-                    <div class="flex flex-wrap gap-2">
-                        <button onclick="setPeriodFilter('all', this)" class="period-btn active-filter px-3 py-2 rounded-full border border-slate-200 bg-white text-[11px] font-black">전체 기간</button>
-                        <button onclick="setPeriodFilter('today', this)" class="period-btn px-3 py-2 rounded-full border border-slate-200 bg-white text-[11px] font-black">오늘</button>
-                        <button onclick="setPeriodFilter('7d', this)" class="period-btn px-3 py-2 rounded-full border border-slate-200 bg-white text-[11px] font-black">최근 7일</button>
-                        <button onclick="setPeriodFilter('30d', this)" class="period-btn px-3 py-2 rounded-full border border-slate-200 bg-white text-[11px] font-black">최근 30일</button>
-                        <button onclick="setPeriodFilter('this-month', this)" class="period-btn px-3 py-2 rounded-full border border-slate-200 bg-white text-[11px] font-black">이번 달</button>
-                        <button onclick="setPeriodFilter('last-month', this)" class="period-btn px-3 py-2 rounded-full border border-slate-200 bg-white text-[11px] font-black">지난달</button>
-                        <button onclick="setPeriodFilter('custom', this)" class="period-btn px-3 py-2 rounded-full border border-slate-200 bg-white text-[11px] font-black">직접 선택</button>
-                    </div>
-                    <div id="custom-period-box" class="hidden mt-3 flex flex-wrap items-end gap-2">
-                        <label class="text-[10px] font-bold text-slate-500">
-                            시작일
-                            <input id="period-start" type="date" class="block mt-1 border border-slate-200 rounded-lg px-3 py-2 text-xs bg-white">
-                        </label>
-                        <label class="text-[10px] font-bold text-slate-500">
-                            종료일
-                            <input id="period-end" type="date" class="block mt-1 border border-slate-200 rounded-lg px-3 py-2 text-xs bg-white">
-                        </label>
-                        <button onclick="applyCustomPeriod()" class="px-4 py-2 rounded-lg bg-slate-900 text-white text-[11px] font-black">적용</button>
-                    </div>
-                    <div id="period-filter-label" class="text-[10px] text-blue-600 font-bold mt-3">전체 기간</div>
-                </div>
-
-                <div class="rounded-2xl border border-slate-100 bg-slate-50 p-4">
-                    <div class="text-[10px] font-black text-slate-400 mb-3">COUNTRY FILTER</div>
-                    <select id="country-select" onchange="handleCountryChange()" class="w-full text-xs font-bold border border-slate-200 rounded-xl px-3 py-3 bg-white text-slate-700 outline-none">
-                        <option value="ALL">전체 국가</option>
-                    </select>
-                    <div id="country-filter-label" class="text-[10px] text-blue-600 font-bold mt-3">전체 국가</div>
-                </div>
-            </div>
-
-            <div>
-                <div class="flex items-center justify-between gap-3 flex-wrap mb-2">
-                    <div class="text-[10px] font-black text-slate-400">KEYWORD FILTER</div>
-                    <button onclick="toggleLowRatingMode(this)" id="low-rating-toggle" class="px-3 py-2 rounded-full bg-red-50 text-red-600 text-[11px] font-black hover:bg-red-100 transition-all">
-                        🚨 LOW REVIEWS ONLY
-                    </button>
-                </div>
-
-                <div class="flex flex-wrap gap-2">
-                    <button title="Signature menu keywords: jjajangmyeon, jjamppong, tangsuyuk, woosamgyeop, samgyeopsal, galbi, kimchi jjigae, bibimbap, yeoltan bulgogi, pork belly, Korean BBQ" onclick="applyKeywordFilter('food', this)" class="keyword-btn px-3 py-2 rounded-full bg-orange-50 text-orange-700 text-[11px] font-black hover:bg-orange-100 transition-all">🍽 Food</button>
-                    <button title="Flavor, salty, salt, cold, fresh, too spicy, too salty, bland, seasoning, taste" onclick="applyKeywordFilter('taste', this)" class="keyword-btn px-3 py-2 rounded-full bg-red-50 text-red-600 text-[11px] font-black hover:bg-red-100 transition-all">#Taste</button>
-                    <button title="Value, price, expensive, cheap, worth, reasonable, quality, qality, portion, cost" onclick="applyKeywordFilter('value', this)" class="keyword-btn px-3 py-2 rounded-full bg-yellow-50 text-yellow-700 text-[11px] font-black hover:bg-yellow-100 transition-all">#Value</button>
-                    <button title="Service, staff, friendly, rude, kind, attitude, response, hospitality" onclick="applyKeywordFilter('service', this)" class="keyword-btn px-3 py-2 rounded-full bg-blue-50 text-blue-700 text-[11px] font-black hover:bg-blue-100 transition-all">#Service</button>
-                    <button title="System, order, ordering, wrong order, missing order, payment, kiosk, queue, operation" onclick="applyKeywordFilter('operation', this)" class="keyword-btn px-3 py-2 rounded-full bg-indigo-50 text-indigo-700 text-[11px] font-black hover:bg-indigo-100 transition-all">#Operation</button>
-                    <button title="Booking, reservation, table booking, waiting, wait, queue" onclick="applyKeywordFilter('reservation', this)" class="keyword-btn px-3 py-2 rounded-full bg-violet-50 text-violet-700 text-[11px] font-black hover:bg-violet-100 transition-all">#Reservation</button>
-                    <button title="Hygiene, clean, dirty, toilet, bathroom, smell, sanitary, sticky" onclick="applyKeywordFilter('hygiene', this)" class="keyword-btn px-3 py-2 rounded-full bg-teal-50 text-teal-700 text-[11px] font-black hover:bg-teal-100 transition-all">#Hygiene</button>
-                    <button title="Again, revisit, come back, return, never again, will be back" onclick="applyKeywordFilter('revisit', this)" class="keyword-btn px-3 py-2 rounded-full bg-pink-50 text-pink-700 text-[11px] font-black hover:bg-pink-100 transition-all">#Revisit</button>
-                    <button title="Authentic, charcoal, carcoal, Korean style, traditional, original, smoky, real Korean" onclick="applyKeywordFilter('authentic', this)" class="keyword-btn px-3 py-2 rounded-full bg-amber-50 text-amber-700 text-[11px] font-black hover:bg-amber-100 transition-all">#Authentic</button>
-                    <button onclick="clearKeywordFilter()" class="px-3 py-2 rounded-full bg-black text-white text-[11px] font-black hover:opacity-80 transition-all">✕ Reset</button>
-                </div>
-            </div>
-        </div>
-
-        <div id="keyword-stat-panel" class="bg-white rounded-2xl shadow-sm p-4 mb-6 hidden">
-            <div class="flex items-center justify-between gap-3 mb-4">
-                <div>
-                    <div class="text-sm font-black text-slate-800">📊 키워드 통계</div>
-                    <div id="keyword-stat-scope" class="text-[10px] text-slate-400 font-bold mt-1">현재 선택 조건 기준</div>
-                </div>
-                <div class="text-[10px] text-slate-400 font-bold">리뷰 1건당 여러 키워드 중복 집계 가능</div>
-            </div>
-            <div id="keyword-stat-grid" class="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-5 gap-3"></div>
-        </div>
-
-        <div id="reviews-page">
-            <div class="flex gap-6">
-                <div class="w-[340px] shrink-0">
-                    <div class="bg-white p-4 rounded-2xl shadow-sm">
-                        <div class="flex items-center justify-between mb-4">
-                            <h3 class="font-black text-slate-700 text-sm">🏪 STORE STATUS</h3>
-                            <div class="text-[10px] font-bold text-slate-400">운영 상태 모니터링</div>
-                        </div>
-                        <div id="store-list" class="space-y-3"></div>
-                    </div>
-                </div>
-
-                <div class="flex-1 min-w-0">
-                    <div id="review-summary" class="mb-4 grid grid-cols-3 gap-3 hidden">
-                        <div class="bg-white rounded-2xl shadow-sm p-4">
-                            <div class="text-[10px] text-slate-400 font-bold">선택 기준 리뷰 수</div>
-                            <div id="summary-count" class="text-xl font-black text-slate-800 mt-1">0</div>
-                        </div>
-                        <div class="bg-white rounded-2xl shadow-sm p-4">
-                            <div class="text-[10px] text-slate-400 font-bold">저평점 리뷰 수</div>
-                            <div id="summary-low" class="text-xl font-black text-red-500 mt-1">0</div>
-                        </div>
-                        <div class="bg-white rounded-2xl shadow-sm p-4">
-                            <div class="text-[10px] text-slate-400 font-bold">최신 리뷰 작성일</div>
-                            <div id="summary-latest" class="text-sm font-black text-emerald-600 mt-2">-</div>
-                        </div>
-                    </div>
-                    <div id="review-container" class="space-y-4"></div>
-                </div>
-            </div>
-        </div>
-
-        <div id="insights-page" class="hidden">
-            <div class="bg-slate-900 rounded-3xl p-6 mb-6 text-white">
-                <div class="flex flex-wrap items-center justify-between gap-3">
-                    <div>
-                        <div class="text-[11px] font-black text-blue-300">INSIGHT DASHBOARD</div>
-                        <h2 id="insight-title" class="text-2xl font-black mt-2">전체 리뷰 인사이트</h2>
-                        <p id="insight-subtitle" class="text-xs text-slate-300 mt-2">SV와 매장 선택 기준으로 리뷰 데이터를 시각화합니다.</p>
-                    </div>
-                    <div class="text-right">
-                        <div class="text-[10px] text-slate-400 font-bold">현재 기준</div>
-                        <div id="insight-scope" class="text-sm font-black mt-1">전체 데이터</div>
-                    </div>
-                </div>
-            </div>
-
-            <div id="insight-kpis" class="grid grid-cols-4 gap-4 mb-6"></div>
-
-            <div class="grid grid-cols-5 gap-6 mb-6">
-                <div class="col-span-3 bg-white rounded-3xl shadow-sm p-6">
-                    <div class="flex items-start justify-between gap-3 mb-5">
-                        <div>
-                            <h3 class="text-base font-black text-slate-800">리뷰 시점 흐름</h3>
-                            <p class="text-[11px] text-slate-400 mt-1">review_date 기준으로 계산한 기간별 리뷰 흐름입니다.</p>
-                        </div>
-                        <div class="text-[10px] text-slate-400 font-bold bg-slate-50 px-3 py-2 rounded-full">Timeline View</div>
-                    </div>
-                    <div id="age-line-chart"></div>
-                </div>
-
-                <div class="col-span-2 bg-white rounded-3xl shadow-sm p-6">
-                    <div class="flex items-start justify-between gap-3 mb-5">
-                        <div>
-                            <h3 class="text-base font-black text-slate-800">별점 분포</h3>
-                            <p class="text-[11px] text-slate-400 mt-1">수집된 리뷰 기준입니다.</p>
-                        </div>
-                        <div class="text-[10px] text-slate-400 font-bold bg-slate-50 px-3 py-2 rounded-full">Rating</div>
-                    </div>
-                    <div id="rating-chart" class="space-y-3"></div>
-                </div>
-            </div>
-
-            <div class="grid grid-cols-5 gap-6">
-                <div class="col-span-3 bg-white rounded-3xl shadow-sm p-6">
-                    <div class="flex items-start justify-between gap-3 mb-5">
-                        <div>
-                            <h3 class="text-base font-black text-slate-800">VOC 키워드 맵</h3>
-                            <p class="text-[11px] text-slate-400 mt-1">많이 언급된 카테고리일수록 크게 표시됩니다.</p>
-                        </div>
-                        <div class="text-[10px] text-slate-400 font-bold bg-slate-50 px-3 py-2 rounded-full">VOC Cloud</div>
-                    </div>
-                    <div id="keyword-cloud" class="flex flex-wrap gap-3"></div>
-                </div>
-
-                <div class="col-span-2 bg-white rounded-3xl shadow-sm p-6">
-                    <div class="flex items-start justify-between gap-3 mb-5">
-                        <div>
-                            <h3 class="text-base font-black text-slate-800">매장별 저평점 리스크</h3>
-                            <p class="text-[11px] text-slate-400 mt-1">LOW 리뷰 수 기준으로 위험도를 표시합니다.</p>
-                        </div>
-                        <div class="text-[10px] text-slate-400 font-bold bg-slate-50 px-3 py-2 rounded-full">Risk</div>
-                    </div>
-                    <div id="store-risk-cards" class="space-y-3"></div>
-                </div>
-            </div>
-        </div>
-    </div>
-
-    <script>
-        const SV_COUNTRY_MAP = {
-            '이여명': ['taiwan', 'singapore', '대만', '싱가포르'],
-            '강소영': ['mongolia', 'netherlands', 'amsterdam', '몽골', '네덜란드'],
-            '소도희': ['australia', 'thailand', 'cambodia', '호주', '태국', '캄보디아'],
-            '최성환': ['indonesia', 'philippines', '인도네시아', '필리핀']
-        };
-
-        const KEYWORD_GROUPS = {
-            food: [
-                '짜장면', '짜장', 'jjajangmyeon', 'jajangmyeon', 'jjajang', 'jajang', 'black bean noodle', 'black noodle',
-                '짬뽕', 'jjamppong', 'jjampong', 'jjam pong', 'jamppong', 'jampong', 'spicy seafood noodle', 'seafood noodle', 'spicy noodle',
-                '탕수육', 'tangsuyuk', 'tangsooyuk', 'tang su yuk', 'tang soo yuk', 'sweet and sour pork', 'fried pork',
-                '우삼겹', 'woosamgyeop', 'woosamgyup', 'woo samgyeop', 'woo samgyup', 'usamgyeop', 'usamgyup', 'beef belly',
-                '삼겹살', 'samgyeopsal', 'samgyupsal', 'samgyeop sal', 'samgyup sal', 'pork belly',
-                '양념갈비', 'yangnyeom galbi', 'yangnyum galbi', 'yangnyeom kalbi', 'marinated galbi', 'marinated ribs', 'galbi', 'kalbi',
-                '김치찌개', 'kimchi jjigae', 'kimchi jigae', 'kimchi stew',
-                '돌솥비빔밥', 'dolsot bibimbap', 'dolsot bibimbab', 'stone bowl bibimbap', 'hot stone bibimbap', 'bibimbap', 'bibimbab',
-                '열탄불고기', 'yeoltan bulgogi', 'yeol tan bulgogi', 'yultan bulgogi', 'grilled bulgogi', 'bulgogi',
-                '7분돼지김치', '7분 돼지김치', 'seven minute pork kimchi', '7 minute pork kimchi', '7-min pork kimchi', 'pork kimchi',
-                '항정살', 'hangjeongsal', 'hangjung sal', 'hangjeong sal', 'pork jowl',
-                '오겹살', 'ogyeopsal', 'ogyupsal', 'ohgyeopsal', 'five layer pork'
-            ],
-            taste: [
-                'flavor', 'flavour', 'taste', 'tasty', 'delicious', 'yummy', 'good taste', 'bad taste',
-                'bland', 'rich', 'savory', 'savoury', 'seasoning', 'seasoned',
-                'salty', 'too salty', 'over salted', 'oversalted', 'salt', 'salted', 'less salt', 'more salt', 'sodium',
-                'cold', 'not hot', 'lukewarm', 'cool', 'served cold',
-                'fresh', 'freshness', 'not fresh', 'stale', 'old',
-                'too', 'too much', 'too spicy', 'too cold', 'too oily', 'too sweet',
-                '맛', '맛있', '맛없', '풍미', '간', '간이', '짜다', '짠', '너무 짜', '소금', '염도',
-                '차갑', '식었', '미지근', '신선', '신선도', '오래된', '너무', '과하게', '지나치게'
-            ],
-            value: [
-                'value', 'worth', 'reasonable', 'expensive', 'cheap', 'price', 'pricing', 'overpriced', 'cost',
-                'quality', 'qality', 'poor quality', 'good quality', 'bad quality', 'standard',
-                'portion', 'small portion', 'large portion', 'quantity', 'amount',
-                '가성비', '가격', '비싸', '저렴', '퀄리티', '품질', '수준', '양', '양이', '적다', '많다'
-            ],
-            service: [
-                'service', 'staff', 'friendly', 'kind', 'rude', 'unfriendly', 'attitude', 'hospitality',
-                'response', 'helpful', 'manager', 'server', 'waiter', 'waitress',
-                '서비스', '직원', '친절', '불친절', '응대', '태도', '매니저'
-            ],
-            operation: [
-                'system', 'process', 'operation', 'queue', 'kiosk', 'payment', 'cashier', 'app', 'table', 'seat',
-                'order', 'ordered', 'ordering', 'wrong order', 'missing order', 'mistake', 'serve', 'served',
-                '운영', '시스템', '프로세스', '결제', '키오스크', '계산', '주문', '오주문', '누락', '서빙', '좌석', '테이블'
-            ],
-            reservation: [
-                'booking', 'reservation', 'reserve', 'reserved', 'booked', 'table booking',
-                'wait', 'waiting', 'long wait', 'queue', 'line',
-                '예약', '웨이팅', '대기', '줄', '기다림'
-            ],
-            hygiene: [
-                'hygiene', 'clean', 'dirty', 'toilet', 'bathroom', 'restroom', 'smell', 'sticky', 'sanitary',
-                '위생', '청결', '더럽', '지저분', '화장실', '냄새', '끈적'
-            ],
-            revisit: [
-                'again', 'come back', 'return', 'revisit', 'visit again', 'never again', 'will be back',
-                '재방문', '다시', '또', '두번', '다시는', '또 올'
-            ],
-            authentic: [
-                'authentic', 'traditional', 'real korean', 'korean style', 'original', 'local taste', 'genuine',
-                'charcoal', 'carcoal', 'char coal', 'coal', 'grill', 'grilled', 'smoky', 'smoke', 'bbq', 'barbecue',
-                '정통', '한국식', '한국 맛', '현지', '오리지널', '숯', '숯불', '그릴', '바비큐'
-            ]
-        };
-
-        let allReviews = [];
-        let allStores = [];
-        let crawlStatus = null;
-        let currentPage = 'reviews';
-        let currentSV = null;
-        let currentSVReviews = [];
-        let currentSVStores = [];
-        let currentStore = 'ALL';
-        let currentCountry = 'ALL';
-        let currentPeriod = 'all';
-        let customPeriodStart = '';
-        let customPeriodEnd = '';
-        let currentSort = 'latest';
-        let currentKeyword = null;
-        let lowRatingOnly = false;
-        let visibleReviewCount = 30;
-
-        const SUPABASE_REST_URL = 'https://fourqytbdjxlpwzgvphy.supabase.co/rest/v1';
-        const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImZvdXJxeXRiZGp4bHB3emd2cGh5Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODUzOTc4MDksImV4cCI6MjEwMDk3MzgwOX0.i762pa8UOS9YTQ5owXylCZhpZ7pgN2UdnsHpAjzXloU';
-        const SUPABASE_PAGE_SIZE = 1000;
-
-        function getSupabaseHeaders(extraHeaders = {}) {
-            return {
-                apikey: SUPABASE_ANON_KEY,
-                Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
-                ...extraHeaders
-            };
-        }
-
-        async function fetchSupabaseRows(table, query = '', range = null) {
-            const headers = getSupabaseHeaders();
-
-            if (range) {
-                headers.Range = `${range.from}-${range.to}`;
-                headers['Range-Unit'] = 'items';
-            }
-
-            const url = `${SUPABASE_REST_URL}/${table}${query ? `?${query}` : ''}`;
-            const response = await fetch(url, { headers });
-
-            if (!response.ok) {
-                const detail = await response.text();
-                throw new Error(`${table} 조회 실패 (${response.status}): ${detail}`);
-            }
-
-            return response.json();
-        }
-
-        async function loadReviewsFromSupabase() {
-            const reviews = [];
-            let from = 0;
-
-            while (true) {
-                const batch = await fetchSupabaseRows(
-                    'reviews',
-                    'select=*',
-                    { from, to: from + SUPABASE_PAGE_SIZE - 1 }
-                );
-
-                reviews.push(...batch);
-
-                if (batch.length < SUPABASE_PAGE_SIZE) break;
-                from += SUPABASE_PAGE_SIZE;
-            }
-
-            return reviews;
-        }
-
-        async function loadStoresFromSupabase() {
-            const rows = await fetchSupabaseRows(
-                'stores',
-                'select=id,brand,country,sv,store_name,google_maps_url,is_active,display_order&is_active=eq.true&order=display_order.asc,store_name.asc'
-            );
-
-            return rows.filter(store => store && store.store_name);
-        }
-
-        function getCrawlRunTimestamp(row) {
-            return row?.last_crawled_at
-                || row?.finished_at
-                || row?.completed_at
-                || row?.created_at
-                || row?.started_at
-                || '';
-        }
-
-        function normalizeCrawlRun(row) {
-            if (!row) return null;
-
-            const failedStores = Array.isArray(row.failed_stores) ? row.failed_stores : [];
-            const stores = Array.isArray(row.stores) ? row.stores : [];
-            const totalStores = row.total_stores ?? row.store_count ?? row.total_count ?? stores.length;
-            const successCount = row.success_count ?? row.succeeded_count ?? row.successful_stores ?? null;
-            const failedCount = row.failed_count ?? row.failure_count ?? row.failed_stores_count ?? failedStores.length;
-
-            return {
-                ...row,
-                last_crawled_at: getCrawlRunTimestamp(row),
-                total_stores: totalStores,
-                success_count: successCount,
-                failed_count: failedCount,
-                failed_stores: failedStores,
-                stores
-            };
-        }
-
-        async function loadLatestCrawlRunFromSupabase() {
-            const orderColumns = ['finished_at', 'last_crawled_at', 'completed_at', 'created_at', 'started_at'];
-
-            for (const column of orderColumns) {
-                try {
-                    const rows = await fetchSupabaseRows(
-                        'crawl_runs',
-                        `select=*&order=${column}.desc&limit=1`
-                    );
-
-                    if (rows.length) return normalizeCrawlRun(rows[0]);
-                } catch (error) {
-                    console.warn(`crawl_runs ${column} 정렬 조회 건너뜀`, error);
-                }
-            }
-
-            const rows = await fetchSupabaseRows('crawl_runs', 'select=*&limit=1000');
-            rows.sort((a, b) => String(getCrawlRunTimestamp(b)).localeCompare(String(getCrawlRunTimestamp(a))));
-            return normalizeCrawlRun(rows[0] || null);
-        }
-
-        async function init() {
-            const status = document.getElementById('status-tag');
-
-            try {
-                const [reviews, stores, latestCrawlRun] = await Promise.all([
-                    loadReviewsFromSupabase(),
-                    loadStoresFromSupabase(),
-                    loadLatestCrawlRunFromSupabase().catch(error => {
-                        console.error('crawl_runs 조회 실패', error);
-                        return null;
-                    })
-                ]);
-
-                allReviews = reviews;
-                allStores = stores;
-                crawlStatus = latestCrawlRun;
-
-                status.innerText = `리뷰 데이터 연결됨`;
-                renderGlobalSummary();
-                renderSvStoreCountSummary();
-                const today = formatDateYmd(new Date());
-                document.getElementById('period-end').value = today;
-                const defaultStart = new Date();
-                defaultStart.setDate(defaultStart.getDate() - 29);
-                document.getElementById('period-start').value = formatDateYmd(defaultStart);
-                document.getElementById('review-container').innerHTML = '<div class="text-center py-20 text-slate-400 font-bold">상단 SV 버튼을 눌러주세요.</div>';
-                renderInsights();
-            } catch (error) {
-                console.error('Supabase 데이터 연결 실패', error);
-                status.innerText = '데이터 연결 실패';
-                status.className = 'px-3 py-1 bg-red-100 rounded-full text-[10px] font-bold text-red-600';
-                document.getElementById('review-container').innerHTML = '<div class="text-center py-20 text-red-400 font-bold">Supabase 리뷰 데이터를 불러오지 못했습니다.</div>';
-            }
-        }
-
-        function switchPage(page) {
-            currentPage = page;
-
-            document.getElementById('reviews-page').classList.toggle('hidden', page !== 'reviews');
-            document.getElementById('insights-page').classList.toggle('hidden', page !== 'insights');
-
-            document.getElementById('reviews-page-tab').classList.toggle('active-page', page === 'reviews');
-            document.getElementById('insights-page-tab').classList.toggle('active-page', page === 'insights');
-
-            if (page === 'insights') renderInsights();
-        }
-
-        function renderGlobalSummary() {
-            document.getElementById('global-summary').classList.remove('hidden');
-
-            const crawledAt = crawlStatus?.last_crawled_at || getLatestCollectedAt(allReviews);
-            const totalStores = crawlStatus?.total_stores || '-';
-            const successCount = crawlStatus?.success_count ?? '-';
-            const failedCount = crawlStatus?.failed_count ?? 0;
-            const failedStores = crawlStatus?.failed_stores || [];
-
-            document.getElementById('global-crawled-at').innerText = crawledAt || '-';
-
-            const statusEl = document.getElementById('global-crawl-status');
-            const failedEl = document.getElementById('global-failed-stores');
-
-            if (crawlStatus) {
-                if (failedCount === 0) {
-                    statusEl.innerText = `성공 ${successCount}/${totalStores}`;
-                    statusEl.className = 'text-sm font-black text-emerald-600 mt-2';
-                    failedEl.classList.add('hidden');
-                    failedEl.innerText = '';
-                } else {
-                    statusEl.innerText = `일부 실패 ${successCount}/${totalStores}`;
-                    statusEl.className = 'text-sm font-black text-red-500 mt-2';
-                    failedEl.classList.remove('hidden');
-                    failedEl.innerText = `실패 매장: ${failedStores.map(s => s.store_name).join(', ')}`;
-                }
-            } else {
-                statusEl.innerText = '크롤링 상태 없음';
-                statusEl.className = 'text-sm font-black text-amber-500 mt-2';
-                failedEl.classList.remove('hidden');
-                failedEl.innerText = 'crawl_runs 최신 실행 기록을 찾지 못했습니다.';
-            }
-        }
-
-        function renderSvStoreCountSummary() {
-            const sourceStores = allStores.length
-                ? allStores
-                : (crawlStatus?.stores?.length
-                    ? crawlStatus.stores
-                    : Array.from(
-                        new Map(
-                            allReviews.map(r => [
-                                r.store_name,
-                                {
-                                    store_name: r.store_name,
-                                    sv: r.sv,
-                                    country: r.country
-                                }
-                            ])
-                        ).values()
-                    ));
-
-            const grouped = {};
-            const countryOrder = {
-                '이여명': ['Taiwan', 'Singapore'],
-                '강소영': ['Mongolia', 'Netherlands'],
-                '소도희': ['Australia', 'Thailand', 'Cambodia'],
-                '최성환': ['Indonesia', 'Philippines']
-            };
-
-            sourceStores.forEach(store => {
-                const sv = store.sv || '미지정';
-                const country = store.country || 'Unknown';
-
-                if (!grouped[sv]) grouped[sv] = {};
-                if (!grouped[sv][country]) grouped[sv][country] = 0;
-
-                grouped[sv][country] += 1;
-            });
-
-            const order = ['이여명', '강소영', '소도희', '최성환'];
-
-            const html = order.map(sv => {
-                const countries = grouped[sv] || {};
-                const total = Object.values(countries).reduce((sum, count) => sum + count, 0);
-                const sortedCountries = [
-                    ...(countryOrder[sv] || []).filter(country => countries[country]),
-                    ...Object.keys(countries).filter(country => !(countryOrder[sv] || []).includes(country)).sort()
-                ];
-
-                return `
-                    <div class="bg-white rounded-2xl shadow-sm p-4">
-                        <div class="flex items-center justify-between mb-3">
-                            <div>
-                                <div class="text-sm font-black text-slate-800">${sv} SV</div>
-                                <div class="text-[10px] text-slate-400 font-bold mt-1">등록 매장 수</div>
-                            </div>
-                            <div class="text-2xl font-black text-blue-600">${total}</div>
-                        </div>
-
-                        <div class="space-y-1">
-                            ${sortedCountries.length
-                                ? sortedCountries.map(country => `
-                                    <div class="flex justify-between text-[11px]">
-                                        <span class="text-slate-500 font-bold">${escapeHtml(country)}</span>
-                                        <span class="text-slate-900 font-black">${countries[country]}개</span>
-                                    </div>
-                                `).join('')
-                                : `<div class="text-[11px] text-slate-400 font-bold">등록 매장 없음</div>`
-                            }
-                        </div>
-                    </div>
-                `;
-            }).join('');
-
-            const target = document.getElementById('sv-store-count-summary');
-            if (target) target.innerHTML = html;
-        }
-
-        function normalizeText(value) {
-            return String(value || '').toLowerCase();
-        }
-
-        function inferCountryText(review) {
-            const combined = [
-                review.store_name,
-                review.country,
-                review.address,
-                review.location,
-                review.city
-            ].map(normalizeText).join(' ');
-
-            return combined;
-        }
-
-        function isReviewMatchedToSV(review, svName) {
-            const keywords = SV_COUNTRY_MAP[svName] || [];
-            const target = inferCountryText(review);
-            return keywords.some(keyword => target.includes(keyword.toLowerCase()));
-        }
-
-        function selectSV(svName, btn) {
-            currentSV = svName;
-            currentStore = 'ALL';
-            currentCountry = 'ALL';
-            currentKeyword = null;
-            lowRatingOnly = false;
-            visibleReviewCount = 30;
-
-            document.querySelectorAll('.sv-tab').forEach(b => b.classList.remove('active-sv'));
-            btn.classList.add('active-sv');
-
-            document.querySelectorAll('.keyword-btn').forEach(b => b.classList.remove('active-keyword'));
-            const lowToggle = document.getElementById('low-rating-toggle');
-            if (lowToggle) lowToggle.classList.remove('active-keyword');
-
-            currentSVStores = allStores.filter(store => String(store.sv || '') === svName);
-            currentSVReviews = allReviews.filter(review =>
-                String(review.sv || '') === svName || isReviewMatchedToSV(review, svName)
-            );
-
-            document.getElementById('current-title').innerText = `${svName} SV 담당 리뷰`;
-            document.getElementById('current-subtitle').innerText = `담당 국가: ${getCountryLabel(svName)}`;
-
-            renderCountryOptions();
-            refreshAllViews();
-        }
-
-        function getCountryLabel(svName) {
-            const labels = {
-                '이여명': '대만 · 싱가포르',
-                '강소영': '몽골 · 네덜란드',
-                '소도희': '호주 · 태국 · 캄보디아',
-                '최성환': '인도네시아 · 필리핀'
-            };
-
-            return labels[svName] || '-';
-        }
-
-        const STORE_URL_MAP = {
-            "Bornga Dunhua South": "https://www.google.com/maps/place/%E6%9C%AC%E5%AE%B6BORNGA%E9%9F%93%E5%BC%8F%E7%87%92%E8%82%89+%E6%95%A6%E5%8D%97%E5%BA%97/@25.044463,121.5499789,17z/data=!3m1!5s0x3442abdb36c3dd57:0x31070c64b44f2f5c!4m8!3m7!1s0x3442ab0779763169:0x584a72379db46e23!8m2!3d25.044463!4d121.5499789!9m1!1b1!16s%2Fg%2F11s9g6zd8p?entry=ttu&g_ep=EgoyMDI2MDUxMS4wIKXMDSoASAFQAw%3D%3D",
-            "Bornga Dunnan Store": "https://www.google.com/maps/place/%E6%9C%AC%E5%AE%B6BORNGA%E9%9F%93%E5%BC%8F%E7%87%92%E8%82%89+%E6%95%A6%E5%8D%97%E5%BA%97/@25.044463,121.5499789,17z/data=!3m1!5s0x3442abdb36c3dd57:0x31070c64b44f2f5c!4m8!3m7!1s0x3442ab0779763169:0x584a72379db46e23!8m2!3d25.044463!4d121.5499789!9m1!1b1!16s%2Fg%2F11s9g6zd8p?entry=ttu&g_ep=EgoyMDI2MDUxMS4wIKXMDSoASAFQAw%3D%3D",
-            "Paik's Noodle Sila": "https://maps.app.goo.gl/58Xyt6L4Ci12sWqS9",
-            "Saemaeul Seoul St.": "https://maps.app.goo.gl/u3fr4P6RS3ZYYyj39",
-            "Saemaeul Naadam": "https://maps.app.goo.gl/oze7kDjJEmwrGADr8",
-            "Saemaeul Emerald": "https://maps.app.goo.gl/hY9a51eS63j1batY7",
-            "Saemaeul Ayud": "https://maps.app.goo.gl/TZkBdJpNoYyAXbVB8"
-        };
-
-        function getGoogleMapsReviewUrl(storeName) {
-            if (STORE_URL_MAP[storeName]) {
-                return STORE_URL_MAP[storeName];
-            }
-
-            const storeMaster = allStores.find(store => store.store_name === storeName);
-            if (storeMaster?.google_maps_url) {
-                return storeMaster.google_maps_url;
-            }
-
-            const reviews = currentSVReviews.length ? currentSVReviews : allReviews;
-            const matched = reviews.find(
-                r => (r.store_name || "Unknown Store") === storeName
-            );
-
-            if (matched && matched.url) {
-                return matched.url;
-            }
-
-            const query = encodeURIComponent(`${storeName} Google Maps reviews`);
-            return `https://www.google.com/maps/search/?api=1&query=${query}`;
-        }
-
-
-        function parseReviewDate(review) {
-            const raw = String(review?.review_date || estimateGoogleReviewDate(review) || '').trim();
-            const match = raw.match(/^(\d{4})-(\d{2})-(\d{2})$/);
-            if (!match) return null;
-            const date = new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]));
-            return Number.isNaN(date.getTime()) ? null : date;
-        }
-
-        function startOfDay(date) {
-            return new Date(date.getFullYear(), date.getMonth(), date.getDate());
-        }
-
-        function getPeriodRange() {
-            const today = startOfDay(new Date());
-
-            if (currentPeriod === 'all') return { start: null, end: null, label: '전체 기간' };
-            if (currentPeriod === 'today') return { start: today, end: today, label: '오늘' };
-
-            if (currentPeriod === '7d' || currentPeriod === '30d') {
-                const days = currentPeriod === '7d' ? 7 : 30;
-                const start = new Date(today);
-                start.setDate(start.getDate() - (days - 1));
-                return { start, end: today, label: `최근 ${days}일` };
-            }
-
-            if (currentPeriod === 'this-month') {
-                return {
-                    start: new Date(today.getFullYear(), today.getMonth(), 1),
-                    end: today,
-                    label: '이번 달'
-                };
-            }
-
-            if (currentPeriod === 'last-month') {
-                return {
-                    start: new Date(today.getFullYear(), today.getMonth() - 1, 1),
-                    end: new Date(today.getFullYear(), today.getMonth(), 0),
-                    label: '지난달'
-                };
-            }
-
-            if (currentPeriod === 'custom') {
-                const start = parseCollectedDate(customPeriodStart);
-                const end = parseCollectedDate(customPeriodEnd);
-                return {
-                    start,
-                    end,
-                    label: start && end ? `${formatDateYmd(start)} ~ ${formatDateYmd(end)}` : '직접 선택'
-                };
-            }
-
-            return { start: null, end: null, label: '전체 기간' };
-        }
-
-        function filterByPeriod(data) {
-            const { start, end } = getPeriodRange();
-            if (!start || !end) return data;
-
-            return data.filter(review => {
-                const date = parseReviewDate(review);
-                return date && date >= start && date <= end;
-            });
-        }
-
-        function filterByCountry(data) {
-            if (currentCountry === 'ALL') return data;
-            return data.filter(review => String(review.country || '').toLowerCase() === currentCountry.toLowerCase());
-        }
-
-        function getCountryFilteredSVReviews() {
-            return filterByCountry(currentSVReviews);
-        }
-
-        function getStoreListSourceReviews() {
-            return filterByPeriod(getCountryFilteredSVReviews());
-        }
-
-        function getCurrentStoreMaster() {
-            let stores = currentSVStores;
-
-            if (currentCountry !== 'ALL') {
-                stores = stores.filter(store =>
-                    String(store.country || '').toLowerCase() === currentCountry.toLowerCase()
-                );
-            }
-
-            return stores;
-        }
-
-        function getLatestRunStoreResult(storeName) {
-            return (crawlStatus?.stores || []).find(store => store.store_name === storeName) || null;
-        }
-
-        function renderCountryOptions() {
-            const select = document.getElementById('country-select');
-            const countrySource = currentSVStores.length ? currentSVStores : currentSVReviews;
-            const countries = [...new Set(countrySource.map(item => item.country).filter(Boolean))].sort();
-            select.innerHTML = `<option value="ALL">전체 국가</option>` + countries.map(country =>
-                `<option value="${escapeHtml(country)}">${escapeHtml(country)}</option>`
-            ).join('');
-            select.value = currentCountry;
-            document.getElementById('country-filter-label').innerText = currentCountry === 'ALL' ? '전체 국가' : currentCountry;
-        }
-
-        function handleCountryChange() {
-            currentCountry = document.getElementById('country-select').value;
-            currentStore = 'ALL';
-            visibleReviewCount = 30;
-            document.getElementById('country-filter-label').innerText = currentCountry === 'ALL' ? '전체 국가' : currentCountry;
-            refreshAllViews();
-        }
-
-        function setPeriodFilter(period, btn) {
-            currentPeriod = period;
-            visibleReviewCount = 30;
-            document.querySelectorAll('.period-btn').forEach(b => b.classList.remove('active-filter'));
-            if (btn) btn.classList.add('active-filter');
-            document.getElementById('custom-period-box').classList.toggle('hidden', period !== 'custom');
-
-            if (period !== 'custom') {
-                document.getElementById('period-filter-label').innerText = getPeriodRange().label;
-                refreshAllViews();
-            }
-        }
-
-        function applyCustomPeriod() {
-            customPeriodStart = document.getElementById('period-start').value;
-            customPeriodEnd = document.getElementById('period-end').value;
-
-            if (!customPeriodStart || !customPeriodEnd) {
-                alert('시작일과 종료일을 모두 선택해주세요.');
-                return;
-            }
-
-            if (customPeriodStart > customPeriodEnd) {
-                alert('시작일은 종료일보다 늦을 수 없습니다.');
-                return;
-            }
-
-            currentPeriod = 'custom';
-            document.getElementById('period-filter-label').innerText = getPeriodRange().label;
-            visibleReviewCount = 30;
-            refreshAllViews();
-        }
-
-        function refreshAllViews() {
-            const storeMaster = getCurrentStoreMaster();
-            const storeReviewSource = getStoreListSourceReviews();
-
-            if (currentStore !== 'ALL') {
-                const exists = storeMaster.some(store => store.store_name === currentStore);
-                if (!exists) currentStore = 'ALL';
-            }
-
-            renderStoreList(storeMaster, storeReviewSource);
-            refreshCurrentReviews();
-            renderKeywordStats();
-            renderInsights();
-        }
-
-        function getKeywordStatBaseReviews() {
-            let data = getCurrentBaseReviews();
-            data = filterLowRatings(data);
-            return data;
-        }
-
-        function renderKeywordStats() {
-            const panel = document.getElementById('keyword-stat-panel');
-            const grid = document.getElementById('keyword-stat-grid');
-
-            if (!currentSV) {
-                panel.classList.add('hidden');
-                return;
-            }
-
-            panel.classList.remove('hidden');
-            const data = getKeywordStatBaseReviews();
-            const labelMap = {
-                food: '메뉴/음식',
-                taste: '맛',
-                value: '가격/가치',
-                service: '서비스',
-                operation: '운영',
-                reservation: '예약/대기',
-                hygiene: '위생',
-                revisit: '재방문',
-                authentic: '정통성'
-            };
-
-            const stats = Object.keys(KEYWORD_GROUPS).map(key => {
-                const keywords = KEYWORD_GROUPS[key] || [];
-                const count = data.filter(review => {
-                    const text = normalizeText(review.text || '');
-                    return keywords.some(keyword => text.includes(keyword.toLowerCase()));
-                }).length;
-                return { key, label: labelMap[key] || key, count };
-            }).sort((a, b) => b.count - a.count);
-
-            document.getElementById('keyword-stat-scope').innerText =
-                `${getPeriodRange().label} · ${currentCountry === 'ALL' ? '전체 국가' : currentCountry} · ${currentStore === 'ALL' ? '전체 매장' : currentStore}${lowRatingOnly ? ' · 3점 이하' : ''}`;
-
-            grid.innerHTML = stats.map(item => `
-                <button onclick="applyKeywordFromInsight('${item.key}')" class="rounded-2xl border border-slate-100 bg-slate-50 p-4 text-left hover:border-slate-300 transition-all">
-                    <div class="text-[10px] text-slate-400 font-bold">${escapeHtml(item.label)}</div>
-                    <div class="text-xl font-black text-slate-800 mt-1">${item.count}<span class="text-xs ml-1 text-slate-400">건</span></div>
-                </button>
-            `).join('');
-        }
-
-        function renderStoreList(storeMaster, reviewData) {
-            const storeListDiv = document.getElementById('store-list');
-            const stores = [...storeMaster].sort((a, b) => {
-                const orderA = Number(a.display_order || 0);
-                const orderB = Number(b.display_order || 0);
-                if (orderA !== orderB) return orderA - orderB;
-                return String(a.store_name || '').localeCompare(String(b.store_name || ''));
-            });
-
-            if (!stores.length) {
-                storeListDiv.innerHTML = `
-                    <div class="text-center py-10 text-slate-400 text-xs">
-                        등록된 매장 데이터 없음
-                    </div>
-                `;
-                document.getElementById('review-summary').classList.add('hidden');
-                document.getElementById('review-container').innerHTML = `
-                    <div class="text-center py-20 text-slate-400">
-                        해당 SV·국가 조건에 등록된 매장이 없습니다.
-                    </div>
-                `;
-                return;
-            }
-
-            const cards = stores.map(store => {
-                const storeName = store.store_name || 'Unknown Store';
-                const reviews = reviewData.filter(
-                    review => (review.store_name || 'Unknown Store') === storeName
-                );
-
-                const totalReviews = reviews.length;
-                const lowReviews = reviews.filter(review => Number(review.rating || 0) <= 3).length;
-                const latestRunResult = getLatestRunStoreResult(storeName);
-                const newReviews = Number(latestRunResult?.collected_count || 0);
-                const latestReview = getLatestReviewDate(reviews);
-                const recent7Days = reviews.filter(review => {
-                    const date = parseReviewDate(review);
-                    if (!date) return false;
-                    const today = startOfDay(new Date());
-                    const start = new Date(today);
-                    start.setDate(start.getDate() - 6);
-                    return date >= start && date <= today;
-                }).length;
-                const isActive = currentStore === storeName;
-                const mapsUrl = store.google_maps_url || getGoogleMapsReviewUrl(storeName);
-
-                const statusBadge = totalReviews === 0
-                    ? `<div class="px-2 py-1 rounded-full bg-slate-100 text-slate-500 text-[10px] font-black">리뷰 0건</div>`
-                    : (lowReviews > 0
-                        ? `<div class="px-2 py-1 rounded-full bg-red-100 text-red-600 text-[10px] font-black">LOW ${lowReviews}</div>`
-                        : `<div class="px-2 py-1 rounded-full bg-emerald-100 text-emerald-600 text-[10px] font-black">SAFE</div>`);
-
-                return `
-                    <div
-                        class="
-                            store-btn
-                            rounded-2xl
-                            border
-                            transition-all
-                            p-4
-                            ${isActive
-                                ? 'border-blue-500 bg-blue-50'
-                                : 'border-slate-200 bg-white hover:bg-slate-50'}
-                        "
-                    >
-                        <button
-                            onclick="filterStore('${escapeForOnclick(storeName)}')"
-                            class="w-full text-left"
-                        >
-                            <div class="flex items-start justify-between gap-2">
-                                <div class="min-w-0">
-                                    <div class="text-sm font-black text-slate-800 leading-snug">
-                                        ${escapeHtml(storeName)}
-                                    </div>
-                                    <div class="text-[10px] text-slate-400 mt-1">
-                                        최근 리뷰: ${escapeHtml(latestReview)}
-                                    </div>
-                                </div>
-
-                                <div class="flex flex-col items-end gap-1 shrink-0">
-                                    ${newReviews > 0
-                                        ? `<div class="px-2 py-1 rounded-full bg-blue-100 text-blue-600 text-[10px] font-black">NEW ${newReviews}</div>`
-                                        : ''
-                                    }
-                                    ${statusBadge}
-                                </div>
-                            </div>
-
-                            <div class="grid grid-cols-2 gap-2 mt-4">
-                                <div class="bg-slate-50 rounded-xl p-3">
-                                    <div class="text-[10px] text-slate-400 font-bold">전체 리뷰</div>
-                                    <div class="text-lg font-black text-slate-800 mt-1">${totalReviews}</div>
-                                </div>
-
-                                <div class="bg-slate-50 rounded-xl p-3">
-                                    <div class="text-[10px] text-slate-400 font-bold">최근 7일</div>
-                                    <div class="text-lg font-black text-blue-600 mt-1">${recent7Days}</div>
-                                </div>
-                            </div>
-                        </button>
-
-                        <a
-                            href="${mapsUrl}"
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            class="mt-3 block w-full text-center rounded-xl bg-slate-900 text-white text-[11px] font-black py-2 hover:opacity-80 transition-all"
-                        >
-                            Google Maps 리뷰 열기 ↗
-                        </a>
-                    </div>
-                `;
-            });
-
-            storeListDiv.innerHTML = `
-                <div
-                    class="
-                        store-btn
-                        rounded-2xl
-                        border
-                        p-4
-                        mb-3
-                        transition-all
-                        ${currentStore === 'ALL'
-                            ? 'border-blue-500 bg-blue-50'
-                            : 'border-slate-200 bg-white hover:bg-slate-50'}
-                    "
-                >
-                    <button onclick="filterStore('ALL')" class="w-full text-left">
-                        <div class="flex items-center justify-between">
-                            <div>
-                                <div class="text-sm font-black text-slate-800">🌍 전체 매장</div>
-                                <div class="text-[10px] text-slate-400 mt-1">전체 리뷰 모니터링</div>
-                            </div>
-                            <div class="text-xl font-black text-slate-800">${reviewData.length}</div>
-                        </div>
-                    </button>
-                </div>
-                ${cards.join('')}
-            `;
-        }
-
-        function filterStore(name) {
-            currentStore = name;
-            visibleReviewCount = 30;
-
-            refreshAllViews();
-        }
-
-        function applyKeywordFilter(keywordKey, btn) {
-            currentKeyword = keywordKey;
-            visibleReviewCount = 30;
-
-            document.querySelectorAll('.keyword-btn').forEach(b => b.classList.remove('active-keyword'));
-            if (btn) btn.classList.add('active-keyword');
-
-            refreshCurrentReviews();
-            renderKeywordStats();
-            renderInsights();
-        }
-
-        function toggleLowRatingMode(btn) {
-            lowRatingOnly = !lowRatingOnly;
-            visibleReviewCount = 30;
-
-            if (lowRatingOnly) {
-                btn.classList.add('active-keyword');
-            } else {
-                btn.classList.remove('active-keyword');
-            }
-
-            refreshCurrentReviews();
-            renderKeywordStats();
-            renderInsights();
-        }
-
-        function clearKeywordFilter() {
-            currentKeyword = null;
-            visibleReviewCount = 30;
-
-            document.querySelectorAll('.keyword-btn').forEach(b => b.classList.remove('active-keyword'));
-
-            refreshCurrentReviews();
-            renderKeywordStats();
-            renderInsights();
-        }
-
-        function filterByKeyword(data) {
-            if (!currentKeyword) return data;
-
-            const keywords = KEYWORD_GROUPS[currentKeyword] || [];
-
-            return data.filter(review => {
-                const text = normalizeText(review.text || '');
-                return keywords.some(keyword => text.includes(keyword.toLowerCase()));
-            });
-        }
-
-        function filterLowRatings(data) {
-            if (!lowRatingOnly) return data;
-            return data.filter(review => Number(review.rating || 0) <= 3);
-        }
-
-        function loadMoreReviews() {
-            visibleReviewCount += 30;
-            refreshCurrentReviews();
-        }
-
-        function getCurrentBaseReviews() {
-            let data = currentSV ? currentSVReviews : allReviews;
-            data = filterByCountry(data);
-            data = filterByPeriod(data);
-
-            if (currentStore !== 'ALL') {
-                data = data.filter(r => (r.store_name || 'Unknown Store') === currentStore);
-            }
-
-            return data;
-        }
-
-        function getCurrentFilteredReviews() {
-            let data = getCurrentBaseReviews();
-            data = filterByKeyword(data);
-            data = filterLowRatings(data);
-            return data;
-        }
-
-        function refreshCurrentReviews() {
-            if (!currentSV) {
-                document.getElementById('review-container').innerHTML = '<div class="text-center py-20 text-slate-400 font-bold">상단 SV 버튼을 눌러주세요.</div>';
-                return;
-            }
-
-            const data = getCurrentFilteredReviews();
-
-            renderReviews(data, currentStore === 'ALL' ? '전체' : currentStore);
-        }
-
-        function handleSortChange() {
-            currentSort = document.getElementById('sort-select').value;
-            visibleReviewCount = 30;
-            refreshCurrentReviews();
-        }
-
-        function sortReviews(data) {
-            const copied = [...data];
-
-            if (currentSort === 'rating-high') {
-                return copied.sort((a, b) => Number(b.rating || 0) - Number(a.rating || 0));
-            }
-
-            if (currentSort === 'rating-low') {
-                return copied.sort((a, b) => Number(a.rating || 0) - Number(b.rating || 0));
-            }
-
-            const toTime = review => parseReviewDate(review)?.getTime() || 0;
-
-            if (currentSort === 'oldest') {
-                return copied.sort((a, b) => toTime(a) - toTime(b));
-            }
-
-            return copied.sort((a, b) => toTime(b) - toTime(a));
-        }
-
-        function estimateDateAgeScore(dateText) {
-            const text = normalizeText(dateText);
-
-            if (!text || text === 'unknown' || text === 'recent') return 999999;
-
-            const numMatch = text.match(/\d+/);
-            const num = numMatch ? Number(numMatch[0]) : 1;
-
-            if (text.includes('second') || text.includes('minute') || text.includes('hour')) return 0;
-            if (text.includes('초') || text.includes('분') || text.includes('시간')) return 0;
-            if (text.includes('dag') || text.includes('day') || text.includes('일')) return num;
-            if (text.includes('week') || text.includes('weken') || text.includes('주')) return num * 7;
-            if (text.includes('month') || text.includes('maand') || text.includes('maanden') || text.includes('개월')) return num * 30;
-            if (text.includes('year') || text.includes('jaar') || text.includes('년')) return num * 365;
-
-            return 999999;
-        }
-
-        function getLatestCollectedAt(data) {
-            const values = data.map(r => r.collected_at).filter(Boolean).sort().reverse();
-            return values[0] || '-';
-        }
-
-        function parseCollectedDate(value) {
-            const raw = String(value || '').trim();
-            const match = raw.match(/(\d{4})-(\d{2})-(\d{2})/);
-
-            if (!match) return null;
-
-            return new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]));
-        }
-
-        function formatDateYmd(date) {
-            if (!(date instanceof Date) || Number.isNaN(date.getTime())) return '-';
-
-            const year = date.getFullYear();
-            const month = String(date.getMonth() + 1).padStart(2, '0');
-            const day = String(date.getDate()).padStart(2, '0');
-
-            return `${year}-${month}-${day}`;
-        }
-
-        function estimateGoogleReviewDate(review) {
-            if (review?.review_date) return review.review_date;
-
-            const baseDate = parseCollectedDate(review?.collected_at);
-
-            if (!baseDate) {
-                return review?.date || 'Unknown';
-            }
-
-            const text = normalizeText(review?.date || '');
-
-            if (!text || text === 'unknown' || text === 'recent') {
-                return formatDateYmd(baseDate);
-            }
-
-            let offsetDays = 0;
-            const numMatch = text.match(/\d+/);
-            const num = numMatch ? Number(numMatch[0]) : 1;
-
-            if (
-                text.includes('second') ||
-                text.includes('minute') ||
-                text.includes('hour') ||
-                text.includes('초') ||
-                text.includes('분') ||
-                text.includes('시간')
-            ) {
-                offsetDays = 0;
-            } else if (
-                text.includes('yesterday') ||
-                text.includes('어제')
-            ) {
-                offsetDays = 1;
-            } else if (
-                text.includes('dag') ||
-                text.includes('day') ||
-                text.includes('일') ||
-                text.includes('hari')
-            ) {
-                offsetDays = num;
-            } else if (
-                text.includes('week') ||
-                text.includes('weken') ||
-                text.includes('주') ||
-                text.includes('minggu')
-            ) {
-                offsetDays = num * 7;
-            } else if (
-                text.includes('month') ||
-                text.includes('maand') ||
-                text.includes('maanden') ||
-                text.includes('개월') ||
-                text.includes('bulan')
-            ) {
-                offsetDays = num * 30;
-            } else if (
-                text.includes('year') ||
-                text.includes('jaar') ||
-                text.includes('년') ||
-                text.includes('tahun')
-            ) {
-                offsetDays = num * 365;
-            }
-
-            const estimatedDate = new Date(baseDate);
-            estimatedDate.setDate(estimatedDate.getDate() - offsetDays);
-
-            return formatDateYmd(estimatedDate);
-        }
-
-        function getLatestReviewDate(data) {
-            const dated = data
-                .map(review => ({ review, date: parseReviewDate(review) }))
-                .filter(item => item.date)
-                .sort((a, b) => b.date - a.date);
-
-            return dated[0] ? formatDateYmd(dated[0].date) : '-';
-        }
-
-        function renderReviews(data, selectedStoreLabel) {
-            const sorted = sortReviews(data);
-            const visibleReviews = sorted.slice(0, visibleReviewCount);
-            const container = document.getElementById('review-container');
-
-            renderSummary(sorted, selectedStoreLabel);
-
-            if (!sorted.length) {
-                container.innerHTML = '<div class="text-center py-20 text-slate-400 font-bold">표시할 리뷰가 없습니다.</div>';
-                return;
-            }
-
-            container.innerHTML = visibleReviews.map(r => {
-                const rating = Number(r.rating || 5);
-                const safeRating = Math.max(0, Math.min(5, Math.round(rating)));
-                const stars = '★'.repeat(safeRating) + '☆'.repeat(5 - safeRating);
-                const lowRatingClass = rating <= 3 ? 'border-red-200 bg-red-50/40' : 'border-slate-100 bg-white';
-
-                return `
-                    <div class="${lowRatingClass} p-5 rounded-2xl shadow-sm border">
-                        <div class="flex justify-between items-start gap-3 mb-3">
-                            <div>
-                                <div class="flex flex-wrap items-center gap-2">
-                                    <span class="text-[10px] font-bold text-blue-600 bg-blue-50 px-2 py-0.5 rounded">${escapeHtml(r.store_name || 'Unknown Store')}</span>
-                                    <span class="text-[10px] font-bold text-slate-500 bg-slate-100 px-2 py-0.5 rounded">${escapeHtml(r.author || 'Anonymous')}</span>
-                                    ${rating <= 3 ? '<span class="text-[10px] font-black text-red-600 bg-red-100 px-2 py-0.5 rounded">LOW RATING</span>' : ''}
-                                </div>
-                                <div class="text-[10px] text-slate-400 mt-2">
-                                    Google 작성일: ${escapeHtml(estimateGoogleReviewDate(r))}
-                                </div>
-                            </div>
-                            <div class="text-right shrink-0">
-                                <div class="text-amber-400 text-xs font-black">${stars}</div>
-                                <div class="text-[10px] text-slate-400 mt-1">${rating.toFixed(1)}</div>
-                            </div>
-                        </div>
-
-                        ${
-                            r.text
-                                ? `<p class="text-sm text-slate-700 leading-relaxed whitespace-pre-line">${highlightKeywords(escapeHtml(r.text))}</p>`
-                                : `<div class="rounded-xl bg-slate-50 border border-slate-100 px-4 py-3 text-xs font-bold text-slate-400">리뷰 내용 없음 · 별점만 등록된 리뷰</div>`
-                        }
-                    </div>
-                `;
-            }).join('');
-
-            if (sorted.length > visibleReviewCount) {
-                container.innerHTML += `
-                    <div class="flex justify-center pt-2">
-                        <button onclick="loadMoreReviews()" class="px-5 py-3 rounded-xl bg-slate-900 text-white text-xs font-black hover:opacity-80 transition-all">
-                            리뷰 더보기 (${sorted.length - visibleReviewCount}개 남음)
-                        </button>
-                    </div>
-                `;
-            }
-        }
-
-        function highlightKeywords(text) {
-            if (!currentKeyword) return text;
-
-            const keywords = KEYWORD_GROUPS[currentKeyword] || [];
-            let result = text;
-
-            keywords.forEach(keyword => {
-                const escapedKeyword = escapeRegex(keyword);
-                const regex = new RegExp(`(${escapedKeyword})`, 'gi');
-                result = result.replace(regex, '<mark class="bg-yellow-200 rounded px-0.5">$1</mark>');
-            });
-
-            return result;
-        }
-
-        function renderSummary(data, selectedStoreLabel) {
-            const box = document.getElementById('review-summary');
-            box.classList.remove('hidden');
-
-            const count = data.length;
-            const lowCount = data.filter(r => Number(r.rating || 0) <= 3).length;
-
-            document.getElementById('summary-count').innerText = count;
-            document.getElementById('summary-low').innerText = lowCount;
-            document.getElementById('summary-latest').innerText = getLatestReviewDate(data);
-        }
-
-        function renderInsights() {
-            const data = getCurrentFilteredReviews();
-            const baseData = getCurrentBaseReviews();
-
-            const totalCount = data.length;
-            const lowCount = data.filter(r => Number(r.rating || 0) <= 3).length;
-            const recent7 = data.filter(r => {
-                const date = parseReviewDate(r);
-                if (!date) return false;
-                const today = startOfDay(new Date());
-                const start = new Date(today);
-                start.setDate(start.getDate() - 6);
-                return date >= start && date <= today;
-            }).length;
-            const latestReview = getLatestReviewDate(data);
-
-            const scopeLabel = currentSV
-                ? `${currentSV} SV · ${currentCountry === 'ALL' ? '전체 국가' : currentCountry} · ${currentStore === 'ALL' ? '전체 매장' : currentStore} · ${getPeriodRange().label}`
-                : `전체 데이터 · ${getPeriodRange().label}`;
-
-            document.getElementById('insight-title').innerText = currentSV ? `${currentSV} SV 리뷰 인사이트` : '전체 리뷰 인사이트';
-            document.getElementById('insight-subtitle').innerText = currentKeyword
-                ? `현재 키워드 필터 적용: ${currentKeyword.toUpperCase()}`
-                : 'SV와 매장 선택 기준으로 리뷰 데이터를 시각화합니다.';
-            document.getElementById('insight-scope').innerText = scopeLabel;
-
-            document.getElementById('insight-kpis').innerHTML = `
-                <div class="bg-white rounded-2xl shadow-sm p-4">
-                    <div class="text-[10px] text-slate-400 font-bold">선택 기준 리뷰 수</div>
-                    <div class="text-2xl font-black text-slate-800 mt-1">${totalCount}</div>
-                </div>
-                <div class="bg-white rounded-2xl shadow-sm p-4">
-                    <div class="text-[10px] text-slate-400 font-bold">저평점 리뷰 수</div>
-                    <div class="text-2xl font-black text-red-500 mt-1">${lowCount}</div>
-                </div>
-                <div class="bg-white rounded-2xl shadow-sm p-4">
-                    <div class="text-[10px] text-slate-400 font-bold">최근 7일 리뷰</div>
-                    <div class="text-2xl font-black text-blue-600 mt-1">${recent7}</div>
-                </div>
-                <div class="bg-white rounded-2xl shadow-sm p-4">
-                    <div class="text-[10px] text-slate-400 font-bold">최신 리뷰 작성일</div>
-                    <div class="text-sm font-black text-emerald-600 mt-2">${escapeHtml(latestReview)}</div>
-                </div>
-            `;
-
-            renderAgeLineChart(data);
-            renderRatingChart(data);
-            renderKeywordCloud(data);
-            renderStoreRiskCards(baseData);
-        }
-
-        function getAgeBuckets(data) {
-            const buckets = [
-                { label: '최근 7일', count: 0 },
-                { label: '8~30일', count: 0 },
-                { label: '1~3개월', count: 0 },
-                { label: '3~6개월', count: 0 },
-                { label: '6개월+', count: 0 }
-            ];
-
-            const today = startOfDay(new Date());
-
-            data.forEach(review => {
-                const date = parseReviewDate(review);
-                if (!date) return;
-
-                const score = Math.max(0, Math.floor((today - date) / 86400000));
-
-                if (score <= 7) buckets[0].count += 1;
-                else if (score <= 30) buckets[1].count += 1;
-                else if (score <= 90) buckets[2].count += 1;
-                else if (score <= 180) buckets[3].count += 1;
-                else buckets[4].count += 1;
-            });
-
-            return buckets;
-        }
-
-        function renderAgeLineChart(data) {
-            const container = document.getElementById('age-line-chart');
-            const buckets = getAgeBuckets(data);
-            const max = Math.max(...buckets.map(b => b.count), 1);
-
-            if (!data.length) {
-                container.innerHTML = '<div class="text-center py-12 text-xs text-slate-400 font-bold">표시할 데이터가 없습니다.</div>';
-                return;
-            }
-
-            const width = 680;
-            const height = 220;
-            const paddingX = 48;
-            const paddingY = 30;
-            const plotWidth = width - paddingX * 2;
-            const plotHeight = height - paddingY * 2;
-
-            const points = buckets.map((b, index) => {
-                const x = paddingX + (plotWidth / (buckets.length - 1)) * index;
-                const y = paddingY + plotHeight - ((b.count / max) * plotHeight);
-                return { ...b, x, y };
-            });
-
-            const polyline = points.map(p => `${p.x},${p.y}`).join(' ');
-
-            container.innerHTML = `
-                <div class="rounded-3xl bg-slate-50 p-4">
-                    <svg viewBox="0 0 ${width} ${height}" class="w-full h-[260px]">
-                        <line x1="${paddingX}" y1="${height - paddingY}" x2="${width - paddingX}" y2="${height - paddingY}" stroke="#CBD5E1" stroke-width="1" />
-                        <line x1="${paddingX}" y1="${paddingY}" x2="${paddingX}" y2="${height - paddingY}" stroke="#CBD5E1" stroke-width="1" />
-
-                        <polyline points="${polyline}" fill="none" stroke="#111827" stroke-width="5" stroke-linecap="round" stroke-linejoin="round" />
-
-                        ${points.map(p => `
-                            <circle cx="${p.x}" cy="${p.y}" r="8" fill="#111827"></circle>
-                            <circle cx="${p.x}" cy="${p.y}" r="4" fill="#ffffff"></circle>
-                            <text x="${p.x}" y="${p.y - 16}" text-anchor="middle" fill="#0F172A" font-size="16" font-weight="900">${p.count}</text>
-                            <text x="${p.x}" y="${height - 8}" text-anchor="middle" fill="#64748B" font-size="13" font-weight="700">${p.label}</text>
-                        `).join('')}
-                    </svg>
-                </div>
-            `;
-        }
-
-        function renderRatingChart(data) {
-            const buckets = [
-                { label: '5점', count: 0 },
-                { label: '4점', count: 0 },
-                { label: '3점', count: 0 },
-                { label: '2점', count: 0 },
-                { label: '1점', count: 0 }
-            ];
-
-            data.forEach(r => {
-                const rating = Math.max(1, Math.min(5, Math.round(Number(r.rating || 0))));
-                const target = buckets.find(b => b.label === `${rating}점`);
-                if (target) target.count += 1;
-            });
-
-            renderBarList('rating-chart', buckets);
-        }
-
-        function renderKeywordCloud(data) {
-            const container = document.getElementById('keyword-cloud');
-
-            const labelMap = {
-                food: 'Food',
-                taste: 'Taste',
-                value: 'Value',
-                service: 'Service',
-                operation: 'Operation',
-                reservation: 'Reservation',
-                hygiene: 'Hygiene',
-                revisit: 'Revisit',
-                authentic: 'Authentic'
-            };
-
-            const rows = Object.keys(KEYWORD_GROUPS).map(key => {
-                const keywords = KEYWORD_GROUPS[key] || [];
-                const count = data.filter(r => {
-                    const text = normalizeText(r.text || '');
-                    return keywords.some(keyword => text.includes(keyword.toLowerCase()));
-                }).length;
-
-                return { key, label: labelMap[key] || key, count };
-            }).sort((a, b) => b.count - a.count);
-
-            const max = Math.max(...rows.map(r => r.count), 1);
-
-            if (!rows.length || rows.every(r => r.count === 0)) {
-                container.innerHTML = '<div class="text-center py-12 text-xs text-slate-400 font-bold w-full">표시할 데이터가 없습니다.</div>';
-                return;
-            }
-
-            container.innerHTML = rows.map(row => {
-                const level = row.count / max;
-                const sizeClass = level >= 0.75
-                    ? 'text-2xl px-6 py-5'
-                    : level >= 0.5
-                        ? 'text-xl px-5 py-4'
-                        : level >= 0.25
-                            ? 'text-base px-4 py-3'
-                            : 'text-sm px-3 py-2';
-
-                const toneClass = row.count === 0
-                    ? 'bg-slate-50 text-slate-300 border-slate-100'
-                    : level >= 0.75
-                        ? 'bg-slate-900 text-white border-slate-900'
-                        : level >= 0.5
-                            ? 'bg-blue-50 text-blue-700 border-blue-100'
-                            : level >= 0.25
-                                ? 'bg-amber-50 text-amber-700 border-amber-100'
-                                : 'bg-slate-50 text-slate-600 border-slate-100';
-
-                return `
-                    <button
-                        onclick="applyKeywordFromInsight('${row.key}')"
-                        class="rounded-3xl border ${toneClass} ${sizeClass} font-black transition-all hover:-translate-y-0.5"
-                    >
-                        #${escapeHtml(row.label)}
-                        <span class="ml-2 opacity-70">${row.count}</span>
-                    </button>
-                `;
-            }).join('');
-        }
-
-        function applyKeywordFromInsight(keywordKey) {
-            currentKeyword = keywordKey;
-            visibleReviewCount = 30;
-
-            document.querySelectorAll('.keyword-btn').forEach(b => {
-                b.classList.remove('active-keyword');
-                if (b.getAttribute('onclick')?.includes(`'${keywordKey}'`)) {
-                    b.classList.add('active-keyword');
-                }
-            });
-
-            refreshCurrentReviews();
-            renderInsights();
-        }
-
-        function renderStoreRiskCards(data) {
-            const container = document.getElementById('store-risk-cards');
-            const stores = [...new Set(data.map(r => r.store_name || 'Unknown Store'))];
-
-            const rows = stores.map(storeName => {
-                const reviews = data.filter(r => (r.store_name || 'Unknown Store') === storeName);
-                const lowCount = reviews.filter(r => Number(r.rating || 0) <= 3).length;
-                const totalCount = reviews.length;
-
-                let riskLabel = 'SAFE';
-                let riskClass = 'bg-emerald-50 text-emerald-700 border-emerald-100';
-
-                if (lowCount >= 10) {
-                    riskLabel = 'HIGH RISK';
-                    riskClass = 'bg-red-50 text-red-700 border-red-100';
-                } else if (lowCount >= 3) {
-                    riskLabel = 'WATCH';
-                    riskClass = 'bg-amber-50 text-amber-700 border-amber-100';
-                }
-
-                return {
-                    storeName,
-                    lowCount,
-                    totalCount,
-                    riskLabel,
-                    riskClass
-                };
-            }).sort((a, b) => b.lowCount - a.lowCount);
-
-            if (!rows.length) {
-                container.innerHTML = '<div class="text-center py-12 text-xs text-slate-400 font-bold">표시할 데이터가 없습니다.</div>';
-                return;
-            }
-
-            container.innerHTML = rows.map(row => `
-                <div class="rounded-2xl border ${row.riskClass} p-4">
-                    <div class="flex items-start justify-between gap-3">
-                        <div class="min-w-0">
-                            <div class="text-sm font-black truncate">${escapeHtml(row.storeName)}</div>
-                            <div class="text-[10px] opacity-70 mt-1">전체 리뷰 ${row.totalCount} · LOW ${row.lowCount}</div>
-                        </div>
-                        <div class="text-[10px] font-black px-2 py-1 rounded-full bg-white/70 shrink-0">
-                            ${row.riskLabel}
-                        </div>
-                    </div>
-                </div>
-            `).join('');
-        }
-
-        function renderBarList(containerId, rows) {
-            const container = document.getElementById(containerId);
-            const max = Math.max(...rows.map(r => r.count), 1);
-
-            if (!rows.length || rows.every(r => r.count === 0)) {
-                container.innerHTML = '<div class="text-center py-8 text-xs text-slate-400 font-bold">표시할 데이터가 없습니다.</div>';
-                return;
-            }
-
-            container.innerHTML = rows.map(row => {
-                const width = Math.max(4, Math.round((row.count / max) * 100));
-
-                return `
-                    <div>
-                        <div class="flex justify-between items-center mb-1">
-                            <div class="text-[11px] font-bold text-slate-600 truncate pr-3">${escapeHtml(row.label)}</div>
-                            <div class="text-[11px] font-black text-slate-800">${row.count}</div>
-                        </div>
-                        <div class="h-3 bg-slate-100 rounded-full overflow-hidden">
-                            <div class="h-full bg-slate-900 rounded-full" style="width: ${width}%"></div>
-                        </div>
-                    </div>
-                `;
-            }).join('');
-        }
-
-        function escapeHtml(value) {
-            return String(value || '')
-                .replaceAll('&', '&amp;')
-                .replaceAll('<', '&lt;')
-                .replaceAll('>', '&gt;')
-                .replaceAll('"', '&quot;')
-                .replaceAll("'", '&#039;');
-        }
-
-        function escapeRegex(value) {
-            return String(value || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-        }
-
-        function escapeForOnclick(value) {
-            return String(value || '').replaceAll("\\", "\\\\").replaceAll("'", "\\'");
-        }
-
-        init();
-    </script>
-</body>
-</html>
+You are working in:
+
+C:\Users\youngseol\Documents\MF-EVALUATION
+
+Task title:
+
+Compatibility Guard Registry Phase 3 — Extract and Register Central Retail Thailand Q1 Compatibility Guard
+
+Current confirmed architecture
+
+Registry
+- Taiwan Q3 guard: COMPLETE
+- CRG Annual guard: COMPLETE
+- Registry validation: PASS
+- CRG validation: PASS
+- Taiwan validation: PASS
+
+Remaining compatibility logic
+
+Only the Central Retail Thailand Q1 compatibility logic still exists inside:
+
+src/services/ocr/ocrService.ts
+
+Objective
+
+Extract ONLY the Central Retail compatibility implementation.
+
+Register it in the existing Compatibility Guard Registry.
+
+After this task:
+
+ocrService.ts must no longer contain any document-specific compatibility implementation.
+
+Production behavior must remain identical.
+
+--------------------------------------------------
+Requirements
+--------------------------------------------------
+
+1.
+
+Inspect the current production source.
+
+Locate every function that belongs exclusively to the Central Retail compatibility implementation.
+
+Do not guess.
+
+Move every required helper together.
+
+Do not leave hidden dependencies behind.
+
+--------------------------------------------------
+
+2.
+
+Create
+
+src/services/ocr/compatibilityGuards/centralRetailThailandQ1CompatibilityGuard.ts
+
+Move the implementation only.
+
+No redesign.
+
+No optimization.
+
+No algorithm changes.
+
+No cleanup.
+
+Only extraction.
+
+--------------------------------------------------
+
+3.
+
+Registry
+
+Register the new guard after CRG.
+
+Final deterministic order must become
+
+Taiwan Q3
+
+↓
+
+CRG Annual
+
+↓
+
+Central Retail Thailand Q1
+
+No duplicates.
+
+--------------------------------------------------
+
+4.
+
+ocrService
+
+Remove the direct Central Retail compatibility execution.
+
+The orchestration must now invoke only
+
+applyRegisteredCompatibilityGuards(...)
+
+There must be no remaining document-specific compatibility logic inside ocrService.ts.
+
+Generic OCR processing only.
+
+--------------------------------------------------
+
+5.
+
+Validation
+
+Create
+
+scripts/validateCentralRetailGuardExtraction.ts
+
+Validate
+
+A
+
+Registry order
+
+Taiwan
+
+↓
+
+CRG
+
+↓
+
+Central Retail
+
+B
+
+Exactly one registration for each guard
+
+C
+
+Representative Central Retail fixture
+
+preserves
+
+- financial values
+- warnings
+- confidence
+- report profile
+- metadata
+
+D
+
+Taiwan fixture unchanged
+
+E
+
+CRG fixture unchanged
+
+F
+
+Non-matching contexts remain unchanged
+
+G
+
+Unique guard IDs
+
+--------------------------------------------------
+
+6.
+
+Run
+
+node node_modules/typescript/bin/tsc --noEmit
+
+node node_modules/tsx/dist/cli.mjs scripts/validateCentralRetailGuardExtraction.ts
+
+node node_modules/tsx/dist/cli.mjs scripts/validateCompatibilityGuardRegistry.ts
+
+node node_modules/tsx/dist/cli.mjs scripts/validateCRGGuardExtraction.ts
+
+node node_modules/tsx/dist/cli.mjs scripts/validateTaiwanQ3GuardExtraction.ts
+
+Do NOT run real PDFs.
+
+--------------------------------------------------
+
+7.
+
+Do NOT modify
+
+OCR
+
+Translation
+
+Statement Detection
+
+Canonical Mapping
+
+Normalization
+
+Evaluation
+
+Approval
+
+Review
+
+UI
+
+Liability reconstruction
+
+Missing→Null behavior
+
+--------------------------------------------------
+
+8.
+
+Do NOT run Git.
+
+Do NOT commit.
+
+Do NOT push.
+
+--------------------------------------------------
+
+9.
+
+Final response
+
+Changed files
+
+Central Retail extraction summary
+
+Registry updates
+
+Behavior preservation
+
+Validation
+
+Architecture result
+
+Explicitly confirm:
+
+- ocrService.ts no longer contains any company-specific or document-specific compatibility guard implementation.
+- All compatibility logic now lives under:
+  src/services/ocr/compatibilityGuards/
+
+Remaining scope
+
+List only technical debt items that are NOT compatibility guards.
