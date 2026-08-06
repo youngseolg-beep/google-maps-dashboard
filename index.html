@@ -18,7 +18,7 @@
             <div>
                 <h1 class="text-2xl font-black text-slate-800">
                     📊 SV REVIEW MASTER
-                    <span class="text-blue-500 text-sm font-normal ml-2">v2.0.2</span>
+                    <span class="text-blue-500 text-sm font-normal ml-2">v2.0.6</span>
                 </h1>
                 <p class="text-xs text-slate-400 mt-1">Google Maps 리뷰 자동 수집 · 담당 SV별 리뷰 관리 · Insight Dashboard</p>
             </div>
@@ -123,9 +123,14 @@
             <div>
                 <div class="flex items-center justify-between gap-3 flex-wrap mb-2">
                     <div class="text-[10px] font-black text-slate-400">KEYWORD FILTER</div>
-                    <button onclick="toggleLowRatingMode(this)" id="low-rating-toggle" class="px-3 py-2 rounded-full bg-red-50 text-red-600 text-[11px] font-black hover:bg-red-100 transition-all">
-                        🚨 LOW REVIEWS ONLY
-                    </button>
+                    <div class="flex items-center gap-2">
+                        <button onclick="toggleNewReviewMode(this)" id="new-review-toggle" class="px-3 py-2 rounded-full bg-blue-50 text-blue-600 text-[11px] font-black hover:bg-blue-100 transition-all">
+                            🆕 NEW REVIEWS ONLY
+                        </button>
+                        <button onclick="toggleLowRatingMode(this)" id="low-rating-toggle" class="px-3 py-2 rounded-full bg-red-50 text-red-600 text-[11px] font-black hover:bg-red-100 transition-all">
+                            🚨 LOW REVIEWS ONLY
+                        </button>
+                    </div>
                 </div>
 
                 <div class="flex flex-wrap gap-2">
@@ -323,10 +328,12 @@
         };
 
         let allReviews = [];
+        let allStores = [];
         let crawlStatus = null;
         let currentPage = 'reviews';
         let currentSV = null;
         let currentSVReviews = [];
+        let currentSVStores = [];
         let currentStore = 'ALL';
         let currentCountry = 'ALL';
         let currentPeriod = 'all';
@@ -335,6 +342,7 @@
         let currentSort = 'latest';
         let currentKeyword = null;
         let lowRatingOnly = false;
+        let newReviewOnly = false;
         let visibleReviewCount = 30;
 
         const SUPABASE_REST_URL = 'https://fourqytbdjxlpwzgvphy.supabase.co/rest/v1';
@@ -388,6 +396,15 @@
             return reviews;
         }
 
+        async function loadStoresFromSupabase() {
+            const rows = await fetchSupabaseRows(
+                'stores',
+                'select=id,brand,country,sv,store_name,google_maps_url,is_active,display_order&is_active=eq.true&order=display_order.asc,store_name.asc'
+            );
+
+            return rows.filter(store => store && store.store_name);
+        }
+
         function getCrawlRunTimestamp(row) {
             return row?.last_crawled_at
                 || row?.finished_at
@@ -418,7 +435,20 @@
         }
 
         async function loadLatestCrawlRunFromSupabase() {
-            const orderColumns = ['finished_at', 'last_crawled_at', 'completed_at', 'created_at', 'started_at'];
+            // first_seen_run_id is linked to crawl_runs.id, so the latest run must
+            // be selected by the monotonically increasing bigint id first.
+            try {
+                const rows = await fetchSupabaseRows(
+                    'crawl_runs',
+                    'select=*&order=id.desc&limit=1'
+                );
+
+                if (rows.length) return normalizeCrawlRun(rows[0]);
+            } catch (error) {
+                console.warn('crawl_runs id 정렬 조회 실패', error);
+            }
+
+            const orderColumns = ['last_crawled_at', 'created_at', 'started_at', 'completed_at', 'finished_at'];
 
             for (const column of orderColumns) {
                 try {
@@ -434,7 +464,7 @@
             }
 
             const rows = await fetchSupabaseRows('crawl_runs', 'select=*&limit=1000');
-            rows.sort((a, b) => String(getCrawlRunTimestamp(b)).localeCompare(String(getCrawlRunTimestamp(a))));
+            rows.sort((a, b) => Number(b?.id || 0) - Number(a?.id || 0));
             return normalizeCrawlRun(rows[0] || null);
         }
 
@@ -442,8 +472,9 @@
             const status = document.getElementById('status-tag');
 
             try {
-                const [reviews, latestCrawlRun] = await Promise.all([
+                const [reviews, stores, latestCrawlRun] = await Promise.all([
                     loadReviewsFromSupabase(),
+                    loadStoresFromSupabase(),
                     loadLatestCrawlRunFromSupabase().catch(error => {
                         console.error('crawl_runs 조회 실패', error);
                         return null;
@@ -451,6 +482,7 @@
                 ]);
 
                 allReviews = reviews;
+                allStores = stores;
                 crawlStatus = latestCrawlRun;
 
                 status.innerText = `리뷰 데이터 연결됨`;
@@ -518,20 +550,22 @@
         }
 
         function renderSvStoreCountSummary() {
-            const sourceStores = crawlStatus?.stores?.length
-                ? crawlStatus.stores
-                : Array.from(
-                    new Map(
-                        allReviews.map(r => [
-                            r.store_name,
-                            {
-                                store_name: r.store_name,
-                                sv: r.sv,
-                                country: r.country
-                            }
-                        ])
-                    ).values()
-                );
+            const sourceStores = allStores.length
+                ? allStores
+                : (crawlStatus?.stores?.length
+                    ? crawlStatus.stores
+                    : Array.from(
+                        new Map(
+                            allReviews.map(r => [
+                                r.store_name,
+                                {
+                                    store_name: r.store_name,
+                                    sv: r.sv,
+                                    country: r.country
+                                }
+                            ])
+                        ).values()
+                    ));
 
             const grouped = {};
             const countryOrder = {
@@ -618,6 +652,7 @@
             currentCountry = 'ALL';
             currentKeyword = null;
             lowRatingOnly = false;
+            newReviewOnly = false;
             visibleReviewCount = 30;
 
             document.querySelectorAll('.sv-tab').forEach(b => b.classList.remove('active-sv'));
@@ -626,8 +661,13 @@
             document.querySelectorAll('.keyword-btn').forEach(b => b.classList.remove('active-keyword'));
             const lowToggle = document.getElementById('low-rating-toggle');
             if (lowToggle) lowToggle.classList.remove('active-keyword');
+            const newToggle = document.getElementById('new-review-toggle');
+            if (newToggle) newToggle.classList.remove('active-keyword');
 
-            currentSVReviews = allReviews.filter(r => isReviewMatchedToSV(r, svName));
+            currentSVStores = allStores.filter(store => String(store.sv || '') === svName);
+            currentSVReviews = allReviews.filter(review =>
+                String(review.sv || '') === svName || isReviewMatchedToSV(review, svName)
+            );
 
             document.getElementById('current-title').innerText = `${svName} SV 담당 리뷰`;
             document.getElementById('current-subtitle').innerText = `담당 국가: ${getCountryLabel(svName)}`;
@@ -660,6 +700,11 @@
         function getGoogleMapsReviewUrl(storeName) {
             if (STORE_URL_MAP[storeName]) {
                 return STORE_URL_MAP[storeName];
+            }
+
+            const storeMaster = allStores.find(store => store.store_name === storeName);
+            if (storeMaster?.google_maps_url) {
+                return storeMaster.google_maps_url;
             }
 
             const reviews = currentSVReviews.length ? currentSVReviews : allReviews;
@@ -753,9 +798,26 @@
             return filterByPeriod(getCountryFilteredSVReviews());
         }
 
+        function getCurrentStoreMaster() {
+            let stores = currentSVStores;
+
+            if (currentCountry !== 'ALL') {
+                stores = stores.filter(store =>
+                    String(store.country || '').toLowerCase() === currentCountry.toLowerCase()
+                );
+            }
+
+            return stores;
+        }
+
+        function getLatestRunStoreResult(storeName) {
+            return (crawlStatus?.stores || []).find(store => store.store_name === storeName) || null;
+        }
+
         function renderCountryOptions() {
             const select = document.getElementById('country-select');
-            const countries = [...new Set(currentSVReviews.map(r => r.country).filter(Boolean))].sort();
+            const countrySource = currentSVStores.length ? currentSVStores : currentSVReviews;
+            const countries = [...new Set(countrySource.map(item => item.country).filter(Boolean))].sort();
             select.innerHTML = `<option value="ALL">전체 국가</option>` + countries.map(country =>
                 `<option value="${escapeHtml(country)}">${escapeHtml(country)}</option>`
             ).join('');
@@ -805,14 +867,15 @@
         }
 
         function refreshAllViews() {
-            const storeSource = getStoreListSourceReviews();
+            const storeMaster = getCurrentStoreMaster();
+            const storeReviewSource = getStoreListSourceReviews();
 
             if (currentStore !== 'ALL') {
-                const exists = storeSource.some(r => (r.store_name || 'Unknown Store') === currentStore);
+                const exists = storeMaster.some(store => store.store_name === currentStore);
                 if (!exists) currentStore = 'ALL';
             }
 
-            renderStoreList(storeSource);
+            renderStoreList(storeMaster, storeReviewSource);
             refreshCurrentReviews();
             renderKeywordStats();
             renderInsights();
@@ -857,7 +920,7 @@
             }).sort((a, b) => b.count - a.count);
 
             document.getElementById('keyword-stat-scope').innerText =
-                `${getPeriodRange().label} · ${currentCountry === 'ALL' ? '전체 국가' : currentCountry} · ${currentStore === 'ALL' ? '전체 매장' : currentStore}${lowRatingOnly ? ' · 3점 이하' : ''}`;
+                `${getPeriodRange().label} · ${currentCountry === 'ALL' ? '전체 국가' : currentCountry} · ${currentStore === 'ALL' ? '전체 매장' : currentStore}${lowRatingOnly ? ' · 3점 이하' : ''}${newReviewOnly ? ' · 최신 실행 NEW' : ''}`;
 
             grid.innerHTML = stats.map(item => `
                 <button onclick="applyKeywordFromInsight('${item.key}')" class="rounded-2xl border border-slate-100 bg-slate-50 p-4 text-left hover:border-slate-300 transition-all">
@@ -867,38 +930,43 @@
             `).join('');
         }
 
-        function renderStoreList(data) {
-            const stores = [...new Set(data.map(r => r.store_name || 'Unknown Store'))];
-
+        function renderStoreList(storeMaster, reviewData) {
             const storeListDiv = document.getElementById('store-list');
+            const stores = [...storeMaster].sort((a, b) => {
+                const orderA = Number(a.display_order || 0);
+                const orderB = Number(b.display_order || 0);
+                if (orderA !== orderB) return orderA - orderB;
+                return String(a.store_name || '').localeCompare(String(b.store_name || ''));
+            });
 
             if (!stores.length) {
                 storeListDiv.innerHTML = `
                     <div class="text-center py-10 text-slate-400 text-xs">
-                        매장 데이터 없음
+                        등록된 매장 데이터 없음
                     </div>
                 `;
                 document.getElementById('review-summary').classList.add('hidden');
                 document.getElementById('review-container').innerHTML = `
                     <div class="text-center py-20 text-slate-400">
-                        해당 SV 담당 국가로 매칭된 매장이 없습니다.<br>
-                        <span class="text-[10px]">수집된 매장 이름 예시: ${escapeHtml(allReviews[0]?.store_name || '없음')}</span>
+                        해당 SV·국가 조건에 등록된 매장이 없습니다.
                     </div>
                 `;
                 return;
             }
 
-            const cards = stores.map(storeName => {
-                const reviews = data.filter(
-                    r => (r.store_name || 'Unknown Store') === storeName
+            const cards = stores.map(store => {
+                const storeName = store.store_name || 'Unknown Store';
+                const reviews = reviewData.filter(
+                    review => (review.store_name || 'Unknown Store') === storeName
                 );
 
                 const totalReviews = reviews.length;
-                const lowReviews = reviews.filter(r => Number(r.rating || 0) <= 3).length;
-                const newReviews = reviews.filter(isNewReview).length;
+                const lowReviews = reviews.filter(review => Number(review.rating || 0) <= 3).length;
+                const latestRunResult = getLatestRunStoreResult(storeName);
+                const newReviews = Number(latestRunResult?.collected_count || 0);
                 const latestReview = getLatestReviewDate(reviews);
-                const recent7Days = reviews.filter(r => {
-                    const date = parseReviewDate(r);
+                const recent7Days = reviews.filter(review => {
+                    const date = parseReviewDate(review);
                     if (!date) return false;
                     const today = startOfDay(new Date());
                     const start = new Date(today);
@@ -906,7 +974,13 @@
                     return date >= start && date <= today;
                 }).length;
                 const isActive = currentStore === storeName;
-                const mapsUrl = getGoogleMapsReviewUrl(storeName);
+                const mapsUrl = store.google_maps_url || getGoogleMapsReviewUrl(storeName);
+
+                const statusBadge = totalReviews === 0
+                    ? `<div class="px-2 py-1 rounded-full bg-slate-100 text-slate-500 text-[10px] font-black">리뷰 0건</div>`
+                    : (lowReviews > 0
+                        ? `<div class="px-2 py-1 rounded-full bg-red-100 text-red-600 text-[10px] font-black">LOW ${lowReviews}</div>`
+                        : `<div class="px-2 py-1 rounded-full bg-emerald-100 text-emerald-600 text-[10px] font-black">SAFE</div>`);
 
                 return `
                     <div
@@ -940,11 +1014,7 @@
                                         ? `<div class="px-2 py-1 rounded-full bg-red-500 text-white text-[10px] font-black">NEW ${newReviews}</div>`
                                         : ''
                                     }
-                                    ${
-                                        lowReviews > 0
-                                        ? `<div class="px-2 py-1 rounded-full bg-red-100 text-red-600 text-[10px] font-black">LOW ${lowReviews}</div>`
-                                        : `<div class="px-2 py-1 rounded-full bg-emerald-100 text-emerald-600 text-[10px] font-black">SAFE</div>`
-                                    }
+                                    ${statusBadge}
                                 </div>
                             </div>
 
@@ -959,7 +1029,6 @@
                                     <div class="text-lg font-black text-blue-600 mt-1">${recent7Days}</div>
                                 </div>
                             </div>
-
                         </button>
 
                         <a
@@ -994,7 +1063,7 @@
                                 <div class="text-sm font-black text-slate-800">🌍 전체 매장</div>
                                 <div class="text-[10px] text-slate-400 mt-1">전체 리뷰 모니터링</div>
                             </div>
-                            <div class="text-xl font-black text-slate-800">${data.length}</div>
+                            <div class="text-xl font-black text-slate-800">${reviewData.length}</div>
                         </div>
                     </button>
                 </div>
@@ -1021,6 +1090,35 @@
             renderInsights();
         }
 
+        function getLatestCrawlRunId() {
+            const value = Number(crawlStatus?.id);
+            return Number.isFinite(value) && value > 0 ? value : null;
+        }
+
+        function isNewReview(review) {
+            const latestRunId = getLatestCrawlRunId();
+            const firstSeenRunId = Number(review?.first_seen_run_id);
+
+            return latestRunId !== null
+                && Number.isFinite(firstSeenRunId)
+                && firstSeenRunId === latestRunId;
+        }
+
+        function toggleNewReviewMode(btn) {
+            newReviewOnly = !newReviewOnly;
+            visibleReviewCount = 30;
+
+            if (newReviewOnly) {
+                btn.classList.add('active-keyword');
+            } else {
+                btn.classList.remove('active-keyword');
+            }
+
+            refreshCurrentReviews();
+            renderKeywordStats();
+            renderInsights();
+        }
+
         function toggleLowRatingMode(btn) {
             lowRatingOnly = !lowRatingOnly;
             visibleReviewCount = 30;
@@ -1038,9 +1136,17 @@
 
         function clearKeywordFilter() {
             currentKeyword = null;
+            lowRatingOnly = false;
+            newReviewOnly = false;
             visibleReviewCount = 30;
 
             document.querySelectorAll('.keyword-btn').forEach(b => b.classList.remove('active-keyword'));
+
+            const lowToggle = document.getElementById('low-rating-toggle');
+            if (lowToggle) lowToggle.classList.remove('active-keyword');
+
+            const newToggle = document.getElementById('new-review-toggle');
+            if (newToggle) newToggle.classList.remove('active-keyword');
 
             refreshCurrentReviews();
             renderKeywordStats();
@@ -1061,6 +1167,11 @@
         function filterLowRatings(data) {
             if (!lowRatingOnly) return data;
             return data.filter(review => Number(review.rating || 0) <= 3);
+        }
+
+        function filterNewReviews(data) {
+            if (!newReviewOnly) return data;
+            return data.filter(review => isNewReview(review));
         }
 
         function loadMoreReviews() {
@@ -1084,6 +1195,7 @@
             let data = getCurrentBaseReviews();
             data = filterByKeyword(data);
             data = filterLowRatings(data);
+            data = filterNewReviews(data);
             return data;
         }
 
@@ -1154,43 +1266,6 @@
             if (!match) return null;
 
             return new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]));
-        }
-
-        function parseCollectedDateTime(value) {
-            const raw = String(value || '').trim();
-            if (!raw) return null;
-
-            const normalized = raw.includes('T') ? raw : raw.replace(' ', 'T');
-            const parsed = new Date(normalized);
-            if (!Number.isNaN(parsed.getTime())) return parsed;
-
-            const match = raw.match(/(\d{4})-(\d{2})-(\d{2})(?:[ T](\d{2}):(\d{2})(?::(\d{2}))?)?/);
-            if (!match) return null;
-
-            return new Date(
-                Number(match[1]),
-                Number(match[2]) - 1,
-                Number(match[3]),
-                Number(match[4] || 0),
-                Number(match[5] || 0),
-                Number(match[6] || 0)
-            );
-        }
-
-        function getLatestCrawlFinishedAt() {
-            return parseCollectedDateTime(crawlStatus?.last_crawled_at || '');
-        }
-
-        function isNewReview(review) {
-            const crawlFinishedAt = getLatestCrawlFinishedAt();
-            const collectedAt = parseCollectedDateTime(review?.collected_at);
-
-            if (!crawlFinishedAt || !collectedAt) return false;
-
-            const differenceMs = crawlFinishedAt.getTime() - collectedAt.getTime();
-            const maxWindowMs = 3 * 60 * 60 * 1000;
-
-            return differenceMs >= 0 && differenceMs <= maxWindowMs;
         }
 
         function formatDateYmd(date) {
@@ -1298,7 +1373,6 @@
                 const rating = Number(r.rating || 5);
                 const safeRating = Math.max(0, Math.min(5, Math.round(rating)));
                 const stars = '★'.repeat(safeRating) + '☆'.repeat(5 - safeRating);
-                const newReview = isNewReview(r);
                 const lowRatingClass = rating <= 3 ? 'border-red-200 bg-red-50/40' : 'border-slate-100 bg-white';
 
                 return `
@@ -1308,7 +1382,7 @@
                                 <div class="flex flex-wrap items-center gap-2">
                                     <span class="text-[10px] font-bold text-blue-600 bg-blue-50 px-2 py-0.5 rounded">${escapeHtml(r.store_name || 'Unknown Store')}</span>
                                     <span class="text-[10px] font-bold text-slate-500 bg-slate-100 px-2 py-0.5 rounded">${escapeHtml(r.author || 'Anonymous')}</span>
-                                    ${newReview ? '<span class="text-[10px] font-black text-blue-600 bg-blue-100 px-2 py-0.5 rounded">NEW</span>' : ''}
+                                    ${isNewReview(r) ? '<span class="text-[10px] font-black text-white bg-red-500 px-2 py-0.5 rounded">NEW</span>' : ''}
                                     ${rating <= 3 ? '<span class="text-[10px] font-black text-red-600 bg-red-100 px-2 py-0.5 rounded">LOW RATING</span>' : ''}
                                 </div>
                                 <div class="text-[10px] text-slate-400 mt-2">
