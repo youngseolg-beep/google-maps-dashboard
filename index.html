@@ -18,7 +18,7 @@
             <div>
                 <h1 class="text-2xl font-black text-slate-800">
                     📊 SV REVIEW MASTER
-                    <span class="text-blue-500 text-sm font-normal ml-2">v2.0.6</span>
+                    <span class="text-blue-500 text-sm font-normal ml-2">v2.0.7</span>
                 </h1>
                 <p class="text-xs text-slate-400 mt-1">Google Maps 리뷰 자동 수집 · 담당 SV별 리뷰 관리 · Insight Dashboard</p>
             </div>
@@ -34,15 +34,25 @@
             </div>
         </header>
 
-        <div id="global-summary" class="grid grid-cols-2 gap-4 mb-6 hidden">
+        <div id="global-summary" class="grid grid-cols-2 xl:grid-cols-4 gap-4 mb-6 hidden">
             <div class="bg-white rounded-2xl shadow-sm p-4">
-                <div class="text-[10px] text-slate-400 font-bold">전체 리뷰 마지막 크롤링 시간</div>
+                <div class="text-[10px] text-slate-400 font-bold">마지막 크롤링</div>
                 <div id="global-crawled-at" class="text-sm font-black text-blue-600 mt-2">-</div>
             </div>
             <div class="bg-white rounded-2xl shadow-sm p-4">
-                <div class="text-[10px] text-slate-400 font-bold">크롤링 성공 여부</div>
+                <div class="text-[10px] text-slate-400 font-bold">크롤링 결과</div>
                 <div id="global-crawl-status" class="text-sm font-black text-emerald-600 mt-2">-</div>
                 <div id="global-failed-stores" class="text-[10px] text-red-500 mt-2 hidden"></div>
+            </div>
+            <div class="bg-white rounded-2xl shadow-sm p-4">
+                <div class="text-[10px] text-slate-400 font-bold">이번 실행 신규 리뷰</div>
+                <div id="global-new-reviews" class="text-xl font-black text-red-500 mt-1">0</div>
+                <div class="text-[10px] text-slate-400 font-bold mt-1">최신 crawl run 기준</div>
+            </div>
+            <div class="bg-white rounded-2xl shadow-sm p-4">
+                <div class="text-[10px] text-slate-400 font-bold">이번 실행 신규 저평점</div>
+                <div id="global-new-low-reviews" class="text-xl font-black text-red-600 mt-1">0</div>
+                <div class="text-[10px] text-slate-400 font-bold mt-1">3점 이하 신규 리뷰</div>
             </div>
         </div>
 
@@ -525,6 +535,17 @@
             const failedStores = crawlStatus?.failed_stores || [];
 
             document.getElementById('global-crawled-at').innerText = crawledAt || '-';
+
+            const latestRunId = Number(crawlStatus?.id);
+            const latestRunReviews = Number.isFinite(latestRunId)
+                ? allReviews.filter(review => Number(review.first_seen_run_id) === latestRunId)
+                : [];
+            const latestRunLowReviews = latestRunReviews.filter(
+                review => Number(review.rating || 0) <= 3
+            );
+
+            document.getElementById('global-new-reviews').innerText = latestRunReviews.length;
+            document.getElementById('global-new-low-reviews').innerText = latestRunLowReviews.length;
 
             const statusEl = document.getElementById('global-crawl-status');
             const failedEl = document.getElementById('global-failed-stores');
