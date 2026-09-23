@@ -13,6 +13,7 @@ SUPABASE_URL = os.environ.get("SUPABASE_URL", "").rstrip("/")
 SUPABASE_SERVICE_ROLE_KEY = os.environ.get("SUPABASE_SERVICE_ROLE_KEY", "")
 STATUS_ONLY = os.environ.get("STATUS_ONLY", "").strip().lower() in {"1", "true", "yes", "on"}
 REPAIR_ONLY = os.environ.get("REPAIR_ONLY", "").strip().lower() in {"1", "true", "yes", "on"}
+DIAGNOSTIC_STORE = os.environ.get("DIAGNOSTIC_STORE", "").strip()
 
 MAX_SCROLL_ROUNDS = 8
 STOP_STALLED_ROUNDS = 2
@@ -64,6 +65,28 @@ def estimate_review_date(relative_date, base_date=None):
 
     # Unrecognized relative values remain usable, but are marked as estimated today.
     return base_date.strftime("%Y-%m-%d")
+
+
+def is_recognized_relative_date(relative_date):
+    """Return whether a Google Maps relative review date has a known unit."""
+    text = normalize_spaces(relative_date).lower()
+
+    if not text or text in {"unknown", "recent"}:
+        return True
+
+    text = re.sub(r"\b(?:a|an|one|een|satu)\b", "1", text)
+    return any(
+        re.search(pattern, text, re.I)
+        for pattern in [
+            r"\d+\s*(?:second|seconds|초|detik|seconde|seconden)",
+            r"\d+\s*(?:minute|minutes|분|menit|minuut|minuten)",
+            r"\d+\s*(?:hour|hours|시간|jam|uur)",
+            r"\d+\s*(?:day|days|일|hari|dag|dagen)",
+            r"\d+\s*(?:week|weeks|주|minggu|weken)",
+            r"\d+\s*(?:month|months|개월|달|bulan|maand|maanden)",
+            r"\d+\s*(?:year|years|년|tahun|jaar|jaren)",
+        ]
+    )
 
 
 def build_url_candidates(url):
@@ -257,88 +280,107 @@ def wait_for_reviews(page):
     return False
 
 
-def set_reviews_sort_to_newest(page):
-    print("🆕 리뷰 정렬을 최신순으로 변경 시도 중...")
+SORT_BUTTON_PATTERNS = [
+    r"Sort",
+    r"정렬",
+    r"Sorteer",
+    r"Sorteren",
+    r"Urutkan",
+    r"排序",
+]
 
-    sort_button_patterns = [
-        r"Sort",
-        r"정렬",
-        r"Sorteer",
-        r"Sorteren",
-        r"Urutkan",
-    ]
+NEWEST_SORT_PATTERNS = [
+    r"Newest",
+    r"Newest first",
+    r"Most recent",
+    r"Latest",
+    r"최신",
+    r"최신순",
+    r"Nieuwste",
+    r"Meest recente",
+    r"Terbaru",
+    r"Paling baru",
+    r"最新",
+]
 
-    newest_patterns = [
-        r"Newest",
-        r"Newest first",
-        r"Most recent",
-        r"Latest",
-        r"최신",
-        r"최신순",
-        r"Nieuwste",
-        r"Meest recente",
-        r"Terbaru",
-        r"Paling baru",
-    ]
 
+def close_reviews_sort_menu(page):
     try:
-        sort_clicked = False
+        page.keyboard.press("Escape")
+    except:
+        pass
 
-        for pattern in sort_button_patterns:
-            try:
-                btn = page.get_by_role("button", name=re.compile(pattern, re.I)).first
 
-                if btn.count() > 0:
-                    btn.click(timeout=4000, force=True)
-                    page.wait_for_timeout(2000)
-                    print("✅ 정렬 버튼 클릭 성공")
-                    sort_clicked = True
-                    break
-            except:
-                pass
+def open_reviews_sort_menu(page):
+    for pattern in SORT_BUTTON_PATTERNS:
+        try:
+            button = page.get_by_role("button", name=re.compile(pattern, re.I)).first
+            if button.count() > 0:
+                button.click(timeout=4000, force=True)
+                page.wait_for_timeout(1200)
+                return True
+        except:
+            pass
+    return False
 
-        if not sort_clicked:
-            print("⚠️ 정렬 버튼 발견 실패")
-            return False
 
-        newest_clicked = False
+def newest_sort_is_selected(page):
+    """Inspect the active radio menu item; a click alone is not verification."""
+    for pattern in NEWEST_SORT_PATTERNS:
+        try:
+            option = page.get_by_role("menuitemradio", name=re.compile(pattern, re.I)).first
+            if option.count() > 0 and option.get_attribute("aria-checked") == "true":
+                return True
+        except:
+            pass
+    return False
 
-        for pattern in newest_patterns:
-            try:
-                option = page.get_by_role("menuitemradio", name=re.compile(pattern, re.I)).first
 
-                if option.count() > 0:
-                    option.click(timeout=4000, force=True)
-                    page.wait_for_timeout(4000)
-                    print("✅ 최신순 정렬 적용 성공")
-                    newest_clicked = True
-                    break
-            except:
-                pass
+def click_newest_sort_option(page):
+    for pattern in NEWEST_SORT_PATTERNS:
+        try:
+            option = page.get_by_role("menuitemradio", name=re.compile(pattern, re.I)).first
+            if option.count() > 0:
+                option.click(timeout=4000, force=True)
+                page.wait_for_timeout(3000)
+                return True
+        except:
+            pass
+    return False
 
-        if not newest_clicked:
-            for pattern in newest_patterns:
-                try:
-                    option = page.get_by_text(re.compile(pattern, re.I)).first
 
-                    if option.count() > 0:
-                        option.click(timeout=4000, force=True)
-                        page.wait_for_timeout(4000)
-                        print("✅ 최신순 정렬 적용 성공")
-                        newest_clicked = True
-                        break
-                except:
-                    pass
+def set_reviews_sort_to_newest(page, max_attempts=2):
+    """Select Newest and prove it is the checked Maps sort option before scraping."""
+    for attempt in range(1, max_attempts + 1):
+        close_reviews_sort_menu(page)
+        print(f"🆕 최신순 정렬 시도 {attempt}/{max_attempts}")
 
-        if not newest_clicked:
-            print("⚠️ 최신순 옵션 클릭 실패")
-            return False
+        if not open_reviews_sort_menu(page):
+            print("⚠️ 최신순 정렬 결과: 정렬 메뉴를 열 수 없음")
+            continue
 
-        return True
+        if newest_sort_is_selected(page):
+            print("✅ 최신순 정렬 결과: 선택 상태 확인됨")
+            close_reviews_sort_menu(page)
+            return True
 
-    except Exception as e:
-        print(f"⚠️ 최신순 정렬 설정 실패: {e}")
-        return False
+        if not click_newest_sort_option(page):
+            print("⚠️ 최신순 정렬 결과: 최신순 옵션을 선택할 수 없음")
+            continue
+
+        if not open_reviews_sort_menu(page):
+            print("⚠️ 최신순 정렬 결과: 선택 후 메뉴 재확인 실패")
+            continue
+
+        if newest_sort_is_selected(page):
+            print("✅ 최신순 정렬 결과: 선택 상태 확인됨")
+            close_reviews_sort_menu(page)
+            return True
+
+        print("⚠️ 최신순 정렬 결과: 최신순 선택 상태를 확인할 수 없음")
+
+    close_reviews_sort_menu(page)
+    return False
 
 
 def click_more_buttons(page):
@@ -863,16 +905,21 @@ def get_existing_keys_for_store(existing_reviews, store_name):
     return keys
 
 
-def extract_reviews(page, store, existing_keys=None):
+def extract_reviews(page, store, existing_keys=None, newest_verified=False):
     collected = []
     processed_keys = set()
     stalled_count = 0
     last_total = 0
     checked_count = 0
+    cards_inspected = 0
     existing_hit_count = 0
+    stop_reason = "completed"
 
     existing_keys = existing_keys or set()
     recent_only_mode = len(existing_keys) > 0
+
+    if recent_only_mode and not newest_verified:
+        raise RuntimeError("최근 리뷰 모드는 최신순 정렬 확인 후에만 실행할 수 있습니다.")
 
     if recent_only_mode:
         print(f"⚡ 최근 리뷰 모드 적용: {store['store_name']} / 기존 리뷰 key {len(existing_keys)}개")
@@ -894,6 +941,7 @@ def extract_reviews(page, store, existing_keys=None):
         for i in range(card_count):
             try:
                 card = cards.nth(i)
+                cards_inspected += 1
 
                 text = get_review_text(card)
                 has_text = bool(text and len(text) >= 3)
@@ -914,8 +962,18 @@ def extract_reviews(page, store, existing_keys=None):
                 author = get_review_author(card)
                 rating = get_review_rating(card)
 
+                if cards_inspected <= 10:
+                    print(
+                        f"🧾 카드 {cards_inspected}: author={author or 'Unknown'} "
+                        f"rating={rating} raw_date={relative_date or 'Unknown'}"
+                    )
+
                 if not has_text and rating <= 0:
                     continue
+
+                date_recognized = is_recognized_relative_date(relative_date)
+                if not date_recognized:
+                    print(f"⚠️ 인식 불가 리뷰 날짜: raw_date={relative_date or 'Unknown'}")
 
                 review = {
                     "store_name": store["store_name"],
@@ -928,7 +986,9 @@ def extract_reviews(page, store, existing_keys=None):
                     "has_text": has_text,
                     "date": relative_date,
                     "review_date": estimate_review_date(relative_date),
-                    "review_date_source": "estimated",
+                    "review_date_source": (
+                        "estimated" if date_recognized else "estimated_unrecognized_relative_date"
+                    ),
                     "collected_at": now_kst().strftime("%Y-%m-%d"),
                 }
 
@@ -936,6 +996,9 @@ def extract_reviews(page, store, existing_keys=None):
 
                 if not key:
                     continue
+
+                if cards_inspected <= 10:
+                    print(f"➕ 후보 리뷰 파싱: author={author or 'Unknown'} rating={rating}")
 
                 if key in processed_keys:
                     continue
@@ -947,7 +1010,7 @@ def extract_reviews(page, store, existing_keys=None):
                     existing_hit_count += 1
                     print(
                         f"🟡 기존 리뷰 감지: {existing_hit_count}/{RECENT_ONLY_EXISTING_HIT_LIMIT} "
-                        f"/ 확인 {checked_count}/{RECENT_ONLY_MIN_CHECKED}"
+                        f"/ 카드 {checked_count}/{RECENT_ONLY_MIN_CHECKED}"
                     )
 
                     if (
@@ -955,7 +1018,8 @@ def extract_reviews(page, store, existing_keys=None):
                         and existing_hit_count >= RECENT_ONLY_EXISTING_HIT_LIMIT
                     ):
                         print("✅ 기존 리뷰 충분히 감지. 이 매장 최근 리뷰 확인 종료.")
-                        return collected
+                        stop_reason = "existing_reviews_reached_after_verified_newest"
+                        return collected, stop_reason, cards_inspected
 
                     continue
 
@@ -964,7 +1028,8 @@ def extract_reviews(page, store, existing_keys=None):
 
                 if recent_only_mode and len(collected) >= RECENT_ONLY_MAX_REVIEWS:
                     print(f"✅ 최근 리뷰 신규 후보 상한 도달: {RECENT_ONLY_MAX_REVIEWS}건")
-                    return collected
+                    stop_reason = "recent_candidate_limit"
+                    return collected, stop_reason, cards_inspected
 
             except Exception as e:
                 print(f"⚠️ 개별 리뷰 추출 실패: {e}")
@@ -977,6 +1042,7 @@ def extract_reviews(page, store, existing_keys=None):
 
         if not recent_only_mode and len(collected) >= MIN_REVIEWS_TARGET:
             print(f"✅ 목표 수집량 도달: {len(collected)}건")
+            stop_reason = "initial_collection_target"
             break
 
         if len(collected) == last_total:
@@ -987,15 +1053,17 @@ def extract_reviews(page, store, existing_keys=None):
 
         if stalled_count >= STOP_STALLED_ROUNDS and len(collected) > 0:
             print("✅ 추가 로딩 정체 감지. 빠른 수집 종료.")
+            stop_reason = "loading_stalled"
             break
 
         if recent_only_mode and round_no + 1 >= max_rounds:
             print("✅ 최근 리뷰 모드 확인 라운드 완료. 다음 매장으로 이동.")
+            stop_reason = "recent_round_limit"
             break
 
         scroll_reviews(page)
 
-    return collected
+    return collected, stop_reason, cards_inspected
 
 
 def scrape_store(page, store, existing_reviews=None):
@@ -1006,6 +1074,7 @@ def scrape_store(page, store, existing_reviews=None):
 
     url_candidates = build_url_candidates(store["url"])
     valid_place_detected = False
+    newest_verification_failed = False
 
     for idx, target_url in enumerate(url_candidates):
         print(f"🌐 URL 후보 {idx + 1}/{len(url_candidates)} 진입 시도: {target_url}")
@@ -1026,15 +1095,32 @@ def scrape_store(page, store, existing_reviews=None):
             print("✅ Google Maps 매장 상세 페이지 확인")
 
         if not has_review_dom(page):
-            open_reviews_panel(page)
+            panel_opened = open_reviews_panel(page)
+            print(f"📂 리뷰 패널 열기 결과: {'성공' if panel_opened else '실패'}")
+        else:
+            print("📂 리뷰 패널 열기 결과: 이미 열려 있음")
 
         print("⏳ Google Maps 리뷰 패널 렌더링 대기 중...")
         page.wait_for_timeout(4000)
 
         if wait_for_reviews(page):
-            set_reviews_sort_to_newest(page)
+            if not set_reviews_sort_to_newest(page):
+                newest_verification_failed = True
+                print("❌ 최신순 정렬 확인 실패. 이 URL 후보에서는 리뷰를 추출하지 않습니다.")
+                continue
+
             existing_keys = get_existing_keys_for_store(existing_reviews or [], store["store_name"])
-            reviews = extract_reviews(page, store, existing_keys)
+            print("🚀 리뷰 추출 시작: 최신순 정렬 확인 완료")
+            reviews, stop_reason, cards_inspected = extract_reviews(
+                page,
+                store,
+                existing_keys,
+                newest_verified=True,
+            )
+            print(
+                f"🏁 리뷰 추출 종료: 카드 {cards_inspected}개 검사 / "
+                f"신규 후보 {len(reviews)}건 / 사유={stop_reason}"
+            )
 
             if reviews or existing_keys:
                 if reviews:
@@ -1054,6 +1140,19 @@ def scrape_store(page, store, existing_reviews=None):
                 }
 
         print(f"⚠️ URL 후보 {idx + 1}에서 리뷰 DOM 감지 실패 또는 리뷰 없음")
+
+    if newest_verification_failed:
+        print(f"❌ 최신순 정렬 확인 실패로 매장 수집 중단: {store['store_name']}")
+        return {
+            "ok": False,
+            "store_name": store["store_name"],
+            "sv": store["sv"],
+            "country": store["country"],
+            "collected_count": 0,
+            "error": "Google Maps 최신순 정렬 상태를 확인할 수 없음",
+            "crawled_at": now_kst().strftime("%Y-%m-%d %H:%M:%S"),
+            "reviews": [],
+        }
 
     # A real place page with no review DOM is a valid zero-review store, not a crawl failure.
     if valid_place_detected:
@@ -1328,6 +1427,59 @@ def run_repair_only():
     print(f"✅ REPAIR_ONLY 완료: Supabase reviews {len(canonical_reviews)}건 / Google Maps 크롤링 없음")
 
 
+def run_store_diagnostic(store_name):
+    """Run one store through the crawler without creating runs or writing reviews."""
+    target_name = normalize_spaces(store_name).lower()
+    stores = load_stores_from_supabase()
+    store = next(
+        (item for item in stores if normalize_spaces(item.get("store_name", "")).lower() == target_name),
+        None,
+    )
+
+    if not store:
+        raise RuntimeError(f"DIAGNOSTIC_STORE 매장을 찾지 못했습니다: {store_name}")
+
+    existing_reviews = load_existing_reviews()
+    print(f"🔬 NO-WRITE 단일 매장 진단 시작: {store['store_name']}")
+    print("🔒 crawl_runs, stores, reviews 저장 또는 업데이트를 수행하지 않습니다.")
+
+    with sync_playwright() as p:
+        browser = p.chromium.launch(
+            headless=True,
+            args=[
+                "--disable-blink-features=AutomationControlled",
+                "--disable-dev-shm-usage",
+                "--no-sandbox",
+                "--disable-setuid-sandbox",
+                "--lang=en-US,en",
+            ],
+        )
+        context = browser.new_context(
+            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
+            locale="en-US",
+            timezone_id="Asia/Seoul",
+            viewport={"width": 1440, "height": 1000},
+        )
+        context.add_init_script(
+            """
+            Object.defineProperty(navigator, 'webdriver', {
+                get: () => undefined
+            });
+            """
+        )
+        page = context.new_page()
+        page.set_default_timeout(45000)
+
+        try:
+            result = scrape_store(page, store, existing_reviews)
+            print(
+                f"🔬 NO-WRITE 진단 결과: ok={result['ok']} / "
+                f"신규 후보={result['collected_count']} / 오류={result['error'] or '없음'}"
+            )
+        finally:
+            browser.close()
+
+
 def scrape():
     if STATUS_ONLY:
         run_status_only()
@@ -1335,6 +1487,10 @@ def scrape():
 
     if REPAIR_ONLY:
         run_repair_only()
+        return
+
+    if DIAGNOSTIC_STORE:
+        run_store_diagnostic(DIAGNOSTIC_STORE)
         return
 
     started_at = now_kst()
