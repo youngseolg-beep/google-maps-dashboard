@@ -2,91 +2,514 @@
 <html lang="ko">
 <head>
     <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="icon" href="data:,">
     <title>SV 통합 리뷰 관리 시스템</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
-        .active-sv { background-color: #2563eb !important; color: white !important; }
-        .active-store { background-color: #eff6ff !important; border-color: #2563eb !important; color: #1d4ed8 !important; }
-        .active-keyword { box-shadow: 0 0 0 2px #111827 inset !important; transform: translateY(-1px); }
-        .active-page { background-color: #111827 !important; color: white !important; }
-        .active-filter { background-color: #111827 !important; color: white !important; border-color: #111827 !important; }
+        :root { --bg:#F8F7F4; --surface:#FFF; --soft:#FBFAF8; --ink:#1F2329; --muted:#68717D; --faint:#98A0AA; --navy:#081120; --primary:#8B5E3C; --primary-soft:#F2E8DF; --border:#E7E4DF; --success:#278A62; --danger:#D74B4B; --info:#3C78D8; }
+        * { box-sizing:border-box; }
+        html { background:var(--bg); }
+        body { min-width:320px; overflow-x:hidden; font-family:Pretendard,"Noto Sans KR",-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; }
+        button:focus-visible, select:focus-visible, input:focus-visible { outline:3px solid rgba(93,87,79,.24)!important; outline-offset:2px; }
+        .active-sv { background:var(--primary-soft)!important; border-color:#D8BDA8!important; color:var(--primary)!important; }
+        .active-sv .sv-country { color:var(--primary)!important; }
+        .active-store { background:var(--primary-soft)!important; border-color:#D8BDA8!important; color:var(--primary)!important; }
+        .active-keyword { background:var(--primary-soft)!important; border-color:#D8BDA8!important; color:var(--primary)!important; box-shadow:none!important; transform:none!important; }
+        .active-page { background:#fff!important; color:var(--navy)!important; box-shadow:0 1px 3px rgba(8,17,32,.12); }
+        .active-filter { background:var(--primary)!important; color:white!important; border-color:var(--primary)!important; }
+        .keyword-btn { border:1px solid var(--border)!important; background:#fff!important; color:#49515B!important; border-radius:.375rem!important; font-weight:600!important; }
+        .keyword-btn:hover { background:var(--soft)!important; border-color:#CBB29E!important; }
+        .keyword-btn.active-keyword { background:var(--primary-soft)!important; border-color:#D8BDA8!important; color:var(--primary)!important; }
+        .mobile-store-expand { display:none; }
+        .mobile-only { display:none; }
+        @media (max-width: 767px) {
+            body { padding:16px!important; }
+            header { display:block!important; margin-bottom:20px!important; padding:16px!important; border-radius:16px!important; }
+            header h1 { font-size:20px!important; line-height:1.2!important; }
+            .product-description { display:none!important; }
+            .header-actions { display:grid!important; width:100%; grid-template-columns:minmax(0, 1fr) auto; align-items:center!important; margin-top:14px!important; gap:10px!important; }
+            .header-actions > div:first-child { display:grid!important; grid-template-columns:repeat(2, minmax(0, 1fr)); width:100%; }
+            .header-actions button { min-height:44px!important; padding:0 12px!important; font-size:14px!important; }
+            #status-tag { font-size:12px!important; white-space:nowrap; }
+
+            #global-summary { margin-bottom:20px!important; padding:14px!important; }
+            #global-summary > div { align-items:flex-start!important; gap:10px!important; }
+            #global-summary > div > div:first-child { width:100%; justify-content:space-between; font-size:14px!important; }
+            #global-summary > div > div:first-child > div:last-child { font-size:13px!important; }
+            #global-summary > div > div:nth-child(2) { width:100%; justify-content:space-between; border-top:1px solid var(--border); padding-top:10px; }
+            #global-summary > div > div:nth-child(2) > div { font-size:13px!important; }
+
+            #sv-selector { margin-bottom:20px!important; padding:14px!important; }
+            #sv-selector > div:first-child p { display:none!important; }
+            #sv-selector h2 { font-size:16px!important; }
+            .sv-tab { min-height:78px; padding:12px 8px!important; font-size:15px!important; }
+            .sv-tab .sv-country { margin-top:5px!important; font-size:12px!important; line-height:1.35!important; }
+            #sv-store-count-summary { margin-top:10px!important; }
+            #sv-store-count-summary > div { padding:9px 10px!important; gap:5px 10px!important; font-size:13px!important; line-height:1.4!important; }
+
+            #review-filters { margin-bottom:20px!important; gap:16px!important; padding:14px!important; }
+            #review-filters > div:first-child { align-items:flex-start!important; gap:12px!important; }
+            #review-filters > div:first-child > div:first-child { width:100%; }
+            #review-filters #current-title { font-size:16px!important; }
+            #review-filters > div:first-child > div:last-child { width:100%; justify-content:space-between; }
+            #review-filters > div:first-child > div:last-child span { font-size:13px!important; }
+            #review-filters #sort-select { flex:1; min-height:44px; font-size:14px!important; }
+            #review-filters > div:nth-child(2) { gap:12px!important; padding-top:14px!important; }
+            #review-filters > div:nth-child(2) > div:first-child { width:100%; gap:10px!important; }
+            #review-filters > div:nth-child(2) > div:first-child > div:first-child,
+            #review-filters > div:nth-child(2) > div:nth-child(2) > div:first-child,
+            #review-filters > div:nth-child(3) > div:first-child { font-size:13px!important; }
+            #review-filters > div:nth-child(2) > div:first-child > div:nth-child(2) { display:grid; width:100%; grid-template-columns:repeat(2, minmax(0, 1fr)); gap:10px; }
+            #review-filters .period-btn { min-height:44px; padding:8px!important; font-size:13px!important; }
+            #review-filters .period-btn:last-child { grid-column:span 2; }
+            #review-filters > div:nth-child(2) > div:nth-child(2) { width:100%; gap:10px!important; }
+            #review-filters #country-select { min-width:0!important; min-height:44px; flex:1; font-size:14px!important; }
+            #custom-period-box:not(.hidden) { display:grid!important; width:100%; grid-template-columns:1fr; gap:10px; padding-top:2px!important; }
+            #custom-period-box label { min-width:0; font-size:12px!important; }
+            #custom-period-box input { width:100%; min-height:44px; padding:8px 10px!important; font-size:14px!important; }
+            #custom-period-box button { grid-column:auto; min-height:44px; font-size:13px!important; }
+            #review-filters > div:nth-child(3) { gap:12px!important; padding-top:14px!important; }
+            #review-filters > div:nth-child(3) > div:nth-child(2) { display:grid; width:100%; grid-template-columns:repeat(2, minmax(0, 1fr)); gap:10px; }
+            #review-filters > div:nth-child(3) > div:nth-child(2) button { min-height:44px; font-size:13px!important; }
+            #review-filters > div:nth-child(3) > div:nth-child(3) { display:grid; width:100%; grid-template-columns:repeat(2, minmax(0, 1fr)); gap:10px!important; }
+            #review-filters .keyword-btn, #review-filters > div:nth-child(3) > div:nth-child(3) > button:last-child { min-height:42px; padding:8px!important; font-size:13px!important; }
+            #review-filters > div:nth-child(3) > div:nth-child(3) > button:last-child { grid-column:span 2; background:#F1F0ED!important; color:#49515B!important; }
+
+            #keyword-stat-panel { margin-bottom:20px!important; padding:14px!important; }
+            #keyword-stat-panel > div { gap:8px 12px!important; }
+            #keyword-stat-panel > div > div:first-child { width:100%; font-size:14px!important; }
+            #keyword-stat-scope { width:100%; font-size:12px!important; }
+            #keyword-stat-grid { display:grid!important; width:100%; grid-template-columns:repeat(2, minmax(0, 1fr)); gap:8px 16px!important; margin-left:0!important; }
+            #keyword-stat-grid button { min-width:0; min-height:28px; font-size:13px!important; text-align:left; }
+
+            #reviews-page > div { gap:20px!important; }
+            #reviews-page aside > div { padding:14px!important; }
+            #reviews-page aside h3 { font-size:16px!important; }
+            #store-list { max-height:none!important; overflow:visible!important; }
+            #store-list .store-btn { padding:12px 8px!important; }
+            #store-list .store-btn button { min-height:44px; }
+            #store-list .store-btn button > div > div:first-child > div:first-child { font-size:14px!important; }
+            #store-list .store-btn button > div > div:first-child > div:last-child,
+            #store-list .store-btn a { font-size:12px!important; }
+            #store-list .mobile-store-extra { display:none; }
+            #store-list.mobile-stores-expanded .mobile-store-extra { display:block; }
+            .mobile-store-expand { display:block!important; width:100%; min-height:44px; margin-top:10px; border:1px solid var(--border); border-radius:8px; background:var(--soft); color:#49515B; font-size:13px; font-weight:600; }
+
+            #review-summary { display:grid!important; grid-template-columns:repeat(3, minmax(0, 1fr)); margin-bottom:14px!important; padding:12px!important; gap:8px!important; }
+            #review-summary > div { min-width:0; display:block!important; }
+            #review-summary > div:nth-child(even) { display:none!important; }
+            #review-summary span { display:block; font-size:12px!important; }
+            #review-summary strong { display:block; margin-top:4px; font-size:16px!important; overflow-wrap:anywhere; }
+            #review-container { gap:12px!important; }
+            #review-container article { padding:16px!important; border-radius:12px!important; }
+            #review-container article > div:first-child { display:block!important; margin-bottom:12px!important; }
+            #review-container article > div:first-child > div:first-child { display:flex!important; flex-wrap:wrap!important; gap:7px 8px!important; }
+            #review-container article > div:first-child > div:first-child > span:first-child { font-size:15px!important; }
+            #review-container article > div:first-child > div:first-child > span:nth-child(2) { font-size:13px!important; }
+            #review-container article > div:first-child > div:last-child { display:flex!important; flex-direction:row!important; align-items:center!important; justify-content:flex-start!important; gap:12px!important; margin-top:9px; text-align:left!important; }
+            #review-container article > div:first-child > div:last-child > div:first-child { font-size:13px!important; }
+            #review-container article > div:first-child > div:last-child > div:last-child { flex-direction:row!important; gap:6px!important; }
+            #review-container article > div:first-child > div:last-child > div:last-child span { font-size:13px!important; }
+            #review-container article p { font-size:14px!important; line-height:1.6!important; }
+        }
+        /* Mobile Reviews workspace IA: deliberately distinct from the approved desktop layout. */
+        @media (max-width: 767px) {
+            .mobile-only:not(.hidden) { display:block; }
+            header > div:first-child { display:flex!important; align-items:center!important; }
+            header h1 { display:inline-block; font-size:20px!important; }
+            header .header-actions { grid-template-columns:minmax(0, 1fr) auto!important; }
+
+            #sv-selector { display:none!important; }
+            #review-filters { margin-bottom:12px!important; padding:14px!important; }
+            #review-filters > div:first-child { display:none!important; }
+            #review-filters > div:nth-child(2) { border-top:0!important; padding-top:0!important; }
+            #review-filters > div:nth-child(2) > div:first-child > div:nth-child(2) { grid-template-columns:repeat(2, minmax(0, 1fr))!important; }
+            #review-filters > div:nth-child(3) { padding-top:14px!important; }
+            #review-filters > div:nth-child(3) > div:first-child,
+            #review-filters > div:nth-child(3) > div:nth-child(3) { display:none!important; }
+            #review-filters > div:nth-child(3) > div:nth-child(2) { width:100%; }
+            #review-filters > div:nth-child(3) > div:nth-child(2) button { min-height:46px!important; font-size:14px!important; }
+
+            #mobile-detail-filters { margin:0 0 16px; border:1px solid var(--border); border-radius:14px; background:white; overflow:hidden; }
+            #mobile-detail-filter-toggle { width:100%; min-height:48px; padding:0 14px; border:0; background:white; color:var(--ink); font-size:14px; font-weight:600; text-align:left; }
+            #mobile-detail-filter-content { padding:0 14px 14px; border-top:1px solid var(--border); }
+            #mobile-detail-filter-content label { display:block; margin-top:14px; font-size:13px; font-weight:600; color:var(--muted); }
+            #mobile-detail-filter-content select { display:block; width:100%; min-height:44px; margin-top:7px; padding:0 10px; border:1px solid var(--border); border-radius:8px; background:white; color:var(--ink); font-size:14px; }
+            .mobile-detail-label { margin:16px 0 8px; font-size:13px; font-weight:600; color:var(--muted); }
+            .mobile-keyword-grid { display:grid; grid-template-columns:repeat(2, minmax(0, 1fr)); gap:8px; }
+            .mobile-keyword-grid .keyword-btn { min-height:42px; padding:8px!important; font-size:13px!important; }
+            .mobile-detail-reset { width:100%; min-height:44px; margin-top:12px; border:1px solid var(--border); border-radius:8px; background:var(--soft); color:var(--muted); font-size:13px; font-weight:600; }
+
+            #keyword-stat-panel { margin-bottom:16px!important; }
+            #mobile-store-selector:not(.hidden) { display:block!important; margin:0 0 16px; padding:14px; border:1px solid var(--border); border-radius:14px; background:white; }
+            .mobile-store-selector-heading { margin-bottom:8px; font-size:16px; font-weight:700; color:var(--ink); }
+            #mobile-store-select { width:100%; min-height:46px; padding:0 10px; border:1px solid var(--border); border-radius:9px; background:white; color:var(--ink); font-size:14px; font-weight:600; }
+            .mobile-store-overview { margin-top:10px; font-size:13px; color:var(--muted); }
+            .mobile-selected-store-context { display:grid; gap:5px; margin-top:12px; padding-top:12px; border-top:1px solid var(--border); }
+            .mobile-selected-store-context strong { font-size:15px; color:var(--ink); }
+            .mobile-selected-store-context span { font-size:13px; color:var(--muted); }
+            .mobile-selected-store-context a { margin-top:3px; font-size:13px; font-weight:600; color:var(--primary); text-decoration:underline; text-underline-offset:2px; }
+
+            #reviews-page > div { display:block!important; }
+            #reviews-page aside { display:none!important; }
+            #review-summary { grid-template-columns:repeat(3, minmax(0, 1fr))!important; }
+            #review-container article > div:first-child > div:first-child { display:block!important; }
+            #review-container article > div:first-child > div:first-child > span { display:inline-flex; margin-right:7px; margin-bottom:6px; }
+            #review-container article > div:first-child > div:first-child > span:first-child { display:block; margin-right:0; font-size:16px!important; }
+            #review-container article > div:first-child > div:last-child { gap:8px!important; margin-top:5px!important; }
+            .mobile-review-pagination { display:grid; grid-template-columns:1fr auto 1fr; align-items:center; gap:10px; margin-top:18px; }
+            .mobile-review-pagination button { min-height:44px; border:1px solid var(--border); border-radius:9px; background:white; color:var(--ink); font-size:14px; font-weight:600; }
+            .mobile-review-pagination button:disabled { opacity:.4; cursor:not-allowed; }
+            .mobile-review-pagination span { font-size:13px; font-weight:600; color:var(--muted); text-align:center; }
+        }
+        /* Final mobile visual refinement: controlled density without global scaling. */
+        @media (max-width: 767px) {
+            header { margin-bottom:12px!important; padding:10px 12px!important; border-radius:12px!important; }
+            header h1 { font-size:18px!important; }
+            header .header-actions { margin-top:8px!important; gap:8px!important; }
+            .header-actions button { min-height:38px!important; padding:0 10px!important; font-size:13px!important; }
+            #status-tag { font-size:11px!important; }
+
+            #global-summary { margin-bottom:10px!important; padding:9px 12px!important; border-radius:10px!important; }
+            #global-summary > div { gap:7px!important; }
+            #global-summary > div > div:first-child { font-size:13px!important; }
+            #global-summary > div > div:first-child > div:last-child,
+            #global-summary > div > div:nth-child(2) > div { font-size:12px!important; }
+            #global-summary > div > div:nth-child(2) { padding-top:7px!important; }
+
+            #review-filters { margin-bottom:8px!important; padding:10px!important; gap:10px!important; border-radius:10px!important; }
+            #review-filters > div:nth-child(2) { gap:8px!important; }
+            #review-filters > div:nth-child(2) > div:first-child { gap:7px!important; }
+            #review-filters > div:nth-child(2) > div:first-child > div:first-child,
+            #review-filters > div:nth-child(2) > div:nth-child(2) > div:first-child { font-size:12px!important; }
+            #review-filters > div:nth-child(2) > div:first-child > div:nth-child(2) { gap:7px!important; }
+            #review-filters .period-btn { min-height:37px!important; padding:6px!important; border-radius:7px!important; font-size:13px!important; }
+            #review-filters > div:nth-child(2) > div:nth-child(2) { gap:8px!important; }
+            #review-filters #country-select { min-height:40px!important; border-radius:7px!important; font-size:13px!important; }
+            #review-filters > div:nth-child(3) { padding-top:10px!important; gap:8px!important; }
+            #review-filters > div:nth-child(3) > div:nth-child(2) { gap:7px!important; }
+            #review-filters > div:nth-child(3) > div:nth-child(2) button { min-height:38px!important; border-radius:7px!important; font-size:13px!important; }
+            #custom-period-box:not(.hidden) { gap:7px!important; }
+            #custom-period-box input, #custom-period-box button { min-height:40px!important; font-size:13px!important; }
+
+            #mobile-detail-filters { margin-bottom:10px!important; border-radius:10px!important; }
+            #mobile-detail-filter-toggle { min-height:40px!important; padding:0 12px!important; font-size:13px!important; }
+            #mobile-detail-filter-content { padding:0 12px 12px!important; }
+            #mobile-detail-filter-content label { margin-top:10px!important; font-size:12px!important; }
+            #mobile-detail-filter-content select { min-height:40px!important; margin-top:5px!important; border-radius:7px!important; font-size:13px!important; }
+            .mobile-detail-label { margin:12px 0 7px!important; font-size:12px!important; }
+            .mobile-keyword-grid { gap:6px!important; }
+            .mobile-keyword-grid .keyword-btn { min-height:34px!important; padding:6px!important; border-radius:6px!important; font-size:12px!important; }
+            .mobile-detail-reset { min-height:38px!important; margin-top:9px!important; border-radius:7px!important; font-size:12px!important; }
+
+            #keyword-stat-panel { margin-bottom:10px!important; padding:10px 12px!important; border-radius:10px!important; }
+            #keyword-stat-panel > div { gap:5px 10px!important; }
+            #keyword-stat-panel > div > div:first-child { font-size:13px!important; }
+            #keyword-stat-scope { font-size:11px!important; }
+            #keyword-stat-grid { gap:5px 12px!important; }
+            #keyword-stat-grid button { min-height:24px!important; font-size:12px!important; }
+
+            #mobile-store-selector:not(.hidden) { margin-bottom:10px!important; padding:10px 12px!important; border-radius:10px!important; }
+            .mobile-store-selector-heading { margin-bottom:6px!important; font-size:14px!important; }
+            #mobile-store-select { min-height:40px!important; border-radius:7px!important; font-size:13px!important; }
+            .mobile-store-overview { margin-top:7px!important; font-size:12px!important; }
+            .mobile-selected-store-context { gap:3px!important; margin-top:9px!important; padding-top:9px!important; }
+            .mobile-selected-store-context strong { font-size:14px!important; }
+            .mobile-selected-store-context span, .mobile-selected-store-context a { font-size:12px!important; }
+
+            #review-summary { margin-bottom:10px!important; padding:8px 10px!important; gap:6px!important; border-radius:10px!important; }
+            #review-summary span { font-size:11px!important; }
+            #review-summary strong { margin-top:2px!important; font-size:15px!important; }
+            #review-container { gap:9px!important; }
+            #review-container article { padding:13px!important; border-radius:10px!important; }
+            #review-container article > div:first-child { margin-bottom:8px!important; }
+            #review-container article > div:first-child > div:first-child > span:first-child { font-size:15px!important; }
+            #review-container article > div:first-child > div:first-child > span:nth-child(2),
+            #review-container article > div:first-child > div:last-child > div:first-child,
+            #review-container article > div:first-child > div:last-child > div:last-child span { font-size:12px!important; }
+            #review-container article > div:first-child > div:first-child > span:nth-child(n+3) { padding:1px 5px!important; font-size:9px!important; }
+            #review-container article p { font-size:14px!important; line-height:1.55!important; }
+            .mobile-review-pagination { gap:8px!important; margin-top:12px!important; }
+            .mobile-review-pagination button { min-height:40px!important; border-radius:7px!important; font-size:13px!important; }
+            .mobile-review-pagination span { font-size:12px!important; }
+        }
+
+        /* Mobile visual system: warm-neutral, calm, app-like. Desktop remains unchanged. */
+        @media (max-width: 767px) {
+            body { padding:16px 16px calc(84px + env(safe-area-inset-bottom))!important; background:#F7F5F1!important; }
+            header { margin:0 0 14px!important; padding:0!important; border-radius:0!important; background:transparent!important; color:var(--ink)!important; }
+            header > div:first-child { display:flex!important; align-items:center!important; min-height:48px; }
+            .desktop-product-title, .product-description, header .header-actions { display:none!important; }
+            .mobile-header-copy { display:grid!important; gap:2px; margin-right:auto; }
+            .mobile-header-copy span { color:#8A8379; font-size:10px; font-weight:700; letter-spacing:.08em; }
+            .mobile-header-copy strong { color:#25231F; font-size:21px; font-weight:700; letter-spacing:-.035em; }
+
+            #global-summary { display:none!important; }
+            #mobile-operational-summary { display:block!important; margin:0 0 14px; }
+            .mobile-operation-card { padding:15px; border:1px solid #E7E2DA; border-radius:15px; background:#FFF; }
+            .mobile-operation-top { display:flex; align-items:flex-start; justify-content:space-between; gap:12px; }
+            .mobile-operation-eyebrow { display:block; margin-bottom:4px; color:#918A81; font-size:10px; font-weight:700; letter-spacing:.06em; }
+            .mobile-operation-sv { display:block; color:#25231F; font-size:17px; font-weight:700; letter-spacing:-.02em; }
+            .mobile-operation-countries { display:block; margin-top:2px; color:#716B63; font-size:12px; }
+            .mobile-operation-change { flex:0 0 auto; padding:6px 0; border:0; background:transparent; color:#575148; font-size:12px; font-weight:600; }
+            .mobile-operation-stores { margin-top:7px; color:#8A8379; font-size:11px; }
+            .mobile-operation-divider { height:1px; margin:13px 0 10px; background:#EEEAE4; }
+            .mobile-operation-status { display:flex; align-items:center; gap:6px; color:#5E5A54; font-size:12px; font-weight:600; }
+            .mobile-operation-status::before { width:6px; height:6px; border-radius:999px; background:#AAA39A; content:""; }
+            .mobile-operation-status.is-problem::before { background:#C98B8B; }
+            .mobile-operation-time { margin-top:3px; color:#938C83; font-size:11px; }
+            .mobile-operation-metrics { display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-top:12px; }
+            .mobile-operation-metrics div { color:#8B847B; font-size:11px; }
+            .mobile-operation-metrics strong { display:block; margin-top:2px; color:#3D3934; font-size:14px; font-weight:650; }
+
+            #sv-selector, #keyword-stat-panel { display:none!important; }
+            #review-filters { margin:0 0 14px!important; padding:0!important; border:0!important; border-radius:0!important; background:transparent!important; }
+            #review-filters > :not(#mobile-filter-summary) { display:none!important; }
+            #mobile-filter-summary { display:block!important; padding:14px; border:1px solid #E7E2DA; border-radius:14px; background:#FFF; }
+            .mobile-filter-heading { margin-bottom:9px; color:#282520; font-size:15px; font-weight:650; }
+            .mobile-filter-row { display:grid; grid-template-columns:52px minmax(0,1fr) 12px; align-items:center; width:100%; min-height:38px; padding:0; border:0; border-top:1px solid #F0ECE7; background:transparent; color:#716B63; text-align:left; font-size:12px; }
+            .mobile-filter-row strong { overflow:hidden; color:#37332E; font-size:12px; font-weight:550; text-align:right; text-overflow:ellipsis; white-space:nowrap; }
+            .mobile-filter-row select { width:100%; padding:0 12px 0 0; border:0; appearance:none; background:transparent; color:#37332E; font-size:12px; font-weight:550; text-align:right; outline:0; }
+            .mobile-filter-row i, .mobile-filter-detail-link span { color:#9B948A; font-size:17px; font-style:normal; text-align:right; }
+            .mobile-filter-toggles { display:flex; gap:8px; padding:10px 0; }
+            .mobile-filter-toggles button { min-height:36px; padding:0 12px; border:1px solid #E5E0D8; border-radius:8px; background:#FFF; color:#5F5951; font-size:12px; font-weight:600; }
+            .mobile-filter-toggles #mobile-new-toggle.active-keyword { border-color:#DCD8D1!important; background:#F3F1ED!important; color:#3E3933!important; }
+            .mobile-filter-toggles #mobile-low-toggle.active-keyword { border-color:#E8D2D2!important; background:#FCF4F4!important; color:#A16060!important; }
+            .mobile-filter-detail-link { display:flex; align-items:center; justify-content:space-between; width:100%; min-height:34px; padding:0; border:0; border-top:1px solid #F0ECE7; background:transparent; color:#5E5850; font-size:12px; font-weight:600; text-align:left; }
+
+            #mobile-detail-filters { margin:0 0 14px!important; border:1px solid #E7E2DA!important; border-radius:14px!important; background:#FFF!important; }
+            #mobile-detail-filter-toggle { min-height:42px!important; padding:0 14px!important; color:#514B44!important; font-size:12px!important; font-weight:600!important; }
+            #mobile-detail-filter-content { padding:0 14px 14px!important; border-top:1px solid #F0ECE7!important; }
+            .mobile-detail-label, #mobile-detail-filter-content label { color:#857E74!important; font-size:11px!important; font-weight:650!important; }
+            .mobile-period-grid { display:grid; grid-template-columns:repeat(2, minmax(0,1fr)); gap:7px; margin-top:7px; }
+            .mobile-period-grid .period-btn { min-height:36px!important; padding:0 8px!important; border:1px solid #E5E0D8!important; border-radius:8px!important; background:#FFF!important; color:#5F5951!important; font-size:11px!important; font-weight:600!important; }
+            .mobile-period-grid .period-btn.active-filter { border-color:#D9D4CB!important; background:#F1EFEB!important; color:#302C27!important; }
+            #mobile-custom-period-box { display:grid; grid-template-columns:1fr 1fr; gap:7px; margin-top:8px; }
+            #mobile-custom-period-box label { margin:0!important; }
+            #mobile-custom-period-box input { width:100%; min-height:38px; margin-top:5px; padding:0 7px; border:1px solid #E5E0D8; border-radius:7px; color:#4E4840; font-size:11px; }
+            #mobile-custom-period-box button { grid-column:1 / -1; min-height:36px; border:1px solid #E1DDD5; border-radius:8px; background:#F3F1ED; color:#4D473F; font-size:12px; font-weight:600; }
+            #mobile-detail-filter-content select { min-height:38px!important; border-color:#E5E0D8!important; border-radius:8px!important; color:#4E4840!important; font-size:12px!important; }
+            .mobile-keyword-grid .keyword-btn { min-height:34px!important; border-color:#E5E0D8!important; border-radius:7px!important; background:#FFF!important; color:#5F5951!important; font-size:11px!important; }
+            .mobile-keyword-grid .keyword-btn.active-keyword { border-color:#D9D4CB!important; background:#F1EFEB!important; color:#302C27!important; }
+            .mobile-detail-reset { min-height:36px!important; border-color:#E5E0D8!important; border-radius:8px!important; background:#F5F3EF!important; color:#5F5951!important; }
+
+            #mobile-store-selector:not(.hidden) { margin-bottom:14px!important; padding:14px!important; border-color:#E7E2DA!important; border-radius:14px!important; background:#FFF!important; }
+            .mobile-store-selector-heading { color:#282520!important; font-size:15px!important; font-weight:650!important; }
+            #mobile-store-select { min-height:40px!important; border-color:#E5E0D8!important; border-radius:8px!important; color:#3E3933!important; font-weight:550!important; }
+            .mobile-store-overview, .mobile-selected-store-context span { color:#827B72!important; font-size:12px!important; }
+            .mobile-selected-store-context strong { color:#34302B!important; font-size:14px!important; }
+            .mobile-selected-store-context a { color:#5E5850!important; font-size:12px!important; font-weight:600!important; }
+
+            #reviews-page > div { display:block!important; }
+            #reviews-page aside { display:none!important; }
+            #review-summary { margin-bottom:12px!important; padding:11px 0!important; border:0!important; border-top:1px solid #E6E1D9!important; border-bottom:1px solid #E6E1D9!important; border-radius:0!important; background:transparent!important; }
+            #review-summary span { color:#8A8379!important; font-size:11px!important; }
+            #review-summary strong { color:#37322D!important; font-size:14px!important; font-weight:650!important; }
+            #review-container { gap:8px!important; }
+            #review-container article { padding:14px!important; border-color:#E9E4DC!important; border-radius:12px!important; background:#FFF!important; box-shadow:none!important; }
+            #review-container article > div:first-child > div:first-child > span:first-child { color:#34302B!important; font-size:13px!important; font-weight:650!important; }
+            #review-container article > div:first-child > div:first-child > span:nth-child(2), #review-container article > div:first-child > div:last-child, #review-container article > div:first-child > div:last-child span { color:#8A8379!important; }
+            #review-container article > div:first-child > div:first-child > span:nth-child(3) { border:1px solid #E3DFD8; border-radius:5px!important; background:#F4F2EF!important; color:#686159!important; }
+            #review-container article > div:first-child > div:first-child > span:nth-child(4) { border:1px solid #E8D4D4; border-radius:5px!important; background:#FCF4F4!important; color:#A16060!important; }
+            #review-container article p { color:#3F3A34!important; font-size:14px!important; line-height:1.58!important; }
+            .mobile-review-pagination { margin:14px 0 8px!important; }
+            .mobile-review-pagination button { min-height:38px!important; border-color:#E5E0D8!important; border-radius:8px!important; background:#FFF!important; color:#514B44!important; font-size:12px!important; }
+            .mobile-review-pagination span { color:#847C73!important; font-size:12px!important; }
+
+
+            #mobile-bottom-nav { display:grid!important; position:fixed; right:0; bottom:0; left:0; z-index:60; grid-template-columns:1fr 1fr; padding:7px 28px calc(7px + env(safe-area-inset-bottom)); border-top:1px solid #E5E0D8; background:rgba(255,255,255,.96); backdrop-filter:blur(12px); }
+            #mobile-bottom-nav button { display:grid; place-items:center; gap:2px; min-height:46px; border:0; background:transparent; color:#8A8379; font-size:11px; font-weight:550; }
+            #mobile-bottom-nav button span { font-size:17px; line-height:1; }
+            #mobile-bottom-nav button[aria-current="page"] { color:#302C27; font-weight:700; }
+        }
+
+        /* Shared warm-neutral desktop system and responsive Insights workspace. */
+        :root { --bg:#F7F5F1; --surface:#FFF; --soft:#F4F2EE; --ink:#2B2823; --muted:#7E776E; --border:#E6E1D9; --primary:#5D574F; --primary-soft:#F1EFEB; }
+        .active-sv, .active-store, .active-keyword { border-color:#DDD8D0!important; background:#F1EFEB!important; color:#36312B!important; }
+        .active-sv .sv-country { color:#696158!important; }
+        .active-page { background:#F1EFEB!important; color:#302C27!important; box-shadow:none!important; }
+        .active-filter { border-color:#D9D4CB!important; background:#F1EFEB!important; color:#302C27!important; }
+        .keyword-btn:hover { border-color:#DDD8D0!important; background:#F7F5F1!important; }
+
+        @media (min-width: 768px) {
+            body { background:#F7F5F1!important; }
+            header { border:1px solid #E6E1D9!important; border-radius:14px!important; background:#FFF!important; color:#2B2823!important; box-shadow:none!important; }
+            .desktop-product-title { color:#2B2823!important; }
+            .product-description { color:#827B72!important; }
+            .header-actions > div:first-child { border:1px solid #E6E1D9; background:#FAF9F7!important; }
+            .header-actions #insights-page-tab { color:#736C63!important; }
+            #status-tag { color:#777168!important; }
+            #global-summary, #sv-selector, #review-filters, #keyword-stat-panel, #reviews-page aside > div, #review-summary { border-color:#E6E1D9!important; background:#FFF!important; box-shadow:none!important; }
+            #global-crawl-status { color:#5D655D!important; }
+            #global-new-low-reviews, #summary-low { color:#A16060!important; }
+            .sv-tab { border-color:#E6E1D9!important; background:#FFF!important; color:#5B554D!important; }
+            .sv-tab:hover, .store-btn:hover { background:#F7F5F1!important; }
+            #review-container article { border-color:#E8E3DB!important; box-shadow:none!important; }
+            #review-container article:not(.border-\[\#F1D0D0\]) { background:#FFF!important; }
+        }
+
+        .mobile-sv-picker { display:grid; grid-template-columns:repeat(2, minmax(0,1fr)); gap:7px; margin-top:12px; }
+        .mobile-sv-picker button { min-height:44px; padding:7px 9px; border:1px solid #E5E0D8; border-radius:8px; background:#FFF; color:#4C463E; font-size:12px; font-weight:650; text-align:left; }
+        .mobile-sv-picker button span { display:block; margin-top:2px; color:#857E74; font-size:10px; font-weight:500; }
+        .mobile-sv-picker button.is-current { border-color:#DCD7CF; background:#F1EFEB; color:#302C27; }
+
+        #insights-page { margin-top:2px; }
+        .insights-heading { margin-bottom:16px; padding:2px 0 0; }
+        .insights-heading > span { color:#8A8379; font-size:10px; font-weight:700; letter-spacing:.08em; }
+        .insights-heading h2 { margin-top:5px; color:#2B2823; font-size:24px; font-weight:700; letter-spacing:-.035em; }
+        .insights-heading p { margin-top:5px; color:#746D64; font-size:13px; }
+        #insight-scope { margin-top:10px; color:#817A71; font-size:12px; font-weight:550; overflow-wrap:anywhere; }
+        .insight-summary { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); margin-bottom:16px; border:1px solid #E6E1D9; border-radius:14px; background:#FFF; overflow:hidden; }
+        .insight-metric { min-width:0; padding:14px 16px; border-right:1px solid #EEEAE4; }
+        .insight-metric:last-child { border-right:0; }
+        .insight-metric span { display:block; color:#857E74; font-size:11px; font-weight:600; }
+        .insight-metric strong { display:block; margin-top:4px; color:#312D28; font-size:19px; font-weight:700; overflow-wrap:anywhere; }
+        .insight-metric-low strong { color:#A16060; }
+        .insight-analysis-grid { display:grid; gap:16px; margin-bottom:16px; }
+        .insight-analysis-primary { grid-template-columns:minmax(0,3fr) minmax(300px,2fr); }
+        .insight-analysis-secondary { grid-template-columns:minmax(0,3fr) minmax(300px,2fr); }
+        .insight-surface { min-width:0; padding:18px; border:1px solid #E6E1D9; border-radius:14px; background:#FFF; }
+        .insight-section-heading { margin-bottom:14px; }
+        .insight-section-heading h3 { color:#34302B; font-size:15px; font-weight:700; }
+        .insight-section-heading p { margin-top:3px; color:#8A8379; font-size:11px; }
+        .insight-chart-canvas { padding:10px; border-radius:10px; background:#FAF9F7; }
+        .insight-chart-canvas svg { height:230px; }
+        #keyword-cloud { display:grid; }
+        .insight-keyword-row { display:grid; grid-template-columns:26px minmax(0,1fr) auto; align-items:center; gap:8px; min-height:38px; border:0; border-bottom:1px solid #F0ECE7; background:transparent; color:#4B453D; font-size:12px; font-weight:600; text-align:left; }
+        .insight-keyword-row:last-child { border-bottom:0; }
+        .insight-keyword-row strong { color:#37322D; font-size:12px; }
+        .insight-rank { color:#A19A91; font-size:11px; }
+        #store-risk-cards { display:grid; gap:0; }
+        .insight-risk-row { display:flex; align-items:center; justify-content:space-between; gap:10px; padding:11px 0; border-bottom:1px solid #F0ECE7; }
+        .insight-risk-row:last-child { border-bottom:0; }
+        .insight-risk-row strong, .insight-risk-row span { display:block; }
+        .insight-risk-row strong { overflow-wrap:anywhere; color:#403A33; font-size:13px; font-weight:650; }
+        .insight-risk-row span { margin-top:3px; color:#887F76; font-size:11px; }
+        .insight-risk-row em { flex:0 0 auto; padding:3px 6px; border:1px solid #E7D3D3; border-radius:5px; background:#FCF4F4; color:#A16060; font-size:10px; font-style:normal; font-weight:650; }
+
+        @media (max-width: 767px) {
+            .mobile-header-copy { margin-right:0!important; }
+            .mobile-operation-change { margin-left:auto; }
+            .mobile-sv-picker { grid-template-columns:1fr 1fr; }
+            #insights-page { margin-top:0; }
+            .insights-heading { margin:1px 0 14px; }
+            .insights-heading h2 { font-size:20px; }
+            .insights-heading p { font-size:12px; }
+            #insight-scope { font-size:11px; line-height:1.45; }
+            .insight-summary { grid-template-columns:repeat(2,minmax(0,1fr)); margin-bottom:14px; border-radius:13px; }
+            .insight-metric { padding:12px 13px; border-bottom:1px solid #EEEAE4; }
+            .insight-metric:nth-child(2) { border-right:0; }
+            .insight-metric:nth-child(n+3) { border-bottom:0; }
+            .insight-metric strong { font-size:17px; }
+            .insight-analysis-grid, .insight-analysis-primary, .insight-analysis-secondary { grid-template-columns:minmax(0,1fr); gap:12px; margin-bottom:12px; }
+            .insight-surface { padding:14px; border-radius:13px; }
+            .insight-chart-canvas { padding:6px 2px 2px; }
+            .insight-chart-canvas svg { min-width:0; height:205px; }
+            .insight-chart-canvas text { font-size:11px; }
+            #rating-chart { gap:10px!important; }
+        }
+
+        /* Selection states: a single soft warm-neutral surface, never an icon or accent fill. */
+        .active-sv, .active-store, .active-keyword, .active-filter, .active-page,
+        .mobile-sv-picker button.is-current, .mobile-period-grid .period-btn.active-filter,
+        .mobile-keyword-grid .keyword-btn.active-keyword {
+            border-color:#DDD8D0!important;
+            background:#F1EFEB!important;
+            color:#36312B!important;
+            box-shadow:none!important;
+        }
+        #new-review-toggle, #low-rating-toggle,
+        .mobile-filter-toggles #mobile-new-toggle, .mobile-filter-toggles #mobile-low-toggle {
+            border-color:#E3DFD8!important;
+            background:#FFF!important;
+            color:#625C54!important;
+        }
+        #new-review-toggle.active-keyword, #low-rating-toggle.active-keyword,
+        .mobile-filter-toggles #mobile-new-toggle.active-keyword,
+        .mobile-filter-toggles #mobile-low-toggle.active-keyword {
+            border-color:#DDD8D0!important;
+            background:#F1EFEB!important;
+            color:#36312B!important;
+        }
+        #mobile-bottom-nav button[aria-current="page"] { border-radius:8px; background:#F1EFEB!important; color:#302C27!important; }
+        .insight-keyword-row.is-active { background:#F1EFEB!important; color:#302C27!important; }
     </style>
 </head>
-<body class="bg-slate-50 p-6">
-    <div class="max-w-7xl mx-auto">
-        <header class="mb-6 flex flex-wrap justify-between items-center gap-4 bg-white p-6 rounded-2xl shadow-sm">
+<body class="bg-[#F8F7F4] p-4 text-[#1F2329] sm:p-6 lg:p-8">
+    <div class="mx-auto max-w-[1440px]">
+        <header class="mb-4 rounded-2xl bg-[#081120] px-5 py-3.5 text-white sm:flex sm:items-center sm:justify-between sm:px-6">
             <div>
-                <h1 class="text-2xl font-black text-slate-800">
-                    📊 SV REVIEW MASTER
-                    <span class="text-blue-500 text-sm font-normal ml-2">v2.0.7</span>
+                <div class="mobile-header-copy mobile-only"><span>SV REVIEW MASTER</span><strong id="mobile-workspace-title">Reviews</strong></div>
+                <h1 class="desktop-product-title text-xl font-bold tracking-[-0.03em] sm:text-2xl">
+                    SV REVIEW MASTER <span class="ml-1 text-[11px] font-medium text-slate-400">v2.0.7</span>
                 </h1>
-                <p class="text-xs text-slate-400 mt-1">Google Maps 리뷰 자동 수집 · 담당 SV별 리뷰 관리 · Insight Dashboard</p>
+                <p class="product-description mt-0.5 text-[12px] text-slate-400">Google Maps 리뷰 자동 수집 · 담당 SV별 리뷰 관리</p>
             </div>
 
-            <div class="flex items-center gap-2">
-                <button id="reviews-page-tab" onclick="switchPage('reviews')" class="active-page px-4 py-2 rounded-full bg-slate-100 text-slate-600 text-xs font-black transition-all">
+            <div class="header-actions mt-3 flex flex-wrap items-center gap-3 sm:mt-0">
+                <div class="flex rounded-lg bg-white/10 p-1">
+                <button id="reviews-page-tab" onclick="switchPage('reviews')" class="active-page min-h-9 rounded-md px-4 text-[12px] font-semibold transition-all">
                     Reviews
                 </button>
-                <button id="insights-page-tab" onclick="switchPage('insights')" class="px-4 py-2 rounded-full bg-slate-100 text-slate-600 text-xs font-black transition-all">
+                <button id="insights-page-tab" onclick="switchPage('insights')" class="min-h-9 rounded-md px-4 text-[12px] font-medium text-slate-300 transition-all hover:text-white">
                     Insights
                 </button>
-                <div id="status-tag" class="px-3 py-1 bg-green-100 rounded-full text-[10px] font-bold text-green-600">데이터 연결 중...</div>
+                </div>
+                <div id="status-tag" class="text-[12px] font-medium text-emerald-300">데이터 연결 중...</div>
             </div>
         </header>
 
-        <div id="global-summary" class="grid grid-cols-2 xl:grid-cols-4 gap-4 mb-6 hidden">
-            <div class="bg-white rounded-2xl shadow-sm p-4">
-                <div class="text-[10px] text-slate-400 font-bold">마지막 크롤링</div>
-                <div id="global-crawled-at" class="text-sm font-black text-blue-600 mt-2">-</div>
-            </div>
-            <div class="bg-white rounded-2xl shadow-sm p-4">
-                <div class="text-[10px] text-slate-400 font-bold">크롤링 결과</div>
-                <div id="global-crawl-status" class="text-sm font-black text-emerald-600 mt-2">-</div>
-                <div id="global-failed-stores" class="text-[10px] text-red-500 mt-2 hidden"></div>
-            </div>
-            <div class="bg-white rounded-2xl shadow-sm p-4">
-                <div class="text-[10px] text-slate-400 font-bold">이번 실행 신규 리뷰</div>
-                <div id="global-new-reviews" class="text-xl font-black text-red-500 mt-1">0</div>
-                <div class="text-[10px] text-slate-400 font-bold mt-1">최신 crawl run 기준</div>
-            </div>
-            <div class="bg-white rounded-2xl shadow-sm p-4">
-                <div class="text-[10px] text-slate-400 font-bold">이번 실행 신규 저평점</div>
-                <div id="global-new-low-reviews" class="text-xl font-black text-red-600 mt-1">0</div>
-                <div class="text-[10px] text-slate-400 font-bold mt-1">3점 이하 신규 리뷰</div>
-            </div>
-        </div>
+        <section id="mobile-operational-summary" class="mobile-only" aria-live="polite"></section>
 
-        <div class="grid grid-cols-4 gap-4 mb-6">
-            <button onclick="selectSV('이여명', this)" class="sv-tab p-4 bg-white rounded-xl shadow-sm font-bold text-slate-600 transition-all">
-                이여명 SV
-                <div class="text-[10px] font-normal mt-1 text-slate-400">대만 · 싱가포르</div>
+        <section id="global-summary" class="mb-4 hidden rounded-xl border border-[#E7E4DF] bg-white px-4 py-2.5 sm:px-5">
+            <div class="flex flex-wrap items-center justify-between gap-x-5 gap-y-2">
+                <div class="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm">
+                    <div><p id="global-crawl-status" class="font-semibold text-[#278A62]">수집 상태 -</p></div>
+                    <div class="hidden h-7 w-px bg-[#E7E4DF] sm:block"></div>
+                    <div class="text-[12px]"><span class="text-[#68717D]">최근 수집</span><span id="global-crawled-at" class="ml-1.5 font-medium text-[#1F2329]">-</span></div>
+                </div>
+                <div class="flex items-center gap-2">
+                    <div class="text-[12px]"><span class="text-[#68717D]">신규 리뷰</span><strong id="global-new-reviews" class="ml-1.5 text-[#1F2329]">0</strong></div>
+                    <div class="rounded-md bg-[#FDEEEE] px-2 py-1 text-[12px]"><span class="text-[#B83E3E]">신규 저평점</span><strong id="global-new-low-reviews" class="ml-1.5 text-[#B83E3E]">0</strong></div>
+                </div>
+            </div>
+            <div id="global-failed-stores" class="mt-3 hidden rounded-lg border border-[#F2D49C] bg-[#FFF7E7] px-3 py-2 text-sm font-medium text-[#91631C]"></div>
+        </section>
+
+        <section id="sv-selector" class="mb-4 rounded-xl border border-[#E7E4DF] bg-white p-3 sm:px-4">
+            <div class="mb-2 flex items-center justify-between gap-4"><h2 class="text-sm font-bold text-[#1F2329]">담당 SV</h2><p class="hidden text-[11px] text-[#68717D] sm:block">선택한 담당자의 매장과 리뷰를 확인합니다.</p></div>
+        <div class="grid grid-cols-2 gap-2 sm:grid-cols-4">
+            <button data-sv="이여명" onclick="selectSV('이여명', this)" class="sv-tab rounded-lg border border-[#E7E4DF] bg-white px-3 py-2.5 text-sm font-bold text-[#49515B] transition hover:bg-[#FBFAF8]">
+                SV A
+                <div class="sv-country text-[10px] font-normal mt-1 text-[#68717D]">대만 · 싱가포르</div>
             </button>
-            <button onclick="selectSV('강소영', this)" class="sv-tab p-4 bg-white rounded-xl shadow-sm font-bold text-slate-600 transition-all">
-                강소영 SV
-                <div class="text-[10px] font-normal mt-1 text-slate-400">몽골 · 네덜란드</div>
+            <button data-sv="강소영" onclick="selectSV('강소영', this)" class="sv-tab rounded-lg border border-[#E7E4DF] bg-white px-3 py-2.5 text-sm font-bold text-[#49515B] transition hover:bg-[#FBFAF8]">
+                SV B
+                <div class="sv-country text-[10px] font-normal mt-1 text-[#68717D]">몽골 · 네덜란드</div>
             </button>
-            <button onclick="selectSV('소도희', this)" class="sv-tab p-4 bg-white rounded-xl shadow-sm font-bold text-slate-600 transition-all">
-                소도희 SV
-                <div class="text-[10px] font-normal mt-1 text-slate-400">호주 · 태국 · 캄보디아</div>
+            <button data-sv="소도희" onclick="selectSV('소도희', this)" class="sv-tab rounded-lg border border-[#E7E4DF] bg-white px-3 py-2.5 text-sm font-bold text-[#49515B] transition hover:bg-[#FBFAF8]">
+                SV C
+                <div class="sv-country text-[10px] font-normal mt-1 text-[#68717D]">호주 · 태국 · 캄보디아</div>
             </button>
-            <button onclick="selectSV('최성환', this)" class="sv-tab p-4 bg-white rounded-xl shadow-sm font-bold text-slate-600 transition-all">
-                최성환 SV
-                <div class="text-[10px] font-normal mt-1 text-slate-400">인도네시아 · 필리핀</div>
+            <button data-sv="최성환" onclick="selectSV('최성환', this)" class="sv-tab rounded-lg border border-[#E7E4DF] bg-white px-3 py-2.5 text-sm font-bold text-[#49515B] transition hover:bg-[#FBFAF8]">
+                SV D
+                <div class="sv-country text-[10px] font-normal mt-1 text-[#68717D]">인도네시아 · 필리핀</div>
             </button>
         </div>
+        <div id="sv-store-count-summary" class="mt-2"></div>
+        </section>
 
-        <div id="sv-store-count-summary" class="grid grid-cols-4 gap-4 mb-6"></div>
-
-        <div class="bg-white p-4 rounded-2xl shadow-sm mb-6 flex flex-col gap-4">
+        <section id="review-filters" class="mb-4 flex flex-col gap-3 rounded-xl border border-[#E7E4DF] bg-white p-3 sm:px-4">
             <div class="flex flex-wrap items-center justify-between gap-3">
-                <div>
-                    <div id="current-title" class="text-sm font-black text-slate-700">SV를 선택해주세요</div>
-                    <div id="current-subtitle" class="text-[11px] text-slate-400 mt-1">담당 국가 기준으로 리뷰가 자동 분류됩니다.</div>
+                <div class="flex items-baseline gap-2">
+                    <div id="current-title" class="text-sm font-bold text-[#1F2329]">SV를 선택해주세요</div>
+                    <div id="current-subtitle" class="hidden text-[11px] text-[#68717D] lg:block">담당 국가 기준으로 리뷰가 자동 분류됩니다.</div>
                 </div>
 
                 <div class="flex items-center gap-2">
-                    <span class="text-[11px] font-bold text-slate-400">정렬</span>
-                    <select id="sort-select" onchange="handleSortChange()" class="text-xs font-bold border border-slate-200 rounded-lg px-3 py-2 bg-white text-slate-700 outline-none">
+                    <span class="text-[11px] font-semibold text-[#68717D]">정렬</span>
+                    <select id="sort-select" onchange="handleSortChange()" class="rounded-lg border border-[#E7E4DF] bg-white px-3 py-2 text-xs font-semibold text-[#49515B] outline-none">
                         <option value="latest">날짜 순 · 최신순</option>
                         <option value="rating-high">별점 높은 순</option>
                         <option value="rating-low">별점 낮은 순</option>
@@ -95,19 +518,19 @@
                 </div>
             </div>
 
-            <div class="grid grid-cols-1 xl:grid-cols-2 gap-4">
-                <div class="rounded-2xl border border-slate-100 bg-slate-50 p-4">
-                    <div class="text-[10px] font-black text-slate-400 mb-3">PERIOD FILTER</div>
+            <div class="flex flex-wrap items-center gap-2 border-t border-[#E7E4DF] pt-3">
+                <div class="flex flex-wrap items-center gap-2">
+                    <div class="mr-1 text-[11px] font-semibold text-[#68717D]">기간</div>
                     <div class="flex flex-wrap gap-2">
-                        <button onclick="setPeriodFilter('all', this)" class="period-btn active-filter px-3 py-2 rounded-full border border-slate-200 bg-white text-[11px] font-black">전체 기간</button>
-                        <button onclick="setPeriodFilter('today', this)" class="period-btn px-3 py-2 rounded-full border border-slate-200 bg-white text-[11px] font-black">오늘</button>
-                        <button onclick="setPeriodFilter('7d', this)" class="period-btn px-3 py-2 rounded-full border border-slate-200 bg-white text-[11px] font-black">최근 7일</button>
-                        <button onclick="setPeriodFilter('30d', this)" class="period-btn px-3 py-2 rounded-full border border-slate-200 bg-white text-[11px] font-black">최근 30일</button>
-                        <button onclick="setPeriodFilter('this-month', this)" class="period-btn px-3 py-2 rounded-full border border-slate-200 bg-white text-[11px] font-black">이번 달</button>
-                        <button onclick="setPeriodFilter('last-month', this)" class="period-btn px-3 py-2 rounded-full border border-slate-200 bg-white text-[11px] font-black">지난달</button>
-                        <button onclick="setPeriodFilter('custom', this)" class="period-btn px-3 py-2 rounded-full border border-slate-200 bg-white text-[11px] font-black">직접 선택</button>
+                        <button onclick="setPeriodFilter('all', this)" class="period-btn active-filter rounded-md border border-[#E7E4DF] bg-white px-3 py-2 text-[11px] font-semibold">전체 기간</button>
+                        <button onclick="setPeriodFilter('today', this)" class="period-btn rounded-md border border-[#E7E4DF] bg-white px-3 py-2 text-[11px] font-semibold">오늘</button>
+                        <button onclick="setPeriodFilter('7d', this)" class="period-btn rounded-md border border-[#E7E4DF] bg-white px-3 py-2 text-[11px] font-semibold">최근 7일</button>
+                        <button onclick="setPeriodFilter('30d', this)" class="period-btn rounded-md border border-[#E7E4DF] bg-white px-3 py-2 text-[11px] font-semibold">최근 30일</button>
+                        <button onclick="setPeriodFilter('this-month', this)" class="period-btn rounded-md border border-[#E7E4DF] bg-white px-3 py-2 text-[11px] font-semibold">이번 달</button>
+                        <button onclick="setPeriodFilter('last-month', this)" class="period-btn rounded-md border border-[#E7E4DF] bg-white px-3 py-2 text-[11px] font-semibold">지난달</button>
+                        <button onclick="setPeriodFilter('custom', this)" class="period-btn rounded-md border border-[#E7E4DF] bg-white px-3 py-2 text-[11px] font-semibold">직접 선택</button>
                     </div>
-                    <div id="custom-period-box" class="hidden mt-3 flex flex-wrap items-end gap-2">
+                    <div id="custom-period-box" class="hidden basis-full flex-wrap items-end gap-2 pt-1">
                         <label class="text-[10px] font-bold text-slate-500">
                             시작일
                             <input id="period-start" type="date" class="block mt-1 border border-slate-200 rounded-lg px-3 py-2 text-xs bg-white">
@@ -118,155 +541,164 @@
                         </label>
                         <button onclick="applyCustomPeriod()" class="px-4 py-2 rounded-lg bg-slate-900 text-white text-[11px] font-black">적용</button>
                     </div>
-                    <div id="period-filter-label" class="text-[10px] text-blue-600 font-bold mt-3">전체 기간</div>
+                    <div id="period-filter-label" class="sr-only">전체 기간</div>
                 </div>
 
-                <div class="rounded-2xl border border-slate-100 bg-slate-50 p-4">
-                    <div class="text-[10px] font-black text-slate-400 mb-3">COUNTRY FILTER</div>
-                    <select id="country-select" onchange="handleCountryChange()" class="w-full text-xs font-bold border border-slate-200 rounded-xl px-3 py-3 bg-white text-slate-700 outline-none">
+                <div class="flex items-center gap-2">
+                    <div class="text-[11px] font-semibold text-[#68717D]">국가</div>
+                    <select id="country-select" onchange="handleCountryChange()" class="min-w-[150px] rounded-lg border border-[#E7E4DF] bg-white px-3 py-2 text-xs font-semibold text-[#49515B] outline-none">
                         <option value="ALL">전체 국가</option>
                     </select>
-                    <div id="country-filter-label" class="text-[10px] text-blue-600 font-bold mt-3">전체 국가</div>
+                    <div id="country-filter-label" class="sr-only">전체 국가</div>
                 </div>
             </div>
 
-            <div>
-                <div class="flex items-center justify-between gap-3 flex-wrap mb-2">
-                    <div class="text-[10px] font-black text-slate-400">KEYWORD FILTER</div>
+            <div class="flex flex-wrap items-center gap-2 border-t border-[#E7E4DF] pt-3">
+                    <div class="mr-1 text-[11px] font-semibold text-[#68717D]">리뷰 필터</div>
                     <div class="flex items-center gap-2">
-                        <button onclick="toggleNewReviewMode(this)" id="new-review-toggle" class="px-3 py-2 rounded-full bg-blue-50 text-blue-600 text-[11px] font-black hover:bg-blue-100 transition-all">
-                            🆕 NEW REVIEWS ONLY
+                        <button onclick="toggleNewReviewMode(this)" id="new-review-toggle" class="rounded-md border border-[#E3DFD8] bg-[#F4F2EF] px-3 py-2 text-[11px] font-semibold text-[#686159] transition-all hover:bg-[#EFEDE9]">
+                            NEW 리뷰
                         </button>
-                        <button onclick="toggleLowRatingMode(this)" id="low-rating-toggle" class="px-3 py-2 rounded-full bg-red-50 text-red-600 text-[11px] font-black hover:bg-red-100 transition-all">
-                            🚨 LOW REVIEWS ONLY
+                        <button onclick="toggleLowRatingMode(this)" id="low-rating-toggle" class="rounded-md border border-[#F1D0D0] bg-[#FDEEEE] px-3 py-2 text-[11px] font-semibold text-[#B83E3E] transition-all hover:bg-[#F9E1E1]">
+                            저평점
                         </button>
                     </div>
-                </div>
-
                 <div class="flex flex-wrap gap-2">
-                    <button title="Signature menu keywords: jjajangmyeon, jjamppong, tangsuyuk, woosamgyeop, samgyeopsal, galbi, kimchi jjigae, bibimbap, yeoltan bulgogi, pork belly, Korean BBQ" onclick="applyKeywordFilter('food', this)" class="keyword-btn px-3 py-2 rounded-full bg-orange-50 text-orange-700 text-[11px] font-black hover:bg-orange-100 transition-all">🍽 Food</button>
-                    <button title="Flavor, salty, salt, cold, fresh, too spicy, too salty, bland, seasoning, taste" onclick="applyKeywordFilter('taste', this)" class="keyword-btn px-3 py-2 rounded-full bg-red-50 text-red-600 text-[11px] font-black hover:bg-red-100 transition-all">#Taste</button>
-                    <button title="Value, price, expensive, cheap, worth, reasonable, quality, qality, portion, cost" onclick="applyKeywordFilter('value', this)" class="keyword-btn px-3 py-2 rounded-full bg-yellow-50 text-yellow-700 text-[11px] font-black hover:bg-yellow-100 transition-all">#Value</button>
-                    <button title="Service, staff, friendly, rude, kind, attitude, response, hospitality" onclick="applyKeywordFilter('service', this)" class="keyword-btn px-3 py-2 rounded-full bg-blue-50 text-blue-700 text-[11px] font-black hover:bg-blue-100 transition-all">#Service</button>
-                    <button title="System, order, ordering, wrong order, missing order, payment, kiosk, queue, operation" onclick="applyKeywordFilter('operation', this)" class="keyword-btn px-3 py-2 rounded-full bg-indigo-50 text-indigo-700 text-[11px] font-black hover:bg-indigo-100 transition-all">#Operation</button>
-                    <button title="Booking, reservation, table booking, waiting, wait, queue" onclick="applyKeywordFilter('reservation', this)" class="keyword-btn px-3 py-2 rounded-full bg-violet-50 text-violet-700 text-[11px] font-black hover:bg-violet-100 transition-all">#Reservation</button>
-                    <button title="Hygiene, clean, dirty, toilet, bathroom, smell, sanitary, sticky" onclick="applyKeywordFilter('hygiene', this)" class="keyword-btn px-3 py-2 rounded-full bg-teal-50 text-teal-700 text-[11px] font-black hover:bg-teal-100 transition-all">#Hygiene</button>
-                    <button title="Again, revisit, come back, return, never again, will be back" onclick="applyKeywordFilter('revisit', this)" class="keyword-btn px-3 py-2 rounded-full bg-pink-50 text-pink-700 text-[11px] font-black hover:bg-pink-100 transition-all">#Revisit</button>
-                    <button title="Authentic, charcoal, carcoal, Korean style, traditional, original, smoky, real Korean" onclick="applyKeywordFilter('authentic', this)" class="keyword-btn px-3 py-2 rounded-full bg-amber-50 text-amber-700 text-[11px] font-black hover:bg-amber-100 transition-all">#Authentic</button>
-                    <button onclick="clearKeywordFilter()" class="px-3 py-2 rounded-full bg-black text-white text-[11px] font-black hover:opacity-80 transition-all">✕ Reset</button>
+                    <button title="Signature menu keywords: jjajangmyeon, jjamppong, tangsuyuk, woosamgyeop, samgyeopsal, galbi, kimchi jjigae, bibimbap, yeoltan bulgogi, pork belly, Korean BBQ" onclick="applyKeywordFilter('food', this)" class="keyword-btn px-3 py-2 rounded-full bg-orange-50 text-orange-700 text-[11px] font-black hover:bg-orange-100 transition-all">메뉴/음식</button>
+                    <button title="Flavor, salty, salt, cold, fresh, too spicy, too salty, bland, seasoning, taste" onclick="applyKeywordFilter('taste', this)" class="keyword-btn px-3 py-2 rounded-full bg-red-50 text-red-600 text-[11px] font-black hover:bg-red-100 transition-all">맛</button>
+                    <button title="Value, price, expensive, cheap, worth, reasonable, quality, qality, portion, cost" onclick="applyKeywordFilter('value', this)" class="keyword-btn px-3 py-2 rounded-full bg-yellow-50 text-yellow-700 text-[11px] font-black hover:bg-yellow-100 transition-all">가격/가치</button>
+                    <button title="Service, staff, friendly, rude, kind, attitude, response, hospitality" onclick="applyKeywordFilter('service', this)" class="keyword-btn px-3 py-2 rounded-full bg-blue-50 text-blue-700 text-[11px] font-black hover:bg-blue-100 transition-all">서비스</button>
+                    <button title="System, order, ordering, wrong order, missing order, payment, kiosk, queue, operation" onclick="applyKeywordFilter('operation', this)" class="keyword-btn px-3 py-2 rounded-full bg-indigo-50 text-indigo-700 text-[11px] font-black hover:bg-indigo-100 transition-all">운영</button>
+                    <button title="Booking, reservation, table booking, waiting, wait, queue" onclick="applyKeywordFilter('reservation', this)" class="keyword-btn px-3 py-2 rounded-full bg-violet-50 text-violet-700 text-[11px] font-black hover:bg-violet-100 transition-all">예약/대기</button>
+                    <button title="Hygiene, clean, dirty, toilet, bathroom, smell, sanitary, sticky" onclick="applyKeywordFilter('hygiene', this)" class="keyword-btn px-3 py-2 rounded-full bg-teal-50 text-teal-700 text-[11px] font-black hover:bg-teal-100 transition-all">위생</button>
+                    <button title="Again, revisit, come back, return, never again, will be back" onclick="applyKeywordFilter('revisit', this)" class="keyword-btn px-3 py-2 rounded-full bg-pink-50 text-pink-700 text-[11px] font-black hover:bg-pink-100 transition-all">재방문</button>
+                    <button title="Authentic, charcoal, carcoal, Korean style, traditional, original, smoky, real Korean" onclick="applyKeywordFilter('authentic', this)" class="keyword-btn px-3 py-2 rounded-full bg-amber-50 text-amber-700 text-[11px] font-black hover:bg-amber-100 transition-all">정통성</button>
+                    <button onclick="clearKeywordFilter()" class="rounded-md bg-[#514B44] px-3 py-2 text-[11px] font-semibold text-white transition-all hover:bg-[#3F3A34]">초기화</button>
                 </div>
             </div>
-        </div>
+            <div id="mobile-filter-summary" class="mobile-only">
+                <div class="mobile-filter-heading">리뷰 필터</div>
+                <button type="button" class="mobile-filter-row" onclick="toggleMobileDetailFilters()"><span>기간</span><strong id="mobile-period-label">전체 기간</strong><i>›</i></button>
+                <label class="mobile-filter-row"><span>국가</span><select id="mobile-country-select" onchange="handleMobileCountryChange(this)"><option value="ALL">전체 국가</option></select><i>›</i></label>
+                <div class="mobile-filter-toggles">
+                    <button type="button" id="mobile-new-toggle" onclick="toggleNewReviewMode(this)">신규 리뷰</button>
+                    <button type="button" id="mobile-low-toggle" onclick="toggleLowRatingMode(this)">저평점</button>
+                </div>
+                <button type="button" class="mobile-filter-detail-link" onclick="toggleMobileDetailFilters()">상세 필터 <span>›</span></button>
+            </div>
+        </section>
 
-        <div id="keyword-stat-panel" class="bg-white rounded-2xl shadow-sm p-4 mb-6 hidden">
-            <div class="flex items-center justify-between gap-3 mb-4">
-                <div>
-                    <div class="text-sm font-black text-slate-800">📊 키워드 통계</div>
-                    <div id="keyword-stat-scope" class="text-[10px] text-slate-400 font-bold mt-1">현재 선택 조건 기준</div>
+        <section id="mobile-detail-filters" class="mobile-only">
+            <button type="button" id="mobile-detail-filter-toggle" onclick="toggleMobileDetailFilters()" aria-expanded="false">상세 필터 펼치기</button>
+            <div id="mobile-detail-filter-content" class="hidden">
+                <div class="mobile-detail-label">기간</div>
+                <div class="mobile-period-grid">
+                    <button type="button" class="period-btn" onclick="setPeriodFilter('all', this)">전체 기간</button>
+                    <button type="button" class="period-btn" onclick="setPeriodFilter('today', this)">오늘</button>
+                    <button type="button" class="period-btn" onclick="setPeriodFilter('7d', this)">최근 7일</button>
+                    <button type="button" class="period-btn" onclick="setPeriodFilter('30d', this)">최근 30일</button>
+                    <button type="button" class="period-btn" onclick="setPeriodFilter('this-month', this)">이번 달</button>
+                    <button type="button" class="period-btn" onclick="setPeriodFilter('last-month', this)">지난달</button>
+                    <button type="button" class="period-btn" onclick="setPeriodFilter('custom', this)">직접 선택</button>
                 </div>
-                <div class="text-[10px] text-slate-400 font-bold">리뷰 1건당 여러 키워드 중복 집계 가능</div>
+                <div id="mobile-custom-period-box" class="hidden">
+                    <label>시작일<input id="mobile-period-start" type="date"></label>
+                    <label>종료일<input id="mobile-period-end" type="date"></label>
+                    <button type="button" onclick="applyMobileCustomPeriod()">적용</button>
+                </div>
+                <label>정렬
+                    <select onchange="handleMobileSortChange(this)">
+                        <option value="latest">날짜 순 · 최신순</option>
+                        <option value="rating-high">별점 높은 순</option>
+                        <option value="rating-low">별점 낮은 순</option>
+                        <option value="oldest">날짜 순 · 오래된순</option>
+                    </select>
+                </label>
+                <div class="mobile-detail-label">키워드</div>
+                <div class="mobile-keyword-grid">
+                    <button type="button" class="keyword-btn" onclick="applyKeywordFilter('food', this)">메뉴/음식</button>
+                    <button type="button" class="keyword-btn" onclick="applyKeywordFilter('taste', this)">맛</button>
+                    <button type="button" class="keyword-btn" onclick="applyKeywordFilter('value', this)">가격/가치</button>
+                    <button type="button" class="keyword-btn" onclick="applyKeywordFilter('service', this)">서비스</button>
+                    <button type="button" class="keyword-btn" onclick="applyKeywordFilter('operation', this)">운영</button>
+                    <button type="button" class="keyword-btn" onclick="applyKeywordFilter('reservation', this)">예약/대기</button>
+                    <button type="button" class="keyword-btn" onclick="applyKeywordFilter('hygiene', this)">위생</button>
+                    <button type="button" class="keyword-btn" onclick="applyKeywordFilter('revisit', this)">재방문</button>
+                    <button type="button" class="keyword-btn" onclick="applyKeywordFilter('authentic', this)">정통성</button>
+                </div>
+                <button type="button" class="mobile-detail-reset" onclick="clearKeywordFilter()">필터 초기화</button>
             </div>
-            <div id="keyword-stat-grid" class="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-5 gap-3"></div>
-        </div>
+        </section>
+
+        <section id="keyword-stat-panel" class="mb-4 hidden rounded-xl border border-[#E7E4DF] bg-white px-3 py-2.5 sm:px-4">
+            <div class="flex flex-wrap items-center gap-x-3 gap-y-1">
+                <div class="text-[11px] font-semibold text-[#1F2329]">키워드 통계</div>
+                <div id="keyword-stat-scope" class="text-[10px] text-[#68717D]">현재 선택 조건 기준</div>
+                <div id="keyword-stat-grid" class="flex flex-wrap items-center gap-x-3 gap-y-1 sm:ml-auto"></div>
+            </div>
+        </section>
+
+        <section id="mobile-store-selector" class="mobile-only hidden">
+            <div id="mobile-store-selector-content"></div>
+        </section>
 
         <div id="reviews-page">
-            <div class="flex gap-6">
-                <div class="w-[340px] shrink-0">
-                    <div class="bg-white p-4 rounded-2xl shadow-sm">
+            <div class="grid gap-5 lg:grid-cols-[300px_minmax(0,1fr)]">
+                <aside>
+                    <div class="rounded-xl border border-[#E7E4DF] bg-white p-4">
                         <div class="flex items-center justify-between mb-4">
-                            <h3 class="font-black text-slate-700 text-sm">🏪 STORE STATUS</h3>
-                            <div class="text-[10px] font-bold text-slate-400">운영 상태 모니터링</div>
+                            <h3 class="text-sm font-bold text-[#1F2329]">매장 현황</h3>
+                            <div class="text-[10px] font-medium text-[#68717D]">운영 상태</div>
                         </div>
-                        <div id="store-list" class="space-y-3"></div>
+                        <div id="store-list" class="divide-y divide-[#E7E4DF]"></div>
                     </div>
-                </div>
+                </aside>
 
                 <div class="flex-1 min-w-0">
-                    <div id="review-summary" class="mb-4 grid grid-cols-3 gap-3 hidden">
-                        <div class="bg-white rounded-2xl shadow-sm p-4">
-                            <div class="text-[10px] text-slate-400 font-bold">선택 기준 리뷰 수</div>
-                            <div id="summary-count" class="text-xl font-black text-slate-800 mt-1">0</div>
+                    <div id="review-summary" class="mb-3 hidden flex flex-wrap items-center gap-x-5 gap-y-2 rounded-xl border border-[#E7E4DF] bg-white px-4 py-3 text-sm sm:gap-x-6">
+                        <div class="flex items-baseline gap-2">
+                            <span class="text-[11px] font-medium text-[#68717D]">선택 리뷰</span>
+                            <strong id="summary-count" class="text-base font-bold text-[#1F2329]">0</strong>
                         </div>
-                        <div class="bg-white rounded-2xl shadow-sm p-4">
-                            <div class="text-[10px] text-slate-400 font-bold">저평점 리뷰 수</div>
-                            <div id="summary-low" class="text-xl font-black text-red-500 mt-1">0</div>
+                        <div class="hidden h-4 w-px bg-[#E7E4DF] sm:block"></div>
+                        <div class="flex items-baseline gap-2">
+                            <span class="text-[11px] font-medium text-[#68717D]">저평점</span>
+                            <strong id="summary-low" class="text-base font-bold text-[#B83E3E]">0</strong>
                         </div>
-                        <div class="bg-white rounded-2xl shadow-sm p-4">
-                            <div class="text-[10px] text-slate-400 font-bold">최신 리뷰 작성일</div>
-                            <div id="summary-latest" class="text-sm font-black text-emerald-600 mt-2">-</div>
+                        <div class="hidden h-4 w-px bg-[#E7E4DF] sm:block"></div>
+                        <div class="flex items-baseline gap-2">
+                            <span class="text-[11px] font-medium text-[#68717D]">최신 리뷰</span>
+                            <strong id="summary-latest" class="text-sm font-semibold text-[#49515B]">-</strong>
                         </div>
                     </div>
-                    <div id="review-container" class="space-y-4"></div>
+                    <div id="review-container" class="space-y-2"></div>
                 </div>
             </div>
         </div>
 
         <div id="insights-page" class="hidden">
-            <div class="bg-slate-900 rounded-3xl p-6 mb-6 text-white">
-                <div class="flex flex-wrap items-center justify-between gap-3">
-                    <div>
-                        <div class="text-[11px] font-black text-blue-300">INSIGHT DASHBOARD</div>
-                        <h2 id="insight-title" class="text-2xl font-black mt-2">전체 리뷰 인사이트</h2>
-                        <p id="insight-subtitle" class="text-xs text-slate-300 mt-2">SV와 매장 선택 기준으로 리뷰 데이터를 시각화합니다.</p>
-                    </div>
-                    <div class="text-right">
-                        <div class="text-[10px] text-slate-400 font-bold">현재 기준</div>
-                        <div id="insight-scope" class="text-sm font-black mt-1">전체 데이터</div>
-                    </div>
-                </div>
+            <header class="insights-heading">
+                <span>INSIGHTS</span>
+                <h2 id="insight-title">전체 리뷰 인사이트</h2>
+                <p id="insight-subtitle">SV와 매장 선택 기준으로 리뷰 데이터를 시각화합니다.</p>
+                <div id="insight-scope">전체 데이터</div>
+            </header>
+            <section id="insight-kpis" class="insight-summary" aria-label="인사이트 요약"></section>
+            <div class="insight-analysis-grid insight-analysis-primary">
+                <section class="insight-surface insight-timeline"><div class="insight-section-heading"><h3>리뷰 시점 흐름</h3><p>review_date 기준 기간별 리뷰 흐름</p></div><div id="age-line-chart"></div></section>
+                <section class="insight-surface"><div class="insight-section-heading"><h3>별점 분포</h3><p>수집된 리뷰 기준</p></div><div id="rating-chart"></div></section>
             </div>
-
-            <div id="insight-kpis" class="grid grid-cols-4 gap-4 mb-6"></div>
-
-            <div class="grid grid-cols-5 gap-6 mb-6">
-                <div class="col-span-3 bg-white rounded-3xl shadow-sm p-6">
-                    <div class="flex items-start justify-between gap-3 mb-5">
-                        <div>
-                            <h3 class="text-base font-black text-slate-800">리뷰 시점 흐름</h3>
-                            <p class="text-[11px] text-slate-400 mt-1">review_date 기준으로 계산한 기간별 리뷰 흐름입니다.</p>
-                        </div>
-                        <div class="text-[10px] text-slate-400 font-bold bg-slate-50 px-3 py-2 rounded-full">Timeline View</div>
-                    </div>
-                    <div id="age-line-chart"></div>
-                </div>
-
-                <div class="col-span-2 bg-white rounded-3xl shadow-sm p-6">
-                    <div class="flex items-start justify-between gap-3 mb-5">
-                        <div>
-                            <h3 class="text-base font-black text-slate-800">별점 분포</h3>
-                            <p class="text-[11px] text-slate-400 mt-1">수집된 리뷰 기준입니다.</p>
-                        </div>
-                        <div class="text-[10px] text-slate-400 font-bold bg-slate-50 px-3 py-2 rounded-full">Rating</div>
-                    </div>
-                    <div id="rating-chart" class="space-y-3"></div>
-                </div>
-            </div>
-
-            <div class="grid grid-cols-5 gap-6">
-                <div class="col-span-3 bg-white rounded-3xl shadow-sm p-6">
-                    <div class="flex items-start justify-between gap-3 mb-5">
-                        <div>
-                            <h3 class="text-base font-black text-slate-800">VOC 키워드 맵</h3>
-                            <p class="text-[11px] text-slate-400 mt-1">많이 언급된 카테고리일수록 크게 표시됩니다.</p>
-                        </div>
-                        <div class="text-[10px] text-slate-400 font-bold bg-slate-50 px-3 py-2 rounded-full">VOC Cloud</div>
-                    </div>
-                    <div id="keyword-cloud" class="flex flex-wrap gap-3"></div>
-                </div>
-
-                <div class="col-span-2 bg-white rounded-3xl shadow-sm p-6">
-                    <div class="flex items-start justify-between gap-3 mb-5">
-                        <div>
-                            <h3 class="text-base font-black text-slate-800">매장별 저평점 리스크</h3>
-                            <p class="text-[11px] text-slate-400 mt-1">LOW 리뷰 수 기준으로 위험도를 표시합니다.</p>
-                        </div>
-                        <div class="text-[10px] text-slate-400 font-bold bg-slate-50 px-3 py-2 rounded-full">Risk</div>
-                    </div>
-                    <div id="store-risk-cards" class="space-y-3"></div>
-                </div>
+            <div class="insight-analysis-grid insight-analysis-secondary">
+                <section class="insight-surface"><div class="insight-section-heading"><h3>키워드 / 주제</h3><p>리뷰에서 언급된 주요 주제</p></div><div id="keyword-cloud"></div></section>
+                <section class="insight-surface"><div class="insight-section-heading"><h3>주의 매장</h3><p>저평점 리뷰 수 기준</p></div><div id="store-risk-cards"></div></section>
             </div>
         </div>
     </div>
+
+    <nav id="mobile-bottom-nav" class="mobile-only" aria-label="모바일 기본 탐색">
+        <button type="button" data-page="reviews" aria-current="page" onclick="switchPage('reviews')"><span aria-hidden="true">▤</span>Reviews</button>
+        <button type="button" data-page="insights" onclick="switchPage('insights')"><span aria-hidden="true">◌</span>Insights</button>
+    </nav>
 
     <script>
         const SV_COUNTRY_MAP = {
@@ -275,6 +707,17 @@
             '소도희': ['australia', 'thailand', 'cambodia', '호주', '태국', '캄보디아'],
             '최성환': ['indonesia', 'philippines', '인도네시아', '필리핀']
         };
+
+        const SV_DISPLAY_MAP = {
+            '이여명': 'SV A',
+            '강소영': 'SV B',
+            '소도희': 'SV C',
+            '최성환': 'SV D'
+        };
+
+        function getSVDisplayName(svName) {
+            return SV_DISPLAY_MAP[svName] || svName || '-';
+        }
 
         const KEYWORD_GROUPS = {
             food: [
@@ -354,6 +797,25 @@
         let lowRatingOnly = false;
         let newReviewOnly = false;
         let visibleReviewCount = 30;
+        let mobileReviewPage = 1;
+        const MOBILE_REVIEW_PAGE_SIZE = 20;
+
+        function isMobileReviewsView() {
+            return window.matchMedia('(max-width: 767px)').matches;
+        }
+
+        function resetMobileReviewPage() {
+            mobileReviewPage = 1;
+        }
+
+        let lastReviewResponsiveMode = isMobileReviewsView();
+        window.addEventListener('resize', () => {
+            const nextMode = isMobileReviewsView();
+            if (nextMode === lastReviewResponsiveMode) return;
+            lastReviewResponsiveMode = nextMode;
+            resetMobileReviewPage();
+            if (currentSV) refreshCurrentReviews();
+        });
 
         const SUPABASE_REST_URL = 'https://fourqytbdjxlpwzgvphy.supabase.co/rest/v1';
         const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImZvdXJxeXRiZGp4bHB3emd2cGh5Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODUzOTc4MDksImV4cCI6MjEwMDk3MzgwOX0.i762pa8UOS9YTQ5owXylCZhpZ7pgN2UdnsHpAjzXloU';
@@ -521,6 +983,13 @@
 
             document.getElementById('reviews-page-tab').classList.toggle('active-page', page === 'reviews');
             document.getElementById('insights-page-tab').classList.toggle('active-page', page === 'insights');
+            document.querySelectorAll('#mobile-bottom-nav button').forEach(button => {
+                const active = button.dataset.page === page;
+                button.toggleAttribute('aria-current', active);
+                if (active) button.setAttribute('aria-current', 'page');
+            });
+            const mobileTitle = document.getElementById('mobile-workspace-title');
+            if (mobileTitle) mobileTitle.innerText = page === 'reviews' ? 'Reviews' : 'Insights';
 
             if (page === 'insights') renderInsights();
         }
@@ -552,22 +1021,85 @@
 
             if (crawlStatus) {
                 if (failedCount === 0) {
-                    statusEl.innerText = `성공 ${successCount}/${totalStores}`;
-                    statusEl.className = 'text-sm font-black text-emerald-600 mt-2';
+                    statusEl.innerText = `수집 정상 ${successCount}/${totalStores}`;
+                    statusEl.className = 'mt-0.5 font-semibold text-[#278A62]';
                     failedEl.classList.add('hidden');
                     failedEl.innerText = '';
                 } else {
-                    statusEl.innerText = `일부 실패 ${successCount}/${totalStores}`;
-                    statusEl.className = 'text-sm font-black text-red-500 mt-2';
+                    statusEl.innerText = `수집 일부 실패 ${successCount}/${totalStores}`;
+                    statusEl.className = 'mt-0.5 font-semibold text-[#B83E3E]';
                     failedEl.classList.remove('hidden');
                     failedEl.innerText = `실패 매장: ${failedStores.map(s => s.store_name).join(', ')}`;
                 }
             } else {
-                statusEl.innerText = '크롤링 상태 없음';
-                statusEl.className = 'text-sm font-black text-amber-500 mt-2';
+                statusEl.innerText = '수집 상태 없음';
+                statusEl.className = 'mt-0.5 font-semibold text-[#91631C]';
                 failedEl.classList.remove('hidden');
                 failedEl.innerText = 'crawl_runs 최신 실행 기록을 찾지 못했습니다.';
             }
+
+            renderMobileOperationalSummary();
+        }
+
+        function renderMobileOperationalSummary() {
+            const target = document.getElementById('mobile-operational-summary');
+            if (!target) return;
+
+            if (!currentSV) {
+                target.innerHTML = `
+                    <div class="mobile-operation-card">
+                        <div class="mobile-operation-top">
+                            <div><span class="mobile-operation-eyebrow">REVIEW WORKSPACE</span><strong class="mobile-operation-sv">담당 SV를 선택하세요</strong><span class="mobile-operation-countries">상단 메뉴에서 담당 SV를 선택할 수 있습니다.</span></div>
+                            <button type="button" class="mobile-operation-change" onclick="toggleMobileSVPicker()">SV 선택 ›</button>
+                        </div>
+                        <div id="mobile-sv-picker" class="mobile-sv-picker hidden">
+                            <button type="button" onclick="selectMobileSV('이여명')">SV A<span>대만 · 싱가포르</span></button>
+                            <button type="button" onclick="selectMobileSV('강소영')">SV B<span>몽골 · 네덜란드</span></button>
+                            <button type="button" onclick="selectMobileSV('소도희')">SV C<span>호주 · 태국 · 캄보디아</span></button>
+                            <button type="button" onclick="selectMobileSV('최성환')">SV D<span>인도네시아 · 필리핀</span></button>
+                        </div>
+                    </div>
+                `;
+                return;
+            }
+
+            const crawledAt = crawlStatus?.last_crawled_at || getLatestCollectedAt(allReviews) || '-';
+            const totalStores = crawlStatus?.total_stores || '-';
+            const successCount = crawlStatus?.success_count ?? '-';
+            const failedCount = Number(crawlStatus?.failed_count || 0);
+            const latestRunId = Number(crawlStatus?.id);
+            const latestRunReviews = Number.isFinite(latestRunId)
+                ? allReviews.filter(review => Number(review.first_seen_run_id) === latestRunId)
+                : [];
+            const latestRunLowReviews = latestRunReviews.filter(review => Number(review.rating || 0) <= 3);
+            const status = crawlStatus
+                ? (failedCount === 0 ? `수집 정상 ${successCount}/${totalStores}` : `수집 일부 실패 ${successCount}/${totalStores}`)
+                : '수집 상태 없음';
+            const countries = currentSVStores.reduce((list, store) => list.add(store.country || 'Unknown'), new Set());
+
+            target.innerHTML = `
+                <div class="mobile-operation-card">
+                    <div class="mobile-operation-top">
+                        <div>
+                            <span class="mobile-operation-eyebrow">REVIEW WORKSPACE</span>
+                            <strong class="mobile-operation-sv">${getSVDisplayName(currentSV)}</strong>
+                            <span class="mobile-operation-countries">${escapeHtml(getCountryLabel(currentSV))}</span>
+                        </div>
+                        <button type="button" class="mobile-operation-change" onclick="toggleMobileSVPicker()">SV 변경 ›</button>
+                    </div>
+                    <div class="mobile-operation-stores">${currentSVStores.length}개 매장 · ${[...countries].map(escapeHtml).join(' · ')}</div>
+                    <div id="mobile-sv-picker" class="mobile-sv-picker hidden">
+                        <button type="button" class="${currentSV === '이여명' ? 'is-current' : ''}" onclick="selectMobileSV('이여명')">SV A<span>대만 · 싱가포르</span></button>
+                        <button type="button" class="${currentSV === '강소영' ? 'is-current' : ''}" onclick="selectMobileSV('강소영')">SV B<span>몽골 · 네덜란드</span></button>
+                        <button type="button" class="${currentSV === '소도희' ? 'is-current' : ''}" onclick="selectMobileSV('소도희')">SV C<span>호주 · 태국 · 캄보디아</span></button>
+                        <button type="button" class="${currentSV === '최성환' ? 'is-current' : ''}" onclick="selectMobileSV('최성환')">SV D<span>인도네시아 · 필리핀</span></button>
+                    </div>
+                    <div class="mobile-operation-divider"></div>
+                    <div class="mobile-operation-status ${failedCount ? 'is-problem' : ''}">${status}</div>
+                    <div class="mobile-operation-time">최근 수집 ${escapeHtml(crawledAt)}</div>
+                    <div class="mobile-operation-metrics"><div>신규 리뷰<strong>${latestRunReviews.length}</strong></div><div>신규 저평점<strong>${latestRunLowReviews.length}</strong></div></div>
+                </div>
+            `;
         }
 
         function renderSvStoreCountSummary() {
@@ -617,26 +1149,10 @@
                 ];
 
                 return `
-                    <div class="bg-white rounded-2xl shadow-sm p-4">
-                        <div class="flex items-center justify-between mb-3">
-                            <div>
-                                <div class="text-sm font-black text-slate-800">${sv} SV</div>
-                                <div class="text-[10px] text-slate-400 font-bold mt-1">등록 매장 수</div>
-                            </div>
-                            <div class="text-2xl font-black text-blue-600">${total}</div>
-                        </div>
-
-                        <div class="space-y-1">
-                            ${sortedCountries.length
-                                ? sortedCountries.map(country => `
-                                    <div class="flex justify-between text-[11px]">
-                                        <span class="text-slate-500 font-bold">${escapeHtml(country)}</span>
-                                        <span class="text-slate-900 font-black">${countries[country]}개</span>
-                                    </div>
-                                `).join('')
-                                : `<div class="text-[11px] text-slate-400 font-bold">등록 매장 없음</div>`
-                            }
-                        </div>
+                    <div class="${currentSV === sv ? '' : 'hidden'} flex flex-wrap items-center gap-x-4 gap-y-1 rounded-lg bg-[#FBFAF8] px-3 py-2 text-[12px]">
+                        <span class="font-semibold text-[#1F2329]">${getSVDisplayName(sv)}</span>
+                        <span class="text-[#68717D]">등록 매장 <strong class="font-semibold text-[#1F2329]">${total}</strong></span>
+                        ${sortedCountries.map(country => `<span class="text-[#68717D]">${escapeHtml(country)} ${countries[country]}개</span>`).join('') || '<span class="text-[#68717D]">등록 매장 없음</span>'}
                     </div>
                 `;
             }).join('');
@@ -667,6 +1183,15 @@
             return keywords.some(keyword => target.includes(keyword.toLowerCase()));
         }
 
+        function selectMobileSV(svName) {
+            const desktopButton = document.querySelector(`.sv-tab[data-sv="${svName}"]`);
+            selectSV(svName, desktopButton);
+        }
+
+        function toggleMobileSVPicker() {
+            document.getElementById('mobile-sv-picker')?.classList.toggle('hidden');
+        }
+
         function selectSV(svName, btn) {
             currentSV = svName;
             currentStore = 'ALL';
@@ -675,6 +1200,7 @@
             lowRatingOnly = false;
             newReviewOnly = false;
             visibleReviewCount = 30;
+            resetMobileReviewPage();
 
             document.querySelectorAll('.sv-tab').forEach(b => b.classList.remove('active-sv'));
             btn.classList.add('active-sv');
@@ -690,10 +1216,12 @@
                 String(review.sv || '') === svName || isReviewMatchedToSV(review, svName)
             );
 
-            document.getElementById('current-title').innerText = `${svName} SV 담당 리뷰`;
+            document.getElementById('current-title').innerText = `${getSVDisplayName(svName)} 담당 리뷰`;
             document.getElementById('current-subtitle').innerText = `담당 국가: ${getCountryLabel(svName)}`;
 
             renderCountryOptions();
+            renderSvStoreCountSummary();
+            renderMobileOperationalSummary();
             refreshAllViews();
         }
 
@@ -844,12 +1372,34 @@
             ).join('');
             select.value = currentCountry;
             document.getElementById('country-filter-label').innerText = currentCountry === 'ALL' ? '전체 국가' : currentCountry;
+            const mobileSelect = document.getElementById('mobile-country-select');
+            if (mobileSelect) {
+                mobileSelect.innerHTML = select.innerHTML;
+                mobileSelect.value = currentCountry;
+            }
+        }
+
+        function syncMobileFilterSummary() {
+            const periodLabel = document.getElementById('mobile-period-label');
+            if (periodLabel) periodLabel.innerText = getPeriodRange().label;
+            const mobileCountry = document.getElementById('mobile-country-select');
+            if (mobileCountry) mobileCountry.value = currentCountry;
+            const newToggle = document.getElementById('mobile-new-toggle');
+            const lowToggle = document.getElementById('mobile-low-toggle');
+            if (newToggle) newToggle.classList.toggle('active-keyword', newReviewOnly);
+            if (lowToggle) lowToggle.classList.toggle('active-keyword', lowRatingOnly);
+        }
+
+        function handleMobileCountryChange(select) {
+            document.getElementById('country-select').value = select.value;
+            handleCountryChange();
         }
 
         function handleCountryChange() {
             currentCountry = document.getElementById('country-select').value;
             currentStore = 'ALL';
             visibleReviewCount = 30;
+            resetMobileReviewPage();
             document.getElementById('country-filter-label').innerText = currentCountry === 'ALL' ? '전체 국가' : currentCountry;
             refreshAllViews();
         }
@@ -857,14 +1407,27 @@
         function setPeriodFilter(period, btn) {
             currentPeriod = period;
             visibleReviewCount = 30;
+            resetMobileReviewPage();
             document.querySelectorAll('.period-btn').forEach(b => b.classList.remove('active-filter'));
             if (btn) btn.classList.add('active-filter');
             document.getElementById('custom-period-box').classList.toggle('hidden', period !== 'custom');
+            document.getElementById('mobile-custom-period-box').classList.toggle('hidden', period !== 'custom');
+            if (period === 'custom') {
+                document.getElementById('mobile-period-start').value = document.getElementById('period-start').value;
+                document.getElementById('mobile-period-end').value = document.getElementById('period-end').value;
+            }
 
             if (period !== 'custom') {
                 document.getElementById('period-filter-label').innerText = getPeriodRange().label;
                 refreshAllViews();
             }
+            syncMobileFilterSummary();
+        }
+
+        function applyMobileCustomPeriod() {
+            document.getElementById('period-start').value = document.getElementById('mobile-period-start').value;
+            document.getElementById('period-end').value = document.getElementById('mobile-period-end').value;
+            applyCustomPeriod();
         }
 
         function applyCustomPeriod() {
@@ -884,7 +1447,9 @@
             currentPeriod = 'custom';
             document.getElementById('period-filter-label').innerText = getPeriodRange().label;
             visibleReviewCount = 30;
+            resetMobileReviewPage();
             refreshAllViews();
+            syncMobileFilterSummary();
         }
 
         function refreshAllViews() {
@@ -897,9 +1462,11 @@
             }
 
             renderStoreList(storeMaster, storeReviewSource);
+            renderMobileStoreSelector(storeMaster, storeReviewSource);
             refreshCurrentReviews();
             renderKeywordStats();
             renderInsights();
+            syncMobileFilterSummary();
         }
 
         function getKeywordStatBaseReviews() {
@@ -944,9 +1511,8 @@
                 `${getPeriodRange().label} · ${currentCountry === 'ALL' ? '전체 국가' : currentCountry} · ${currentStore === 'ALL' ? '전체 매장' : currentStore}${lowRatingOnly ? ' · 3점 이하' : ''}${newReviewOnly ? ' · 최신 실행 NEW' : ''}`;
 
             grid.innerHTML = stats.map(item => `
-                <button onclick="applyKeywordFromInsight('${item.key}')" class="rounded-2xl border border-slate-100 bg-slate-50 p-4 text-left hover:border-slate-300 transition-all">
-                    <div class="text-[10px] text-slate-400 font-bold">${escapeHtml(item.label)}</div>
-                    <div class="text-xl font-black text-slate-800 mt-1">${item.count}<span class="text-xs ml-1 text-slate-400">건</span></div>
+                <button onclick="applyKeywordFromInsight('${item.key}')" class="inline-flex items-baseline gap-1 whitespace-nowrap text-[11px] text-[#68717D] transition-colors hover:text-[#8B5E3C]">
+                    <span>${escapeHtml(item.label)}</span><strong class="font-semibold text-[#1F2329]">${item.count}</strong>
                 </button>
             `).join('');
         }
@@ -975,7 +1541,7 @@
                 return;
             }
 
-            const cards = stores.map(store => {
+            const cards = stores.map((store, index) => {
                 const storeName = store.store_name || 'Unknown Store';
                 const reviews = reviewData.filter(
                     review => (review.store_name || 'Unknown Store') === storeName
@@ -986,115 +1552,141 @@
                 const latestRunResult = getLatestRunStoreResult(storeName);
                 const newReviews = Number(latestRunResult?.collected_count || 0);
                 const latestReview = getLatestReviewDate(reviews);
-                const recent7Days = reviews.filter(review => {
-                    const date = parseReviewDate(review);
-                    if (!date) return false;
-                    const today = startOfDay(new Date());
-                    const start = new Date(today);
-                    start.setDate(start.getDate() - 6);
-                    return date >= start && date <= today;
-                }).length;
                 const isActive = currentStore === storeName;
+                const mobileExtraClass = index >= 4 && !isActive ? 'mobile-store-extra' : '';
                 const mapsUrl = store.google_maps_url || getGoogleMapsReviewUrl(storeName);
 
                 const statusBadge = totalReviews === 0
-                    ? `<div class="px-2 py-1 rounded-full bg-slate-100 text-slate-500 text-[10px] font-black">리뷰 0건</div>`
+                    ? `<span class="rounded bg-[#F1F0ED] px-1.5 py-0.5 text-[10px] font-semibold text-[#68717D]">리뷰 0건</span>`
                     : (lowReviews > 0
-                        ? `<div class="px-2 py-1 rounded-full bg-red-100 text-red-600 text-[10px] font-black">LOW ${lowReviews}</div>`
-                        : `<div class="px-2 py-1 rounded-full bg-emerald-100 text-emerald-600 text-[10px] font-black">SAFE</div>`);
+                        ? `<span class="rounded bg-[#FDEEEE] px-1.5 py-0.5 text-[10px] font-semibold text-[#B83E3E]">LOW ${lowReviews}</span>`
+                        : '');
 
                 return `
-                    <div
-                        class="
-                            store-btn
-                            rounded-2xl
-                            border
-                            transition-all
-                            p-4
-                            ${isActive
-                                ? 'border-blue-500 bg-blue-50'
-                                : 'border-slate-200 bg-white hover:bg-slate-50'}
-                        "
-                    >
+                    <div class="store-btn ${mobileExtraClass} px-2 py-3 transition-colors ${isActive ? 'active-store rounded-md' : 'hover:bg-[#FBFAF8]'}">
                         <button
                             onclick="filterStore('${escapeForOnclick(storeName)}')"
                             class="w-full text-left"
                         >
                             <div class="flex items-start justify-between gap-2">
                                 <div class="min-w-0">
-                                    <div class="text-sm font-black text-slate-800 leading-snug">
+                                    <div class="text-sm font-semibold text-[#1F2329] leading-snug">
                                         ${escapeHtml(storeName)}
                                     </div>
-                                    <div class="text-[10px] text-slate-400 mt-1">
-                                        최근 리뷰: ${escapeHtml(latestReview)}
+                                    <div class="mt-1 text-[10px] text-[#68717D]">
+                                        리뷰 ${totalReviews}건 · 최신 ${escapeHtml(latestReview)}
                                     </div>
                                 </div>
 
-                                <div class="flex flex-col items-end gap-1 shrink-0">
+                                <div class="flex flex-wrap justify-end gap-1 shrink-0">
                                     ${newReviews > 0
-                                        ? `<div class="px-2 py-1 rounded-full bg-red-500 text-white text-[10px] font-black">NEW ${newReviews}</div>`
+                                        ? `<span class="rounded bg-[#EAF2FE] px-1.5 py-0.5 text-[10px] font-semibold text-[#3269B6]">NEW ${newReviews}</span>`
                                         : ''
                                     }
                                     ${statusBadge}
                                 </div>
                             </div>
 
-                            <div class="grid grid-cols-2 gap-2 mt-4">
-                                <div class="bg-slate-50 rounded-xl p-3">
-                                    <div class="text-[10px] text-slate-400 font-bold">전체 리뷰</div>
-                                    <div class="text-lg font-black text-slate-800 mt-1">${totalReviews}</div>
-                                </div>
-
-                                <div class="bg-slate-50 rounded-xl p-3">
-                                    <div class="text-[10px] text-slate-400 font-bold">최근 7일</div>
-                                    <div class="text-lg font-black text-blue-600 mt-1">${recent7Days}</div>
-                                </div>
-                            </div>
                         </button>
 
                         <a
                             href="${mapsUrl}"
                             target="_blank"
                             rel="noopener noreferrer"
-                            class="mt-3 block w-full text-center rounded-xl bg-slate-900 text-white text-[11px] font-black py-2 hover:opacity-80 transition-all"
+                            class="mt-1.5 block text-[11px] font-medium text-[#68717D] underline underline-offset-2 hover:text-[#1F2329]"
                         >
-                            Google Maps 리뷰 열기 ↗
+                            Google Maps ↗
                         </a>
                     </div>
                 `;
             });
 
             storeListDiv.innerHTML = `
-                <div
-                    class="
-                        store-btn
-                        rounded-2xl
-                        border
-                        p-4
-                        mb-3
-                        transition-all
-                        ${currentStore === 'ALL'
-                            ? 'border-blue-500 bg-blue-50'
-                            : 'border-slate-200 bg-white hover:bg-slate-50'}
-                    "
-                >
+                <div class="store-btn mb-1 px-2 py-3 transition-colors ${currentStore === 'ALL' ? 'active-store rounded-md' : 'hover:bg-[#FBFAF8]'}">
                     <button onclick="filterStore('ALL')" class="w-full text-left">
                         <div class="flex items-center justify-between">
                             <div>
-                                <div class="text-sm font-black text-slate-800">🌍 전체 매장</div>
-                                <div class="text-[10px] text-slate-400 mt-1">전체 리뷰 모니터링</div>
+                                <div class="text-sm font-semibold text-[#1F2329]">전체 매장</div>
+                                <div class="mt-1 text-[10px] text-[#68717D]">전체 리뷰 모니터링</div>
                             </div>
-                            <div class="text-xl font-black text-slate-800">${reviewData.length}</div>
+                            <div class="text-sm font-semibold text-[#1F2329]">${reviewData.length}건</div>
                         </div>
                     </button>
                 </div>
                 ${cards.join('')}
+                ${stores.length > 4 ? `<button type="button" class="mobile-store-expand" onclick="toggleMobileStoreList(this)">전체 매장 보기 (${stores.length})</button>` : ''}
             `;
+        }
+
+        function handleMobileStoreChange(select) {
+            filterStore(select.value);
+        }
+
+        function renderMobileStoreSelector(storeMaster, reviewData) {
+            const section = document.getElementById('mobile-store-selector');
+            const target = document.getElementById('mobile-store-selector-content');
+
+            if (!currentSV || !storeMaster.length) {
+                section.classList.add('hidden');
+                target.innerHTML = '';
+                return;
+            }
+
+            const stores = [...storeMaster].sort((a, b) => {
+                const orderA = Number(a.display_order || 0);
+                const orderB = Number(b.display_order || 0);
+                if (orderA !== orderB) return orderA - orderB;
+                return String(a.store_name || '').localeCompare(String(b.store_name || ''));
+            });
+
+            const options = stores.map(store => {
+                const storeName = store.store_name || 'Unknown Store';
+                const reviews = reviewData.filter(review => (review.store_name || 'Unknown Store') === storeName);
+                const lowCount = reviews.filter(review => Number(review.rating || 0) <= 3).length;
+                const newCount = Number(getLatestRunStoreResult(storeName)?.collected_count || 0);
+                const signals = [newCount ? `NEW ${newCount}` : '', lowCount ? `LOW ${lowCount}` : ''].filter(Boolean).join(' · ');
+                return `<option value="${escapeHtml(storeName)}">${escapeHtml(storeName)}${signals ? ` — ${signals}` : ''}</option>`;
+            }).join('');
+
+            let context = `<p class="mobile-store-overview">전체 ${stores.length}개 매장 · 리뷰 ${reviewData.length}건</p>`;
+            if (currentStore !== 'ALL') {
+                const selectedStore = stores.find(store => store.store_name === currentStore);
+                const selectedReviews = reviewData.filter(review => (review.store_name || 'Unknown Store') === currentStore);
+                const lowCount = selectedReviews.filter(review => Number(review.rating || 0) <= 3).length;
+                const newCount = Number(getLatestRunStoreResult(currentStore)?.collected_count || 0);
+                const mapsUrl = selectedStore?.google_maps_url || getGoogleMapsReviewUrl(currentStore);
+                context = `
+                    <div class="mobile-selected-store-context">
+                        <strong>${escapeHtml(currentStore)}</strong>
+                        <span>리뷰 ${selectedReviews.length} · 신규 ${newCount} · 저평점 ${lowCount}</span>
+                        <span>최근 리뷰 ${escapeHtml(getLatestReviewDate(selectedReviews))}</span>
+                        ${mapsUrl ? `<a href="${mapsUrl}" target="_blank" rel="noopener noreferrer">Google Maps ↗</a>` : ''}
+                    </div>
+                `;
+            }
+
+            section.classList.remove('hidden');
+            target.innerHTML = `
+                <div class="mobile-store-selector-heading">매장 선택</div>
+                <select id="mobile-store-select" onchange="handleMobileStoreChange(this)">
+                    <option value="ALL">전체 매장 (${stores.length})</option>
+                    ${options}
+                </select>
+                ${context}
+            `;
+            document.getElementById('mobile-store-select').value = currentStore;
+        }
+
+        function toggleMobileStoreList(button) {
+            const list = document.getElementById('store-list');
+            const expanded = list.classList.toggle('mobile-stores-expanded');
+            button.innerText = expanded ? '매장 목록 접기' : `전체 매장 보기 (${list.querySelectorAll('.store-btn').length - 1})`;
         }
 
         function filterStore(name) {
             currentStore = name;
             visibleReviewCount = 30;
+            resetMobileReviewPage();
 
             refreshAllViews();
         }
@@ -1102,6 +1694,7 @@
         function applyKeywordFilter(keywordKey, btn) {
             currentKeyword = keywordKey;
             visibleReviewCount = 30;
+            resetMobileReviewPage();
 
             document.querySelectorAll('.keyword-btn').forEach(b => b.classList.remove('active-keyword'));
             if (btn) btn.classList.add('active-keyword');
@@ -1109,6 +1702,7 @@
             refreshCurrentReviews();
             renderKeywordStats();
             renderInsights();
+            syncMobileFilterSummary();
         }
 
         function getLatestCrawlRunId() {
@@ -1128,6 +1722,7 @@
         function toggleNewReviewMode(btn) {
             newReviewOnly = !newReviewOnly;
             visibleReviewCount = 30;
+            resetMobileReviewPage();
 
             if (newReviewOnly) {
                 btn.classList.add('active-keyword');
@@ -1138,11 +1733,13 @@
             refreshCurrentReviews();
             renderKeywordStats();
             renderInsights();
+            syncMobileFilterSummary();
         }
 
         function toggleLowRatingMode(btn) {
             lowRatingOnly = !lowRatingOnly;
             visibleReviewCount = 30;
+            resetMobileReviewPage();
 
             if (lowRatingOnly) {
                 btn.classList.add('active-keyword');
@@ -1153,6 +1750,7 @@
             refreshCurrentReviews();
             renderKeywordStats();
             renderInsights();
+            syncMobileFilterSummary();
         }
 
         function clearKeywordFilter() {
@@ -1160,6 +1758,7 @@
             lowRatingOnly = false;
             newReviewOnly = false;
             visibleReviewCount = 30;
+            resetMobileReviewPage();
 
             document.querySelectorAll('.keyword-btn').forEach(b => b.classList.remove('active-keyword'));
 
@@ -1234,7 +1833,25 @@
         function handleSortChange() {
             currentSort = document.getElementById('sort-select').value;
             visibleReviewCount = 30;
+            resetMobileReviewPage();
             refreshCurrentReviews();
+        }
+
+        function toggleMobileDetailFilters() {
+            const content = document.getElementById('mobile-detail-filter-content');
+            const toggle = document.getElementById('mobile-detail-filter-toggle');
+            const expanded = content.classList.toggle('hidden') === false;
+            toggle.innerText = expanded ? '상세 필터 접기' : '상세 필터 펼치기';
+            toggle.setAttribute('aria-expanded', String(expanded));
+            if (expanded) {
+                const mobileSort = content.querySelector('select');
+                mobileSort.value = currentSort;
+            }
+        }
+
+        function handleMobileSortChange(select) {
+            document.getElementById('sort-select').value = select.value;
+            handleSortChange();
         }
 
         function sortReviews(data) {
@@ -1380,7 +1997,12 @@
 
         function renderReviews(data, selectedStoreLabel) {
             const sorted = sortReviews(data);
-            const visibleReviews = sorted.slice(0, visibleReviewCount);
+            const mobileView = isMobileReviewsView();
+            const totalMobilePages = Math.max(1, Math.ceil(sorted.length / MOBILE_REVIEW_PAGE_SIZE));
+            if (mobileView) mobileReviewPage = Math.min(Math.max(mobileReviewPage, 1), totalMobilePages);
+            const visibleReviews = mobileView
+                ? sorted.slice((mobileReviewPage - 1) * MOBILE_REVIEW_PAGE_SIZE, mobileReviewPage * MOBILE_REVIEW_PAGE_SIZE)
+                : sorted.slice(0, visibleReviewCount);
             const container = document.getElementById('review-container');
 
             renderSummary(sorted, selectedStoreLabel);
@@ -1394,46 +2016,59 @@
                 const rating = Number(r.rating || 5);
                 const safeRating = Math.max(0, Math.min(5, Math.round(rating)));
                 const stars = '★'.repeat(safeRating) + '☆'.repeat(5 - safeRating);
-                const lowRatingClass = rating <= 3 ? 'border-red-200 bg-red-50/40' : 'border-slate-100 bg-white';
+                const lowRatingClass = rating <= 3 ? 'border-[#F1D0D0] bg-[#FFF8F8]' : 'border-[#E7E4DF] bg-white';
 
                 return `
-                    <div class="${lowRatingClass} p-5 rounded-2xl shadow-sm border">
-                        <div class="flex justify-between items-start gap-3 mb-3">
+                    <article class="${lowRatingClass} rounded-xl border p-4">
+                        <div class="mb-2.5 flex items-start justify-between gap-3">
                             <div>
                                 <div class="flex flex-wrap items-center gap-2">
-                                    <span class="text-[10px] font-bold text-blue-600 bg-blue-50 px-2 py-0.5 rounded">${escapeHtml(r.store_name || 'Unknown Store')}</span>
-                                    <span class="text-[10px] font-bold text-slate-500 bg-slate-100 px-2 py-0.5 rounded">${escapeHtml(r.author || 'Anonymous')}</span>
-                                    ${isNewReview(r) ? '<span class="text-[10px] font-black text-white bg-red-500 px-2 py-0.5 rounded">NEW</span>' : ''}
-                                    ${rating <= 3 ? '<span class="text-[10px] font-black text-red-600 bg-red-100 px-2 py-0.5 rounded">LOW RATING</span>' : ''}
-                                </div>
-                                <div class="text-[10px] text-slate-400 mt-2">
-                                    Google 작성일: ${escapeHtml(estimateGoogleReviewDate(r))}
+                                    <span class="text-[12px] font-semibold text-[#1F2329]">${escapeHtml(r.store_name || 'Unknown Store')}</span>
+                                    <span class="text-[11px] text-[#68717D]">${escapeHtml(r.author || 'Anonymous')}</span>
+                                    ${isNewReview(r) ? '<span class="rounded bg-[#EAF2FE] px-1.5 py-0.5 text-[10px] font-semibold text-[#3269B6]">NEW</span>' : ''}
+                                    ${rating <= 3 ? '<span class="rounded bg-[#FDEEEE] px-1.5 py-0.5 text-[10px] font-semibold text-[#B83E3E]">LOW</span>' : ''}
                                 </div>
                             </div>
-                            <div class="text-right shrink-0">
-                                <div class="text-amber-400 text-xs font-black">${stars}</div>
-                                <div class="text-[10px] text-slate-400 mt-1">${rating.toFixed(1)}</div>
+                            <div class="flex shrink-0 flex-col items-end gap-1 text-right">
+                                <div class="text-[10px] text-[#68717D]">${escapeHtml(estimateGoogleReviewDate(r))}</div>
+                                <div class="flex items-center gap-1.5"><span class="text-[11px] font-medium tracking-[0.04em] text-[#9A7643]">${stars}</span><span class="text-[10px] font-medium text-[#68717D]">${rating.toFixed(1)}</span></div>
                             </div>
                         </div>
 
                         ${
                             r.text
-                                ? `<p class="text-sm text-slate-700 leading-relaxed whitespace-pre-line">${highlightKeywords(escapeHtml(r.text))}</p>`
-                                : `<div class="rounded-xl bg-slate-50 border border-slate-100 px-4 py-3 text-xs font-bold text-slate-400">리뷰 내용 없음 · 별점만 등록된 리뷰</div>`
+                                ? `<p class="whitespace-pre-line text-sm leading-6 text-[#36404A]">${highlightKeywords(escapeHtml(r.text))}</p>`
+                                : `<p class="text-xs text-[#68717D]">리뷰 내용 없음 · 별점만 등록된 리뷰</p>`
                         }
-                    </div>
+                    </article>
                 `;
             }).join('');
 
-            if (sorted.length > visibleReviewCount) {
+            if (mobileView && sorted.length > MOBILE_REVIEW_PAGE_SIZE) {
+                container.innerHTML += `
+                    <nav class="mobile-review-pagination" aria-label="리뷰 페이지 이동">
+                        <button type="button" onclick="changeMobileReviewPage(-1)" ${mobileReviewPage === 1 ? 'disabled' : ''}>‹ 이전</button>
+                        <span>${mobileReviewPage} / ${totalMobilePages}</span>
+                        <button type="button" onclick="changeMobileReviewPage(1)" ${mobileReviewPage === totalMobilePages ? 'disabled' : ''}>다음 ›</button>
+                    </nav>
+                `;
+            } else if (!mobileView && sorted.length > visibleReviewCount) {
                 container.innerHTML += `
                     <div class="flex justify-center pt-2">
-                        <button onclick="loadMoreReviews()" class="px-5 py-3 rounded-xl bg-slate-900 text-white text-xs font-black hover:opacity-80 transition-all">
+                        <button onclick="loadMoreReviews()" class="rounded-lg bg-[#514B44] px-5 py-3 text-xs font-semibold text-white transition-all hover:bg-[#3F3A34]">
                             리뷰 더보기 (${sorted.length - visibleReviewCount}개 남음)
                         </button>
                     </div>
                 `;
             }
+        }
+
+        function changeMobileReviewPage(direction) {
+            const totalReviews = getCurrentFilteredReviews().length;
+            const totalPages = Math.max(1, Math.ceil(totalReviews / MOBILE_REVIEW_PAGE_SIZE));
+            mobileReviewPage = Math.min(Math.max(mobileReviewPage + direction, 1), totalPages);
+            refreshCurrentReviews();
+            document.getElementById('review-container').scrollIntoView({ behavior: 'smooth', block: 'start' });
         }
 
         function highlightKeywords(text) {
@@ -1480,31 +2115,27 @@
             const latestReview = getLatestReviewDate(data);
 
             const scopeLabel = currentSV
-                ? `${currentSV} SV · ${currentCountry === 'ALL' ? '전체 국가' : currentCountry} · ${currentStore === 'ALL' ? '전체 매장' : currentStore} · ${getPeriodRange().label}`
+                ? `${getSVDisplayName(currentSV)} · ${currentCountry === 'ALL' ? '전체 국가' : currentCountry} · ${currentStore === 'ALL' ? '전체 매장' : currentStore} · ${getPeriodRange().label}`
                 : `전체 데이터 · ${getPeriodRange().label}`;
 
-            document.getElementById('insight-title').innerText = currentSV ? `${currentSV} SV 리뷰 인사이트` : '전체 리뷰 인사이트';
+            document.getElementById('insight-title').innerText = currentSV ? `${getSVDisplayName(currentSV)} 리뷰 인사이트` : '전체 리뷰 인사이트';
             document.getElementById('insight-subtitle').innerText = currentKeyword
                 ? `현재 키워드 필터 적용: ${currentKeyword.toUpperCase()}`
                 : 'SV와 매장 선택 기준으로 리뷰 데이터를 시각화합니다.';
             document.getElementById('insight-scope').innerText = scopeLabel;
 
             document.getElementById('insight-kpis').innerHTML = `
-                <div class="bg-white rounded-2xl shadow-sm p-4">
-                    <div class="text-[10px] text-slate-400 font-bold">선택 기준 리뷰 수</div>
-                    <div class="text-2xl font-black text-slate-800 mt-1">${totalCount}</div>
+                <div class="insight-metric">
+                    <span>리뷰</span><strong>${totalCount}</strong>
                 </div>
-                <div class="bg-white rounded-2xl shadow-sm p-4">
-                    <div class="text-[10px] text-slate-400 font-bold">저평점 리뷰 수</div>
-                    <div class="text-2xl font-black text-red-500 mt-1">${lowCount}</div>
+                <div class="insight-metric insight-metric-low">
+                    <span>저평점</span><strong>${lowCount}</strong>
                 </div>
-                <div class="bg-white rounded-2xl shadow-sm p-4">
-                    <div class="text-[10px] text-slate-400 font-bold">최근 7일 리뷰</div>
-                    <div class="text-2xl font-black text-blue-600 mt-1">${recent7}</div>
+                <div class="insight-metric">
+                    <span>최근 7일</span><strong>${recent7}</strong>
                 </div>
-                <div class="bg-white rounded-2xl shadow-sm p-4">
-                    <div class="text-[10px] text-slate-400 font-bold">최신 리뷰 작성일</div>
-                    <div class="text-sm font-black text-emerald-600 mt-2">${escapeHtml(latestReview)}</div>
+                <div class="insight-metric">
+                    <span>최신 리뷰</span><strong>${escapeHtml(latestReview)}</strong>
                 </div>
             `;
 
@@ -1567,7 +2198,7 @@
             const polyline = points.map(p => `${p.x},${p.y}`).join(' ');
 
             container.innerHTML = `
-                <div class="rounded-3xl bg-slate-50 p-4">
+                <div class="insight-chart-canvas">
                     <svg viewBox="0 0 ${width} ${height}" class="w-full h-[260px]">
                         <line x1="${paddingX}" y1="${height - paddingY}" x2="${width - paddingX}" y2="${height - paddingY}" stroke="#CBD5E1" stroke-width="1" />
                         <line x1="${paddingX}" y1="${paddingY}" x2="${paddingX}" y2="${height - paddingY}" stroke="#CBD5E1" stroke-width="1" />
@@ -1607,15 +2238,8 @@
             const container = document.getElementById('keyword-cloud');
 
             const labelMap = {
-                food: 'Food',
-                taste: 'Taste',
-                value: 'Value',
-                service: 'Service',
-                operation: 'Operation',
-                reservation: 'Reservation',
-                hygiene: 'Hygiene',
-                revisit: 'Revisit',
-                authentic: 'Authentic'
+                food: '메뉴/음식', taste: '맛', value: '가격/가치', service: '서비스', operation: '운영',
+                reservation: '예약/대기', hygiene: '위생', revisit: '재방문', authentic: '정통성'
             };
 
             const rows = Object.keys(KEYWORD_GROUPS).map(key => {
@@ -1628,48 +2252,22 @@
                 return { key, label: labelMap[key] || key, count };
             }).sort((a, b) => b.count - a.count);
 
-            const max = Math.max(...rows.map(r => r.count), 1);
-
             if (!rows.length || rows.every(r => r.count === 0)) {
                 container.innerHTML = '<div class="text-center py-12 text-xs text-slate-400 font-bold w-full">표시할 데이터가 없습니다.</div>';
                 return;
             }
 
-            container.innerHTML = rows.map(row => {
-                const level = row.count / max;
-                const sizeClass = level >= 0.75
-                    ? 'text-2xl px-6 py-5'
-                    : level >= 0.5
-                        ? 'text-xl px-5 py-4'
-                        : level >= 0.25
-                            ? 'text-base px-4 py-3'
-                            : 'text-sm px-3 py-2';
-
-                const toneClass = row.count === 0
-                    ? 'bg-slate-50 text-slate-300 border-slate-100'
-                    : level >= 0.75
-                        ? 'bg-slate-900 text-white border-slate-900'
-                        : level >= 0.5
-                            ? 'bg-blue-50 text-blue-700 border-blue-100'
-                            : level >= 0.25
-                                ? 'bg-amber-50 text-amber-700 border-amber-100'
-                                : 'bg-slate-50 text-slate-600 border-slate-100';
-
-                return `
-                    <button
-                        onclick="applyKeywordFromInsight('${row.key}')"
-                        class="rounded-3xl border ${toneClass} ${sizeClass} font-black transition-all hover:-translate-y-0.5"
-                    >
-                        #${escapeHtml(row.label)}
-                        <span class="ml-2 opacity-70">${row.count}</span>
-                    </button>
-                `;
-            }).join('');
+            container.innerHTML = rows.map((row, index) => `
+                <button onclick="applyKeywordFromInsight('${row.key}')" class="insight-keyword-row ${currentKeyword === row.key ? 'is-active' : ''}">
+                    <span class="insight-rank">${index + 1}</span><span>${escapeHtml(row.label)}</span><strong>${row.count}</strong>
+                </button>
+            `).join('');
         }
 
         function applyKeywordFromInsight(keywordKey) {
             currentKeyword = keywordKey;
             visibleReviewCount = 30;
+            resetMobileReviewPage();
 
             document.querySelectorAll('.keyword-btn').forEach(b => {
                 b.classList.remove('active-keyword');
@@ -1691,24 +2289,7 @@
                 const lowCount = reviews.filter(r => Number(r.rating || 0) <= 3).length;
                 const totalCount = reviews.length;
 
-                let riskLabel = 'SAFE';
-                let riskClass = 'bg-emerald-50 text-emerald-700 border-emerald-100';
-
-                if (lowCount >= 10) {
-                    riskLabel = 'HIGH RISK';
-                    riskClass = 'bg-red-50 text-red-700 border-red-100';
-                } else if (lowCount >= 3) {
-                    riskLabel = 'WATCH';
-                    riskClass = 'bg-amber-50 text-amber-700 border-amber-100';
-                }
-
-                return {
-                    storeName,
-                    lowCount,
-                    totalCount,
-                    riskLabel,
-                    riskClass
-                };
+                return { storeName, lowCount, totalCount, needsAttention: lowCount >= 3 };
             }).sort((a, b) => b.lowCount - a.lowCount);
 
             if (!rows.length) {
@@ -1717,16 +2298,9 @@
             }
 
             container.innerHTML = rows.map(row => `
-                <div class="rounded-2xl border ${row.riskClass} p-4">
-                    <div class="flex items-start justify-between gap-3">
-                        <div class="min-w-0">
-                            <div class="text-sm font-black truncate">${escapeHtml(row.storeName)}</div>
-                            <div class="text-[10px] opacity-70 mt-1">전체 리뷰 ${row.totalCount} · LOW ${row.lowCount}</div>
-                        </div>
-                        <div class="text-[10px] font-black px-2 py-1 rounded-full bg-white/70 shrink-0">
-                            ${row.riskLabel}
-                        </div>
-                    </div>
+                <div class="insight-risk-row ${row.needsAttention ? 'needs-attention' : ''}">
+                    <div><strong>${escapeHtml(row.storeName)}</strong><span>저평점 ${row.lowCount} · 전체 리뷰 ${row.totalCount}</span></div>
+                    ${row.needsAttention ? '<em>주의</em>' : ''}
                 </div>
             `).join('');
         }
@@ -1746,11 +2320,11 @@
                 return `
                     <div>
                         <div class="flex justify-between items-center mb-1">
-                            <div class="text-[11px] font-bold text-slate-600 truncate pr-3">${escapeHtml(row.label)}</div>
-                            <div class="text-[11px] font-black text-slate-800">${row.count}</div>
+                            <div class="text-[11px] font-bold text-[#625C54] truncate pr-3">${escapeHtml(row.label)}</div>
+                            <div class="text-[11px] font-black text-[#36312B]">${row.count}</div>
                         </div>
-                        <div class="h-3 bg-slate-100 rounded-full overflow-hidden">
-                            <div class="h-full bg-slate-900 rounded-full" style="width: ${width}%"></div>
+                        <div class="h-2.5 bg-[#F0EDE8] rounded-full overflow-hidden">
+                            <div class="h-full bg-[#625C54] rounded-full" style="width: ${width}%"></div>
                         </div>
                     </div>
                 `;
