@@ -365,7 +365,7 @@
         .insight-metric:last-child { border-right:0; }
         .insight-metric span { display:block; color:#857E74; font-size:11px; font-weight:600; }
         .insight-metric strong { display:block; margin-top:4px; color:#312D28; font-size:19px; font-weight:700; overflow-wrap:anywhere; }
-        .insight-metric-low strong { color:#A16060; }
+        .insight-metric-low strong { color:#312D28; }
         .insight-analysis-grid { display:grid; gap:16px; margin-bottom:16px; }
         .insight-analysis-primary { grid-template-columns:minmax(0,3fr) minmax(300px,2fr); }
         .insight-analysis-secondary { grid-template-columns:minmax(0,3fr) minmax(300px,2fr); }
@@ -434,6 +434,48 @@
         }
         #mobile-bottom-nav button[aria-current="page"] { border-radius:8px; background:#F1EFEB!important; color:#302C27!important; }
         .insight-keyword-row.is-active { background:#F1EFEB!important; color:#302C27!important; }
+        .insight-heading-meta { display:flex; align-items:center; justify-content:space-between; gap:12px; }
+        .insight-scope-filters { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:8px; margin-top:14px; padding-top:12px; border-top:1px solid #EEEAE4; }
+        .insight-scope-filters label { display:grid; grid-template-columns:34px minmax(0,1fr); align-items:center; gap:6px; color:#857E74; font-size:11px; font-weight:650; }
+        .insight-scope-filters select { min-width:0; height:34px; border:1px solid #E5E0D8; border-radius:7px; background:#FFF; color:#4F4941; font-size:11px; font-weight:600; }
+        .insight-scope-filters select:disabled { border-color:#ECE8E1; background:#F7F5F1; color:#AAA39A; cursor:not-allowed; }
+        .insight-analysis-secondary.is-single { grid-template-columns:minmax(0,1fr); }
+        .insights-mode #review-filters, .insights-mode #mobile-detail-filters, .insights-mode #keyword-stat-panel, .insights-mode #mobile-store-selector { display:none!important; }
+        #insight-reference-date { flex:0 0 auto; color:#8A8379; font-size:11px; white-space:nowrap; }
+        .insight-kpi-context { display:block; margin-top:4px; color:#887F76; font-size:10px; font-weight:550; }
+        .insight-kpi-context.is-favorable { color:#667665; }
+        .insight-kpi-context.is-warning { color:#A16060; }
+        .insight-chart-legend { display:flex; justify-content:flex-end; gap:10px; margin:0 8px 4px; color:#817A71; font-size:10px; }
+        .insight-chart-legend span::before { display:inline-block; width:10px; height:7px; margin-right:4px; border-radius:2px; background:#D7D0C6; content:""; }
+        .insight-chart-legend span:last-child::before { height:2px; background:#514B44; vertical-align:middle; }
+        .insight-keyword-more { width:100%; min-height:34px; border:0; border-top:1px solid #F0ECE7; background:transparent; color:#625C54; font-size:11px; font-weight:650; text-align:left; }
+        .insight-key-changes { margin-top:16px; }
+        #insight-key-changes-content { display:grid; gap:7px; }
+        .insight-key-change { color:#574F47; font-size:13px; line-height:1.55; }
+        @media (max-width: 767px) { .insight-heading-meta { display:block; } #insight-reference-date { margin-top:6px; } .insight-scope-filters { grid-template-columns:1fr; gap:6px; } .insight-scope-filters label { grid-template-columns:38px minmax(0,1fr); } .insight-chart-legend { justify-content:flex-start; } .insight-key-changes { margin-top:12px; } }
+        .insight-comparison { margin-top:0; }
+        #insight-comparison-content { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); border-top:1px solid #F0ECE7; }
+        .insight-comparison-metric { min-width:0; padding:13px 14px; border-right:1px solid #F0ECE7; }
+        .insight-comparison-metric:last-child { border-right:0; }
+        .insight-comparison-metric span, .insight-comparison-metric small { display:block; color:#857E74; font-size:11px; }
+        .insight-comparison-metric strong { display:block; margin:4px 0; color:#36312B; font-size:14px; font-weight:700; overflow-wrap:anywhere; }
+        .insight-comparison-metric small { font-weight:650; }
+        .insight-comparison-metric.is-favorable small { color:#667665; }
+        .insight-comparison-metric.is-warning small { color:#A16060; }
+        .insight-comparison-empty { padding:14px 0 0; color:#857E74; font-size:12px; }
+        .insight-risk-row { display:grid; grid-template-columns:22px minmax(0,1fr) auto; width:100%; border:0; border-bottom:1px solid #F0ECE7; background:transparent; text-align:left; }
+        .insight-risk-row:hover { background:#F7F5F1; }
+        .insight-risk-copy strong, .insight-risk-copy small { display:block; }
+        .insight-risk-copy small { margin-top:3px; color:#887F76; font-size:11px; }
+        .insight-risk-row em { align-self:center; }
+        @media (max-width: 767px) {
+            .insight-summary { grid-template-columns:repeat(2,minmax(0,1fr)); }
+            .insight-metric:nth-child(2) { border-right:0; }
+            .insight-metric:nth-child(n+3) { border-bottom:0; }
+            #insight-comparison-content { grid-template-columns:1fr; }
+            .insight-comparison-metric { padding:11px 0; border-right:0; border-bottom:1px solid #F0ECE7; }
+            .insight-comparison-metric:last-child { border-bottom:0; }
+        }
     </style>
 </head>
 <body class="bg-[#F8F7F4] p-4 text-[#1F2329] sm:p-6 lg:p-8">
@@ -681,7 +723,8 @@
                 <span>INSIGHTS</span>
                 <h2 id="insight-title">전체 리뷰 인사이트</h2>
                 <p id="insight-subtitle">SV와 매장 선택 기준으로 리뷰 데이터를 시각화합니다.</p>
-                <div id="insight-scope">전체 데이터</div>
+                <div class="insight-heading-meta"><div id="insight-scope">전체 데이터</div><div id="insight-reference-date">기준일 -</div></div>
+                <div id="insight-scope-filters" class="insight-scope-filters"></div>
             </header>
             <section id="insight-kpis" class="insight-summary" aria-label="인사이트 요약"></section>
             <div class="insight-analysis-grid insight-analysis-primary">
@@ -692,6 +735,8 @@
                 <section class="insight-surface"><div class="insight-section-heading"><h3>키워드 / 주제</h3><p>리뷰에서 언급된 주요 주제</p></div><div id="keyword-cloud"></div></section>
                 <section class="insight-surface"><div class="insight-section-heading"><h3>주의 매장</h3><p>저평점 리뷰 수 기준</p></div><div id="store-risk-cards"></div></section>
             </div>
+            <section id="insight-comparison" class="insight-surface insight-comparison"><div class="insight-section-heading"><h3>이전 기간 대비 변화</h3><p id="insight-comparison-note">선택 기간과 직전 동일 기간을 비교합니다.</p></div><div id="insight-comparison-content"></div></section>
+            <section id="insight-key-changes" class="insight-surface insight-key-changes"><div class="insight-section-heading"><h3>이번 기간 핵심 변화</h3><p>계산된 지표를 바탕으로 정리한 사실입니다.</p></div><div id="insight-key-changes-content"></div></section>
         </div>
     </div>
 
@@ -798,6 +843,8 @@
         let newReviewOnly = false;
         let visibleReviewCount = 30;
         let mobileReviewPage = 1;
+        let insightsShowAllKeywords = false;
+        let insightsShowAllStores = false;
         const MOBILE_REVIEW_PAGE_SIZE = 20;
 
         function isMobileReviewsView() {
@@ -966,7 +1013,15 @@
                 defaultStart.setDate(defaultStart.getDate() - 29);
                 document.getElementById('period-start').value = formatDateYmd(defaultStart);
                 document.getElementById('review-container').innerHTML = '<div class="text-center py-20 text-slate-400 font-bold">상단 SV 버튼을 눌러주세요.</div>';
-                renderInsights();
+                if (currentSV) {
+                    initializeCurrentSVScope();
+                    renderCountryOptions();
+                    renderSvStoreCountSummary();
+                    renderMobileOperationalSummary();
+                    refreshAllViews();
+                } else {
+                    renderInsights();
+                }
             } catch (error) {
                 console.error('Supabase 데이터 연결 실패', error);
                 status.innerText = '데이터 연결 실패';
@@ -977,6 +1032,8 @@
 
         function switchPage(page) {
             currentPage = page;
+
+            document.body.classList.toggle('insights-mode', page === 'insights');
 
             document.getElementById('reviews-page').classList.toggle('hidden', page !== 'reviews');
             document.getElementById('insights-page').classList.toggle('hidden', page !== 'insights');
@@ -1211,10 +1268,7 @@
             const newToggle = document.getElementById('new-review-toggle');
             if (newToggle) newToggle.classList.remove('active-keyword');
 
-            currentSVStores = allStores.filter(store => String(store.sv || '') === svName);
-            currentSVReviews = allReviews.filter(review =>
-                String(review.sv || '') === svName || isReviewMatchedToSV(review, svName)
-            );
+            initializeCurrentSVScope();
 
             document.getElementById('current-title').innerText = `${getSVDisplayName(svName)} 담당 리뷰`;
             document.getElementById('current-subtitle').innerText = `담당 국가: ${getCountryLabel(svName)}`;
@@ -1223,6 +1277,13 @@
             renderSvStoreCountSummary();
             renderMobileOperationalSummary();
             refreshAllViews();
+        }
+
+        function initializeCurrentSVScope() {
+            currentSVStores = allStores.filter(store => String(store.sv || '') === currentSV);
+            currentSVReviews = allReviews.filter(review =>
+                String(review.sv || '') === currentSV || isReviewMatchedToSV(review, currentSV)
+            );
         }
 
         function getCountryLabel(svName) {
@@ -1348,7 +1409,7 @@
         }
 
         function getCurrentStoreMaster() {
-            let stores = currentSVStores;
+            let stores = getCurrentSVStoreSource();
 
             if (currentCountry !== 'ALL') {
                 stores = stores.filter(store =>
@@ -1359,13 +1420,28 @@
             return stores;
         }
 
+        function getCurrentSVStoreSource() {
+            if (currentSVStores.length) return currentSVStores;
+
+            return Array.from(new Map(
+                currentSVReviews
+                    .filter(review => review && review.store_name)
+                    .map(review => [review.store_name, {
+                        store_name: review.store_name,
+                        country: review.country,
+                        sv: currentSV,
+                        google_maps_url: review.url || ''
+                    }])
+            ).values());
+        }
+
         function getLatestRunStoreResult(storeName) {
             return (crawlStatus?.stores || []).find(store => store.store_name === storeName) || null;
         }
 
         function renderCountryOptions() {
             const select = document.getElementById('country-select');
-            const countrySource = currentSVStores.length ? currentSVStores : currentSVReviews;
+            const countrySource = getCurrentSVStoreSource();
             const countries = [...new Set(countrySource.map(item => item.country).filter(Boolean))].sort();
             select.innerHTML = `<option value="ALL">전체 국가</option>` + countries.map(country =>
                 `<option value="${escapeHtml(country)}">${escapeHtml(country)}</option>`
@@ -1397,7 +1473,9 @@
 
         function handleCountryChange() {
             currentCountry = document.getElementById('country-select').value;
-            currentStore = 'ALL';
+            if (currentStore !== 'ALL' && !getCurrentStoreMaster().some(store => store.store_name === currentStore)) {
+                currentStore = 'ALL';
+            }
             visibleReviewCount = 30;
             resetMobileReviewPage();
             document.getElementById('country-filter-label').innerText = currentCountry === 'ALL' ? '전체 국가' : currentCountry;
@@ -1819,6 +1897,24 @@
             return data;
         }
 
+        function getInsightsBaseReviews() {
+            let data = currentSV ? currentSVReviews : allReviews;
+            data = filterByCountry(data);
+            data = filterByPeriod(data);
+            if (currentStore !== 'ALL') data = data.filter(review => (review.store_name || 'Unknown Store') === currentStore);
+            return data;
+        }
+
+        function getInsightsComparisonReviews(range) {
+            let data = currentSV ? currentSVReviews : allReviews;
+            data = filterByCountry(data);
+            if (currentStore !== 'ALL') data = data.filter(review => (review.store_name || 'Unknown Store') === currentStore);
+            return data.filter(review => {
+                const date = parseReviewDate(review);
+                return date && date >= range.start && date <= range.end;
+            });
+        }
+
         function refreshCurrentReviews() {
             if (!currentSV) {
                 document.getElementById('review-container').innerHTML = '<div class="text-center py-20 text-slate-400 font-bold">상단 SV 버튼을 눌러주세요.</div>';
@@ -2091,16 +2187,34 @@
             box.classList.remove('hidden');
 
             const count = data.length;
-            const lowCount = data.filter(r => Number(r.rating || 0) <= 3).length;
+            const lowCount = data.filter(review => Number(review.rating || 0) <= 3).length;
 
             document.getElementById('summary-count').innerText = count;
             document.getElementById('summary-low').innerText = lowCount;
             document.getElementById('summary-latest').innerText = getLatestReviewDate(data);
         }
 
+        function renderInsightScopeFilters() {
+            const target = document.getElementById('insight-scope-filters');
+            if (!target) return;
+            const stores = getCurrentStoreMaster().slice().sort((a, b) => String(a.store_name || '').localeCompare(String(b.store_name || '')));
+            const periodOptions = [['all','전체 기간'],['today','오늘'],['7d','최근 7일'],['30d','최근 30일'],['this-month','이번 달'],['last-month','지난달'],['custom','직접 선택']];
+            const countries = [...new Set(getCurrentSVStoreSource().map(store => store.country).filter(Boolean))].sort();
+            const disabled = currentSV ? '' : 'disabled';
+            target.innerHTML = `
+                <label>기간<select onchange="handleInsightPeriodChange(this)" ${disabled}>${periodOptions.map(([value, label]) => `<option value="${value}" ${currentPeriod === value ? 'selected' : ''}>${label}</option>`).join('')}</select></label>
+                <label>국가<select onchange="handleInsightCountryChange(this)" ${disabled}><option value="ALL">전체 국가</option>${countries.map(country => `<option value="${escapeHtml(country)}" ${currentCountry === country ? 'selected' : ''}>${escapeHtml(country)}</option>`).join('')}</select></label>
+                <label>매장<select onchange="handleInsightStoreChange(this)" ${disabled}><option value="ALL">전체 매장</option>${stores.map(store => `<option value="${escapeHtml(store.store_name)}" ${currentStore === store.store_name ? 'selected' : ''}>${escapeHtml(store.store_name)}</option>`).join('')}</select></label>
+            `;
+        }
+
+        function handleInsightPeriodChange(select) { setPeriodFilter(select.value, null); }
+        function handleInsightCountryChange(select) { document.getElementById('country-select').value = select.value; handleCountryChange(); }
+        function handleInsightStoreChange(select) { filterStore(select.value); }
+
         function renderInsights() {
-            const data = getCurrentFilteredReviews();
-            const baseData = getCurrentBaseReviews();
+            const data = getInsightsBaseReviews();
+            const baseData = data;
 
             const totalCount = data.length;
             const lowCount = data.filter(r => Number(r.rating || 0) <= 3).length;
@@ -2112,30 +2226,35 @@
                 start.setDate(start.getDate() - 6);
                 return date >= start && date <= today;
             }).length;
-            const latestReview = getLatestReviewDate(data);
+            const comparison = getInsightComparisonData(data);
+            const averageRating = comparison.currentAverage;
+            const previousData = comparison.previous;
+            const currentLowShare = comparison.currentLowShare;
+            const previousLowShare = comparison.previousLowShare;
+            const previousRecent7 = null;
 
             const scopeLabel = currentSV
                 ? `${getSVDisplayName(currentSV)} · ${currentCountry === 'ALL' ? '전체 국가' : currentCountry} · ${currentStore === 'ALL' ? '전체 매장' : currentStore} · ${getPeriodRange().label}`
                 : `전체 데이터 · ${getPeriodRange().label}`;
 
-            document.getElementById('insight-title').innerText = currentSV ? `${getSVDisplayName(currentSV)} 리뷰 인사이트` : '전체 리뷰 인사이트';
-            document.getElementById('insight-subtitle').innerText = currentKeyword
-                ? `현재 키워드 필터 적용: ${currentKeyword.toUpperCase()}`
-                : 'SV와 매장 선택 기준으로 리뷰 데이터를 시각화합니다.';
+            document.getElementById('insight-title').innerText = currentStore !== 'ALL' ? `${currentStore} 리뷰 인사이트` : currentCountry !== 'ALL' ? `${currentCountry} 리뷰 인사이트` : '전체 리뷰 인사이트';
+            document.getElementById('insight-subtitle').innerText = '선택한 조건의 리뷰 데이터를 기반으로 주요 인사이트를 한눈에 확인할 수 있습니다.';
             document.getElementById('insight-scope').innerText = scopeLabel;
+            document.getElementById('insight-reference-date').innerText = `기준일 ${getLatestReviewDate(data)}`;
+            renderInsightScopeFilters();
 
             document.getElementById('insight-kpis').innerHTML = `
                 <div class="insight-metric">
-                    <span>리뷰</span><strong>${totalCount}</strong>
+                    <span>리뷰 수</span><strong>${totalCount}</strong>${getKpiContext(previousData?.length, totalCount, '건')}
+                </div>
+                <div class="insight-metric">
+                    <span>평균 별점</span><strong>${formatRating(averageRating)}</strong>${getRatingKpiContext(comparison.previousAverage, averageRating)}
                 </div>
                 <div class="insight-metric insight-metric-low">
-                    <span>저평점</span><strong>${lowCount}</strong>
+                    <span>저평점 비중</span><strong>${formatPercentage(currentLowShare)}</strong>${getLowShareKpiContext(previousLowShare, currentLowShare)}
                 </div>
                 <div class="insight-metric">
-                    <span>최근 7일</span><strong>${recent7}</strong>
-                </div>
-                <div class="insight-metric">
-                    <span>최신 리뷰</span><strong>${escapeHtml(latestReview)}</strong>
+                    <span>최근 7일 리뷰</span><strong>${recent7}</strong>${getKpiContext(previousRecent7, recent7, '건')}
                 </div>
             `;
 
@@ -2143,38 +2262,88 @@
             renderRatingChart(data);
             renderKeywordCloud(data);
             renderStoreRiskCards(baseData);
+            renderPeriodComparison();
+            renderKeyChanges(data, previousData);
         }
 
-        function getAgeBuckets(data) {
-            const buckets = [
-                { label: '최근 7일', count: 0 },
-                { label: '8~30일', count: 0 },
-                { label: '1~3개월', count: 0 },
-                { label: '3~6개월', count: 0 },
-                { label: '6개월+', count: 0 }
-            ];
+        function getRecentReviewCount(data) {
+            const today = startOfDay(new Date()); const start = new Date(today); start.setDate(start.getDate() - 6);
+            return data.filter(review => { const date = parseReviewDate(review); return date && date >= start && date <= today; }).length;
+        }
 
-            const today = startOfDay(new Date());
+        function getKpiContext(previous, current, suffix) {
+            if (!Number.isFinite(previous) || !Number.isFinite(current)) return '';
+            const delta = current - previous;
+            const percent = previous ? `${delta >= 0 ? '+' : ''}${((delta / previous) * 100).toFixed(0)}%` : '';
+            return `<small class="insight-kpi-context">${delta === 0 ? '이전과 동일' : `${percent || `${delta >= 0 ? '+' : ''}${delta}${suffix}`}`} · 이전 ${suffix ? previous + suffix : formatRating(previous)}</small>`;
+        }
 
-            data.forEach(review => {
-                const date = parseReviewDate(review);
-                if (!date) return;
+        function formatPercentage(value) { return Number.isFinite(value) ? `${value.toFixed(1)}%` : '-'; }
 
-                const score = Math.max(0, Math.floor((today - date) / 86400000));
+        function getInsightComparisonData(current = getInsightsBaseReviews()) {
+            const previousRange = getPreviousComparableRange();
+            const previous = previousRange ? getInsightsComparisonReviews(previousRange) : null;
+            const getLowShare = reviews => reviews?.length ? reviews.filter(review => Number(review.rating || 0) <= 3).length / reviews.length * 100 : null;
+            return {
+                current,
+                previousRange,
+                previous,
+                currentAverage: getAverageRating(current),
+                previousAverage: previous ? getAverageRating(previous) : null,
+                currentLowShare: getLowShare(current),
+                previousLowShare: getLowShare(previous)
+            };
+        }
 
-                if (score <= 7) buckets[0].count += 1;
-                else if (score <= 30) buckets[1].count += 1;
-                else if (score <= 90) buckets[2].count += 1;
-                else if (score <= 180) buckets[3].count += 1;
-                else buckets[4].count += 1;
+        function getRatingKpiContext(previous, current) {
+            if (!Number.isFinite(previous) || !Number.isFinite(current)) return '';
+            const delta = current - previous;
+            const state = delta > 0 ? 'is-favorable' : delta < 0 ? 'is-warning' : '';
+            return `<small class="insight-kpi-context ${state}">${delta > 0 ? '+' : ''}${delta.toFixed(2)} · 이전 ${formatRating(previous)}</small>`;
+        }
+
+        function getLowShareKpiContext(previous, current) {
+            if (!Number.isFinite(previous) || !Number.isFinite(current)) return '';
+            const delta = current - previous;
+            const state = delta < 0 ? 'is-favorable' : delta > 0 ? 'is-warning' : '';
+            return `<small class="insight-kpi-context ${state}">${delta > 0 ? '+' : ''}${delta.toFixed(1)}%p · 이전 ${formatPercentage(previous)}</small>`;
+        }
+
+        function getAverageRating(data) {
+            if (!data.length) return null;
+            return data.reduce((sum, review) => sum + Number(review.rating || 0), 0) / data.length;
+        }
+
+        function formatRating(value) {
+            return Number.isFinite(value) ? value.toFixed(2) : '-';
+        }
+
+        function getChronologicalTrendBuckets(data) {
+            const dated = data.map(review => ({ review, date: parseReviewDate(review) })).filter(item => item.date).sort((a, b) => a.date - b.date);
+            if (!dated.length) return [];
+            const range = getPeriodRange();
+            const start = range.start || startOfDay(dated[0].date);
+            const end = range.end || startOfDay(dated[dated.length - 1].date);
+            const duration = Math.max(1, Math.round((end - start) / 86400000) + 1);
+            const interval = currentPeriod === 'today' ? 1 : duration <= 7 ? 1 : duration <= 45 ? 7 : duration <= 120 ? 14 : Math.ceil(duration / 6);
+            const buckets = [];
+            for (let offset = 0; offset < duration; offset += interval) {
+                const bucketStart = new Date(start); bucketStart.setDate(bucketStart.getDate() + offset);
+                const bucketEnd = new Date(bucketStart); bucketEnd.setDate(bucketEnd.getDate() + interval - 1);
+                if (bucketEnd > end) bucketEnd.setTime(end.getTime());
+                buckets.push({ start: bucketStart, end: bucketEnd, label: `${bucketStart.getMonth() + 1}/${bucketStart.getDate()}`, count: 0, ratingSum: 0 });
+            }
+            dated.forEach(({ review, date }) => {
+                if (date < start || date > end) return;
+                const index = Math.min(Math.floor((date - start) / 86400000 / interval), buckets.length - 1);
+                buckets[index].count += 1; buckets[index].ratingSum += Number(review.rating || 0);
             });
-
             return buckets;
         }
 
         function renderAgeLineChart(data) {
             const container = document.getElementById('age-line-chart');
-            const buckets = getAgeBuckets(data);
+            const buckets = getChronologicalTrendBuckets(data);
             const max = Math.max(...buckets.map(b => b.count), 1);
 
             if (!data.length) {
@@ -2192,23 +2361,27 @@
             const points = buckets.map((b, index) => {
                 const x = paddingX + (plotWidth / (buckets.length - 1)) * index;
                 const y = paddingY + plotHeight - ((b.count / max) * plotHeight);
-                return { ...b, x, y };
+                const averageRating = b.count ? b.ratingSum / b.count : null;
+                const ratingY = averageRating === null ? null : paddingY + plotHeight - (((averageRating - 1) / 4) * plotHeight);
+                return { ...b, averageRating, x, y, ratingY };
             });
 
-            const polyline = points.map(p => `${p.x},${p.y}`).join(' ');
+            const ratingLine = points.filter(p => p.ratingY !== null).map(p => `${p.x},${p.ratingY}`).join(' ');
 
             container.innerHTML = `
                 <div class="insight-chart-canvas">
+                    <div class="insight-chart-legend"><span>막대 · 리뷰 수</span><span>선 · 평균 별점</span></div>
                     <svg viewBox="0 0 ${width} ${height}" class="w-full h-[260px]">
                         <line x1="${paddingX}" y1="${height - paddingY}" x2="${width - paddingX}" y2="${height - paddingY}" stroke="#CBD5E1" stroke-width="1" />
                         <line x1="${paddingX}" y1="${paddingY}" x2="${paddingX}" y2="${height - paddingY}" stroke="#CBD5E1" stroke-width="1" />
 
-                        <polyline points="${polyline}" fill="none" stroke="#111827" stroke-width="5" stroke-linecap="round" stroke-linejoin="round" />
+                        <text x="${paddingX}" y="16" fill="#817A71" font-size="11" font-weight="600">리뷰 수</text><text x="${width - paddingX}" y="16" text-anchor="end" fill="#817A71" font-size="11" font-weight="600">평균 별점</text>
+                        ${points.map(p => `<rect x="${p.x - 17}" y="${p.y}" width="34" height="${height - paddingY - p.y}" rx="4" fill="#D7D0C6"></rect>`).join('')}
+                        <polyline points="${ratingLine}" fill="none" stroke="#514B44" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" />
 
                         ${points.map(p => `
-                            <circle cx="${p.x}" cy="${p.y}" r="8" fill="#111827"></circle>
-                            <circle cx="${p.x}" cy="${p.y}" r="4" fill="#ffffff"></circle>
-                            <text x="${p.x}" y="${p.y - 16}" text-anchor="middle" fill="#0F172A" font-size="16" font-weight="900">${p.count}</text>
+                            ${p.ratingY !== null ? `<circle cx="${p.x}" cy="${p.ratingY}" r="4" fill="#514B44"></circle>` : ''}
+                            <text x="${p.x}" y="${p.y - 8}" text-anchor="middle" fill="#514B44" font-size="12" font-weight="800">${p.count}</text>
                             <text x="${p.x}" y="${height - 8}" text-anchor="middle" fill="#64748B" font-size="13" font-weight="700">${p.label}</text>
                         `).join('')}
                     </svg>
@@ -2231,7 +2404,7 @@
                 if (target) target.count += 1;
             });
 
-            renderBarList('rating-chart', buckets);
+            renderBarList('rating-chart', buckets, true);
         }
 
         function renderKeywordCloud(data) {
@@ -2257,12 +2430,15 @@
                 return;
             }
 
-            container.innerHTML = rows.map((row, index) => `
+            const visibleRows = insightsShowAllKeywords ? rows : rows.slice(0, 5);
+            container.innerHTML = visibleRows.map((row, index) => `
                 <button onclick="applyKeywordFromInsight('${row.key}')" class="insight-keyword-row ${currentKeyword === row.key ? 'is-active' : ''}">
                     <span class="insight-rank">${index + 1}</span><span>${escapeHtml(row.label)}</span><strong>${row.count}</strong>
                 </button>
-            `).join('');
+            `).join('') + (rows.length > 5 ? `<button type="button" class="insight-keyword-more" onclick="toggleInsightKeywords()">${insightsShowAllKeywords ? '접기' : '전체 키워드 보기'}</button>` : '');
         }
+
+        function toggleInsightKeywords() { insightsShowAllKeywords = !insightsShowAllKeywords; renderKeywordCloud(getInsightsBaseReviews()); }
 
         function applyKeywordFromInsight(keywordKey) {
             currentKeyword = keywordKey;
@@ -2282,30 +2458,128 @@
 
         function renderStoreRiskCards(data) {
             const container = document.getElementById('store-risk-cards');
+            const section = container.closest('.insight-surface');
+            if (currentStore !== 'ALL') {
+                section.classList.add('hidden');
+                section.parentElement.classList.add('is-single');
+                return;
+            }
+            section.classList.remove('hidden');
+            section.parentElement.classList.remove('is-single');
             const stores = [...new Set(data.map(r => r.store_name || 'Unknown Store'))];
+            const previousRange = getPreviousComparableRange();
+            const previousData = previousRange ? getInsightsComparisonReviews(previousRange) : [];
 
             const rows = stores.map(storeName => {
                 const reviews = data.filter(r => (r.store_name || 'Unknown Store') === storeName);
                 const lowCount = reviews.filter(r => Number(r.rating || 0) <= 3).length;
                 const totalCount = reviews.length;
 
-                return { storeName, lowCount, totalCount, needsAttention: lowCount >= 3 };
-            }).sort((a, b) => b.lowCount - a.lowCount);
+                const country = reviews.find(review => review.country)?.country || allStores.find(store => store.store_name === storeName)?.country || '-';
+                const lowShare = totalCount ? (lowCount / totalCount) * 100 : 0;
+                const previousReviews = previousData.filter(review => (review.store_name || 'Unknown Store') === storeName);
+                const previousLow = previousReviews.filter(review => Number(review.rating || 0) <= 3).length;
+                const previousShare = previousReviews.length ? previousLow / previousReviews.length * 100 : null;
+                const previousAverage = getAverageRating(previousReviews);
+                const currentAverage = getAverageRating(reviews);
+                const lowIncrease = lowCount - previousLow;
+                const shareIncrease = previousShare === null ? null : lowShare - previousShare;
+                const ratingDecline = Number.isFinite(previousAverage) && Number.isFinite(currentAverage) ? previousAverage - currentAverage : null;
+                let reason = `저평점 ${lowCount}건 (${lowShare.toFixed(1)}%)`;
+                if (lowIncrease > 0) reason = `저평점 증가 · ${previousLow} → ${lowCount}건${previousLow ? ` · +${((lowIncrease / previousLow) * 100).toFixed(0)}%` : ''}`;
+                else if (shareIncrease !== null && shareIncrease > 0) reason = `저평점 비중 증가 · ${previousShare.toFixed(1)}% → ${lowShare.toFixed(1)}%`;
+                else if (ratingDecline !== null && ratingDecline > 0) reason = `평균 별점 하락 · ${previousAverage.toFixed(2)} → ${currentAverage.toFixed(2)} · -${ratingDecline.toFixed(2)}`;
+                return { storeName, country, lowCount, totalCount, lowShare, lowIncrease, shareIncrease, ratingDecline, reason, deteriorated: lowIncrease > 0 || (shareIncrease !== null && shareIncrease > 0) || (ratingDecline !== null && ratingDecline > 0), needsAttention: lowCount > 0 };
+            }).sort((a, b) => Number(b.deteriorated) - Number(a.deteriorated) || b.lowIncrease - a.lowIncrease || (b.shareIncrease || 0) - (a.shareIncrease || 0) || (b.ratingDecline || 0) - (a.ratingDecline || 0) || b.lowCount - a.lowCount || b.lowShare - a.lowShare || a.storeName.localeCompare(b.storeName));
 
             if (!rows.length) {
                 container.innerHTML = '<div class="text-center py-12 text-xs text-slate-400 font-bold">표시할 데이터가 없습니다.</div>';
                 return;
             }
 
-            container.innerHTML = rows.map(row => `
-                <div class="insight-risk-row ${row.needsAttention ? 'needs-attention' : ''}">
-                    <div><strong>${escapeHtml(row.storeName)}</strong><span>저평점 ${row.lowCount} · 전체 리뷰 ${row.totalCount}</span></div>
-                    ${row.needsAttention ? '<em>주의</em>' : ''}
-                </div>
-            `).join('');
+            const attentionRows = rows.filter(row => row.needsAttention);
+            const limit = isMobileReviewsView() ? 3 : 5;
+            const visibleRows = insightsShowAllStores ? attentionRows : attentionRows.slice(0, limit);
+            container.innerHTML = visibleRows.map((row, index) => `
+                <button type="button" onclick="selectInsightStore('${escapeForOnclick(row.storeName)}')" class="insight-risk-row">
+                    <span class="insight-rank">${index + 1}</span><span class="insight-risk-copy"><strong>${escapeHtml(row.storeName)}</strong><small>${escapeHtml(row.country)} · ${escapeHtml(row.reason)}</small></span><em>${row.lowCount}건 · ${row.lowShare.toFixed(1)}%</em>
+                </button>
+            `).join('') + (attentionRows.length > limit ? `<button type="button" class="insight-keyword-more" onclick="toggleInsightStores()">${insightsShowAllStores ? '접기' : isMobileReviewsView() ? '더 보기' : '전체 매장 보기'}</button>` : '') || '<div class="text-center py-8 text-xs text-slate-400 font-bold">저평점 리뷰가 있는 매장이 없습니다.</div>';
         }
 
-        function renderBarList(containerId, rows) {
+        function toggleInsightStores() { insightsShowAllStores = !insightsShowAllStores; renderStoreRiskCards(getInsightsBaseReviews()); }
+
+        function selectInsightStore(storeName) {
+            filterStore(storeName);
+            switchPage('reviews');
+        }
+
+        function getPreviousComparableRange() {
+            const range = getPeriodRange();
+            if (!range.start || !range.end) return null;
+            const length = Math.round((range.end - range.start) / 86400000) + 1;
+            if (length < 1) return null;
+            const end = new Date(range.start);
+            end.setDate(end.getDate() - 1);
+            const start = new Date(end);
+            start.setDate(start.getDate() - length + 1);
+            return { start, end };
+        }
+
+        function getComparisonBaseData(range) {
+            let data = currentSV ? currentSVReviews : allReviews;
+            data = filterByCountry(data);
+            if (currentStore !== 'ALL') data = data.filter(review => (review.store_name || 'Unknown Store') === currentStore);
+            data = data.filter(review => {
+                const date = parseReviewDate(review);
+                return date && date >= range.start && date <= range.end;
+            });
+            return filterNewReviews(filterLowRatings(filterByKeyword(data)));
+        }
+
+        function renderPeriodComparison() {
+            const content = document.getElementById('insight-comparison-content');
+            const note = document.getElementById('insight-comparison-note');
+            const comparison = getInsightComparisonData();
+            const { previousRange, current, previous, currentAverage, previousAverage, currentLowShare, previousLowShare } = comparison;
+            if (!previousRange) {
+                note.innerText = '전체 기간은 동일 길이의 직전 기간을 정할 수 없어 비교하지 않습니다.';
+                content.innerHTML = '<div class="insight-comparison-empty">비교 가능한 기간을 선택하면 직전 동일 기간과의 변화를 확인할 수 있습니다.</div>';
+                return;
+            }
+            const metrics = [
+                { label: '평균 별점', before: previousAverage, after: currentAverage, format: formatRating, suffix: '' },
+                { label: '저평점 비중', before: previousLowShare, after: currentLowShare, format: formatPercentage, suffix: '%p' },
+                { label: '리뷰 수', before: previous.length, after: current.length, format: value => String(value), suffix: '건' }
+            ];
+            note.innerText = `이전 기간 ${formatDateYmd(previousRange.start)} ~ ${formatDateYmd(previousRange.end)}`;
+            content.innerHTML = metrics.map((metric, index) => {
+                const delta = Number.isFinite(metric.before) && Number.isFinite(metric.after) ? metric.after - metric.before : null;
+                const rawDelta = delta === null ? '' : `${delta > 0 ? '+' : ''}${metric.suffix === '%p' ? delta.toFixed(1) : metric.suffix === '건' ? delta : delta.toFixed(2)}${metric.suffix}`;
+                const favorable = index === 0 ? delta >= 0 : index === 1 ? delta <= 0 : delta >= 0;
+                const percent = index === 2 && Number.isFinite(metric.before) && metric.before ? ` (${delta >= 0 ? '+' : ''}${((delta / metric.before) * 100).toFixed(0)}%)` : '';
+                return `<div class="insight-comparison-metric ${delta === null ? '' : favorable ? 'is-favorable' : 'is-warning'}"><span>${metric.label}</span><strong>${metric.format(metric.before)} → ${metric.format(metric.after)}</strong><small>${delta === null ? '비교 데이터 없음' : rawDelta + percent}</small></div>`;
+            }).join('');
+        }
+
+        function renderKeyChanges(current, previous) {
+            const target = document.getElementById('insight-key-changes-content');
+            if (!previous) {
+                target.innerHTML = '<p class="insight-key-change">현재 선택 조건의 리뷰 수는 ' + current.length + '건입니다.</p>';
+                return;
+            }
+            const sentences = [];
+            const countDelta = current.length - previous.length;
+            if (countDelta !== 0) sentences.push(`리뷰 수가 이전 기간 대비 ${Math.abs(countDelta)}건(${previous.length ? `${countDelta > 0 ? '+' : ''}${((countDelta / previous.length) * 100).toFixed(0)}%` : '-'}) ${countDelta > 0 ? '증가했습니다.' : '감소했습니다.'}`);
+            const currentLowShare = current.length ? current.filter(r => Number(r.rating || 0) <= 3).length / current.length * 100 : null;
+            const previousLowShare = previous.length ? previous.filter(r => Number(r.rating || 0) <= 3).length / previous.length * 100 : null;
+            if (currentLowShare !== null && previousLowShare !== null && currentLowShare !== previousLowShare) sentences.push(`저평점 비중이 ${previousLowShare.toFixed(1)}%에서 ${currentLowShare.toFixed(1)}%로 ${Math.abs(currentLowShare - previousLowShare).toFixed(1)}%p ${currentLowShare > previousLowShare ? '증가했습니다.' : '감소했습니다.'}`);
+            const currentAverage = getAverageRating(current), previousAverage = getAverageRating(previous);
+            if (Number.isFinite(currentAverage) && Number.isFinite(previousAverage) && currentAverage !== previousAverage) sentences.push(`평균 별점이 ${previousAverage.toFixed(2)}에서 ${currentAverage.toFixed(2)}로 ${Math.abs(currentAverage - previousAverage).toFixed(2)} ${currentAverage > previousAverage ? '상승했습니다.' : '하락했습니다.'}`);
+            target.innerHTML = (sentences.slice(0, 3).map(sentence => `<p class="insight-key-change">${sentence}</p>`).join('')) || '<p class="insight-key-change">이전 동일 기간과 주요 지표가 동일합니다.</p>';
+        }
+
+        function renderBarList(containerId, rows, includePercent = false) {
             const container = document.getElementById(containerId);
             const max = Math.max(...rows.map(r => r.count), 1);
 
@@ -2321,7 +2595,7 @@
                     <div>
                         <div class="flex justify-between items-center mb-1">
                             <div class="text-[11px] font-bold text-[#625C54] truncate pr-3">${escapeHtml(row.label)}</div>
-                            <div class="text-[11px] font-black text-[#36312B]">${row.count}</div>
+                            <div class="text-[11px] font-black text-[#36312B]">${includePercent ? `${Math.round((row.count / Math.max(rows.reduce((sum, item) => sum + item.count, 0), 1)) * 100)}% (${row.count})` : row.count}</div>
                         </div>
                         <div class="h-2.5 bg-[#F0EDE8] rounded-full overflow-hidden">
                             <div class="h-full bg-[#625C54] rounded-full" style="width: ${width}%"></div>
