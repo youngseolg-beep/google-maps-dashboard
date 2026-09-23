@@ -1,0 +1,51 @@
+name: diagnostic-taipei-crawler
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify-test-branch:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Refuse non-test-branch execution
+        run: |
+          if [ "${GITHUB_REF}" != "refs/heads/test/crawler-newest-verification" ]; then
+            echo "This temporary diagnostic may run only from test/crawler-newest-verification."
+            exit 1
+          fi
+
+  diagnostic:
+    needs: verify-test-branch
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r scraper/requirements.txt
+          playwright install --with-deps chromium
+
+      - name: Run no-write Taipei diagnostic
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          DIAGNOSTIC_STORE: "Paik's Noodle Taipei"
+        run: |
+          set -o pipefail
+          python scraper/scraper.py | tee diagnostic.log
+          echo "--- Diagnostic log summary ---"
+          echo "Candidate parse log entries (first 10 cards only): $(grep -c '후보 리뷰 파싱' diagnostic.log || true)"
+          echo "Last existing-key result: $(grep '기존 리뷰 감지' diagnostic.log | tail -n 1 || echo none)"
+          echo "Extraction result: $(grep '리뷰 추출 종료' diagnostic.log | tail -n 1 || echo none)"
