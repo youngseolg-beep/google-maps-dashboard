@@ -320,7 +320,7 @@
 
             #mobile-bottom-nav { display:grid!important; position:fixed; right:0; bottom:0; left:0; z-index:60; grid-template-columns:1fr 1fr; padding:7px 28px calc(7px + env(safe-area-inset-bottom)); border-top:1px solid #E5E0D8; background:rgba(255,255,255,.96); backdrop-filter:blur(12px); }
             #mobile-bottom-nav button { display:grid; place-items:center; gap:2px; min-height:46px; border:0; background:transparent; color:#8A8379; font-size:11px; font-weight:550; }
-            #mobile-bottom-nav button span { font-size:19px; line-height:1; }
+            #mobile-bottom-nav button svg { width:20px; height:20px; fill:none; stroke:currentColor; stroke-width:1.75; stroke-linecap:round; stroke-linejoin:round; }
             #mobile-bottom-nav button[aria-current="page"] { color:#302C27; font-weight:700; }
         }
 
@@ -741,8 +741,8 @@
     </div>
 
     <nav id="mobile-bottom-nav" class="mobile-only" aria-label="모바일 기본 탐색">
-        <button type="button" data-page="reviews" aria-current="page" onclick="switchPage('reviews')"><span aria-hidden="true">💬</span>Reviews</button>
-        <button type="button" data-page="insights" onclick="switchPage('insights')"><span aria-hidden="true">📊</span>Insights</button>
+        <button type="button" data-page="reviews" aria-current="page" onclick="switchPage('reviews')"><svg aria-hidden="true" focusable="false" viewBox="0 0 24 24"><path d="M20 11.5c0 4.14-3.58 7.5-8 7.5-1.4 0-2.72-.34-3.86-.94L4 20l1.23-3.62A7.13 7.13 0 0 1 4 11.5C4 7.36 7.58 4 12 4s8 3.36 8 7.5Z"/><path d="M9 12h6"/></svg>Reviews</button>
+        <button type="button" data-page="insights" onclick="switchPage('insights')"><svg aria-hidden="true" focusable="false" viewBox="0 0 24 24"><path d="M4 20v-8h4v8"/><path d="M10 20V5h4v15"/><path d="M16 20v-5h4v5"/><path d="M3 20h18"/></svg>Insights</button>
     </nav>
 
     <script>
