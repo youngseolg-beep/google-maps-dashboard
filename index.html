@@ -357,11 +357,11 @@
         .mobile-sv-picker button.is-current { border-color:#DCD7CF; background:#F1EFEB; color:#302C27; }
 
         #insights-page { margin-top:2px; }
-        .insights-heading { margin-bottom:16px; padding:2px 0 0; }
+        .insights-heading { margin-bottom:16px; padding:20px 24px!important; }
         .insights-heading > span { color:#8A8379; font-size:10px; font-weight:700; letter-spacing:.08em; }
-        .insights-heading h2 { margin-top:5px; color:#2B2823; font-size:24px; font-weight:700; letter-spacing:-.035em; }
-        .insights-heading p { margin-top:5px; color:#746D64; font-size:13px; }
-        #insight-scope { margin-top:10px; color:#817A71; font-size:12px; font-weight:550; overflow-wrap:anywhere; }
+        .insights-heading h2 { margin-top:8px; color:#2B2823; font-size:24px; font-weight:700; letter-spacing:-.035em; }
+        .insights-heading p { margin-top:8px; color:#746D64; font-size:13px; }
+        #insight-scope { margin-top:14px; color:#817A71; font-size:12px; font-weight:550; overflow-wrap:anywhere; }
         .insight-summary { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); margin-bottom:16px; border:1px solid #E6E1D9; border-radius:14px; background:#FFF; overflow:hidden; }
         .insight-metric { min-width:0; padding:14px 16px; border-right:1px solid #EEEAE4; }
         .insight-metric:last-child { border-right:0; }
@@ -377,8 +377,18 @@
         .insight-section-heading p { margin-top:3px; color:#8A8379; font-size:11px; }
         .insight-chart-canvas { padding:10px; border-radius:10px; background:#FAF9F7; }
         .insight-chart-canvas svg { height:230px; }
-        .monthly-trend-scroll { overflow-x:auto; overscroll-behavior-x:contain; }
-        .insight-chart-canvas .monthly-trend-scroll svg { display:block; max-width:none; height:260px; }
+        .monthly-trend-layout { display:flex; align-items:flex-start; }
+        .monthly-trend-scroll { min-width:0; flex:1; overflow-x:auto; overscroll-behavior-x:contain; }
+        .monthly-trend-axis { position:relative; flex:0 0 64px; height:285px; color:#6F685F; font-size:11px; }
+        .monthly-trend-axis.is-rating { flex-basis:58px; }
+        .monthly-trend-axis-title { position:absolute; top:2px; left:0; right:0; line-height:1.3; font-weight:600; }
+        .monthly-trend-axis.is-count .monthly-trend-axis-title { text-align:right; padding-right:8px; }
+        .monthly-trend-axis.is-rating .monthly-trend-axis-title { padding-left:8px; }
+        .monthly-trend-axis-tick { position:absolute; transform:translateY(-50%); }
+        .monthly-trend-axis.is-count .monthly-trend-axis-tick { right:8px; }
+        .monthly-trend-axis.is-rating .monthly-trend-axis-tick { left:8px; }
+        .insight-chart-canvas .monthly-trend-scroll svg { display:block; max-width:none; height:285px; }
+        .monthly-trend-x-label { text-align:center; color:#6F685F; font-size:11px; }
         .monthly-trend-note { margin:8px 4px 0; color:#817A71; font-size:12px; line-height:1.6; }
         .monthly-trend-summary { margin:6px 4px; color:#514B44; font-size:12px; font-weight:700; }
         #keyword-cloud { display:grid; }
@@ -399,7 +409,7 @@
             .mobile-operation-change { margin-left:auto; }
             .mobile-sv-picker { grid-template-columns:1fr 1fr; }
             #insights-page { margin-top:0; }
-            .insights-heading { margin:1px 0 14px; }
+            .insights-heading { margin:1px 0 14px; padding:14px 16px!important; }
             .insights-heading h2 { font-size:20px; }
             .insights-heading p { font-size:12px; }
             #insight-scope { font-size:11px; line-height:1.45; }
@@ -735,7 +745,7 @@
             </header>
             <section id="insight-kpis" class="insight-summary" aria-label="인사이트 요약"></section>
             <div class="insight-analysis-grid insight-analysis-primary">
-                <section class="insight-surface insight-timeline"><div class="insight-section-heading"><h3>리뷰 시점 흐름</h3><p id="trend-description">기간별 리뷰 흐름</p></div><div id="age-line-chart"></div></section>
+                <section class="insight-surface insight-timeline"><div class="insight-section-heading"><h3 id="trend-title">리뷰 시점 흐름</h3><p id="trend-description">기간별 리뷰 흐름</p></div><div id="age-line-chart"></div></section>
                 <section class="insight-surface"><div class="insight-section-heading"><h3>별점 분포</h3><p>수집된 리뷰 기준</p></div><div id="rating-chart"></div></section>
             </div>
             <div class="insight-analysis-grid insight-analysis-secondary">
@@ -2413,9 +2423,9 @@
                 container.innerHTML = `${summary}<div class="text-center py-12 text-xs text-slate-400 font-bold">월별 추이에 표시할 데이터가 없습니다.</div>${note}`;
                 return;
             }
-            const width = Math.max(360, 100 + buckets.length * 74), height = 260;
-            const left = 48, right = width - 48, top = 35, bottom = 210;
-            const max = Math.max(1, ...buckets.map(b => b.count));
+            const width = Math.max(220, buckets.length * 74), height = 285;
+            const left = 0, right = width, top = 50, bottom = 225;
+            const max = Math.max(4, Math.ceil(Math.max(...buckets.map(b => b.count)) / 4) * 4);
             const points = buckets.map((b, i) => {
                 const x = left + (right - left) * (i + 0.5) / buckets.length;
                 const y = bottom - b.count / max * (bottom - top);
@@ -2427,18 +2437,17 @@
             points.forEach(p => { if (p.ratingY === null) { if (segment.length) segments.push(segment); segment = []; } else segment.push(p); });
             if (segment.length) segments.push(segment);
             container.innerHTML = `${summary}<div class="insight-chart-canvas"><div class="insight-chart-legend"><span>막대 · 리뷰 수 (왼쪽)</span><span>선 · 평균 별점 1–5 (오른쪽)</span></div>
+                <div class="monthly-trend-layout"><div class="monthly-trend-axis is-count" aria-label="리뷰 수, 단위 건"><span class="monthly-trend-axis-title">리뷰 수<br>(건)</span>${[0, 1, 2, 3, 4].map(i => `<span class="monthly-trend-axis-tick" style="top:${bottom - i * (bottom - top) / 4}px">${(max * i / 4).toLocaleString()}</span>`).join('')}</div>
                 <div class="monthly-trend-scroll" tabindex="0" aria-label="월별 리뷰 차트, 가로로 스크롤 가능"><svg width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" role="img" aria-label="월별 리뷰 수와 평균 별점">
-                    <line x1="${left}" y1="${bottom}" x2="${right}" y2="${bottom}" stroke="#CBD5E1" />
-                    <text x="${left}" y="18" fill="#817A71" font-size="11">리뷰 수</text><text x="${right}" y="18" text-anchor="end" fill="#817A71" font-size="11">평균 별점</text>
-                    <text x="${left - 6}" y="${top + 4}" text-anchor="end" fill="#817A71" font-size="11">${max}</text><text x="${left - 6}" y="${bottom}" text-anchor="end" fill="#817A71" font-size="11">0</text>
-                    <text x="${right + 6}" y="${top + 4}" fill="#817A71" font-size="11">5</text><text x="${right + 6}" y="${bottom}" fill="#817A71" font-size="11">1</text>
+                    ${[0, 1, 2, 3, 4].map(i => { const y = bottom - i * (bottom - top) / 4; return `<line x1="${left}" y1="${y}" x2="${right}" y2="${y}" stroke="${i === 0 ? '#B9B2A8' : '#E9E5DF'}" />`; }).join('')}
                     ${segments.map(s => `<polyline points="${s.map(p => `${p.x},${p.ratingY}`).join(' ')}" fill="none" stroke="#514B44" stroke-width="3" />`).join('')}
                     ${points.map(p => { const tip = `${p.label} (${p.start} ~ ${p.end}) · 리뷰 ${p.count}건 · 평균 별점 ${p.average === null ? 'N/A' : p.average.toFixed(2)}`; return `<g tabindex="0" role="img" aria-label="${tip}" onfocus="showMonthlyTrendDetail(this)" onclick="showMonthlyTrendDetail(this)" onmouseenter="showMonthlyTrendDetail(this)"><title>${tip}</title><rect x="${p.x - 15}" y="${p.y}" width="30" height="${bottom - p.y}" rx="4" fill="#D7D0C6" />${p.ratingY === null ? '' : `<circle cx="${p.x}" cy="${p.ratingY}" r="4" fill="#514B44" />`}<text x="${p.x}" y="${p.y - 7}" text-anchor="middle" fill="#514B44" font-size="11">${p.count}</text><text x="${p.x}" y="${bottom + 21}" text-anchor="middle" fill="#64748B" font-size="11">${p.label}</text><rect x="${p.x - 34}" y="${top}" width="68" height="${bottom - top + 25}" fill="transparent" /></g>`; }).join('')}
-                </svg></div><p id="monthly-trend-detail" class="monthly-trend-note" aria-live="polite">막대 또는 월을 선택하면 상세 정보를 볼 수 있습니다.</p></div>${note}`;
+                </svg></div><div class="monthly-trend-axis is-rating" aria-label="평균 별점, 단위 점"><span class="monthly-trend-axis-title">평균 별점<br>(점)</span>${[0, 1, 2, 3, 4].map(i => `<span class="monthly-trend-axis-tick" style="top:${bottom - i * (bottom - top) / 4}px">${i + 1}</span>`).join('')}</div></div><div class="monthly-trend-x-label">연도 · 월 (YYYY.MM)</div><p id="monthly-trend-detail" class="monthly-trend-note" aria-live="polite">막대 또는 월을 선택하면 상세 정보를 볼 수 있습니다.</p></div>${note}`;
         }
 
         function renderAgeLineChart(data) {
             const container = document.getElementById('age-line-chart');
+            document.getElementById('trend-title').innerText = currentPeriod === 'all' ? '월별 리뷰 수 및 평균 별점 추이' : '리뷰 시점 흐름';
             document.getElementById('trend-description').innerText = currentPeriod === 'all' ? '월별 리뷰 흐름' : '기간별 리뷰 흐름';
             if (currentPeriod === 'all') { renderMonthlyTrend(container, data); return; }
             const buckets = getChronologicalTrendBuckets(data);
