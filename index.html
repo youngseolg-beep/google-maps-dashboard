@@ -395,9 +395,10 @@
         .monthly-trend-exclusions ul { margin:5px 0 0; padding-left:18px; }
         .monthly-trend-summary { margin:6px 4px; color:#514B44; font-size:12px; font-weight:700; }
         #keyword-cloud { display:grid; }
-        .insight-keyword-row { display:grid; grid-template-columns:26px minmax(0,1fr) auto; align-items:center; gap:8px; min-height:38px; border:0; border-bottom:1px solid #F0ECE7; background:transparent; color:#4B453D; font-size:12px; font-weight:600; text-align:left; }
+        .insight-keyword-row { display:grid; grid-template-columns:26px minmax(0,1fr) auto; align-items:center; gap:3px 8px; min-height:54px; padding:8px 0; border:0; border-bottom:1px solid #F0ECE7; background:transparent; color:#4B453D; font-size:12px; font-weight:600; text-align:left; }
         .insight-keyword-row:last-child { border-bottom:0; }
         .insight-keyword-row strong { color:#37322D; font-size:12px; }
+        .insight-keyword-metrics { grid-column:2 / 4; display:flex; flex-wrap:wrap; gap:3px 14px; color:#817A71; font-size:11px; font-weight:500; }
         .insight-rank { color:#A19A91; font-size:11px; }
         #store-risk-cards { display:grid; gap:0; }
         .insight-risk-row { display:flex; align-items:center; justify-content:space-between; gap:10px; padding:11px 0; border-bottom:1px solid #F0ECE7; }
@@ -2552,9 +2553,17 @@
             };
 
             const rows = Object.keys(KEYWORD_GROUPS).map(key => {
-                const count = data.filter(r => matchesKeywordCategory(r.text, key)).length;
+                const matching = data.filter(r => matchesKeywordCategory(r.text, key));
+                const ratings = matching.map(r => {
+                    const value = r.rating;
+                    if (typeof value === 'number') return value;
+                    if (typeof value !== 'string' || !/^(?:\d+(?:\.\d*)?|\.\d+)$/.test(value.trim())) return NaN;
+                    return Number(value);
+                }).filter(rating => Number.isFinite(rating) && rating >= 1 && rating <= 5);
+                const average = ratings.length ? ratings.reduce((sum, rating) => sum + rating, 0) / ratings.length : null;
+                const lowShare = ratings.length ? ratings.filter(rating => rating <= 3).length / ratings.length * 100 : null;
 
-                return { key, label: labelMap[key] || key, count };
+                return { key, label: labelMap[key] || key, count: matching.length, average, lowShare };
             }).sort((a, b) => b.count - a.count);
 
             if (!rows.length || rows.every(r => r.count === 0)) {
@@ -2565,7 +2574,8 @@
             const visibleRows = insightsShowAllKeywords ? rows : rows.slice(0, 5);
             container.innerHTML = visibleRows.map((row, index) => `
                 <button onclick="applyKeywordFromInsight('${row.key}')" class="insight-keyword-row ${currentKeyword === row.key ? 'is-active' : ''}">
-                    <span class="insight-rank">${index + 1}</span><span>${escapeHtml(row.label)}</span><strong>${row.count}</strong>
+                    <span class="insight-rank">${index + 1}</span><span>${escapeHtml(row.label)}</span><strong>${row.count}건</strong>
+                    <span class="insight-keyword-metrics"><span>평균 별점 ${formatRating(row.average)}</span><span>저평점 ${formatPercentage(row.lowShare)}</span></span>
                 </button>
             `).join('') + (rows.length > 5 ? `<button type="button" class="insight-keyword-more" onclick="toggleInsightKeywords()">${insightsShowAllKeywords ? '접기' : '전체 키워드 보기'}</button>` : '');
         }
