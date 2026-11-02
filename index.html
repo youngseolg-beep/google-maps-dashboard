@@ -375,6 +375,10 @@
         .insight-section-heading p { margin-top:3px; color:#8A8379; font-size:11px; }
         .insight-chart-canvas { padding:10px; border-radius:10px; background:#FAF9F7; }
         .insight-chart-canvas svg { height:230px; }
+        .monthly-trend-scroll { overflow-x:auto; overscroll-behavior-x:contain; }
+        .insight-chart-canvas .monthly-trend-scroll svg { display:block; max-width:none; height:260px; }
+        .monthly-trend-note { margin:8px 4px 0; color:#817A71; font-size:12px; line-height:1.6; }
+        .monthly-trend-summary { margin:6px 4px; color:#514B44; font-size:12px; font-weight:700; }
         #keyword-cloud { display:grid; }
         .insight-keyword-row { display:grid; grid-template-columns:26px minmax(0,1fr) auto; align-items:center; gap:8px; min-height:38px; border:0; border-bottom:1px solid #F0ECE7; background:transparent; color:#4B453D; font-size:12px; font-weight:600; text-align:left; }
         .insight-keyword-row:last-child { border-bottom:0; }
@@ -728,7 +732,7 @@
             </header>
             <section id="insight-kpis" class="insight-summary" aria-label="인사이트 요약"></section>
             <div class="insight-analysis-grid insight-analysis-primary">
-                <section class="insight-surface insight-timeline"><div class="insight-section-heading"><h3>리뷰 시점 흐름</h3><p>review_date 기준 기간별 리뷰 흐름</p></div><div id="age-line-chart"></div></section>
+                <section class="insight-surface insight-timeline"><div class="insight-section-heading"><h3>리뷰 시점 흐름</h3><p id="trend-description">기간별 리뷰 흐름</p></div><div id="age-line-chart"></div></section>
                 <section class="insight-surface"><div class="insight-section-heading"><h3>별점 분포</h3><p>수집된 리뷰 기준</p></div><div id="rating-chart"></div></section>
             </div>
             <div class="insight-analysis-grid insight-analysis-secondary">
@@ -2341,8 +2345,100 @@
             return buckets;
         }
 
+        // Chart-only validation mirrors the scraper's stored estimates; it never changes records.
+        function classifyMonthlyTrendDate(review) {
+            const parseDate = (value, allowTimestamp = false) => {
+                const match = typeof value === 'string' && value.match(/^(\d{4})-(\d{2})-(\d{2})(?:$|T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})$)/);
+                if (match && value.length > 10 && (!allowTimestamp || !Number.isFinite(Date.parse(value)))) return null;
+                if (!match) return null;
+                const year = Number(match[1]), month = Number(match[2]), day = Number(match[3]);
+                const date = new Date(0);
+                date.setUTCFullYear(year, month - 1, day);
+                date.setUTCHours(0, 0, 0, 0);
+                return year >= 1 && date.getUTCFullYear() === year && date.getUTCMonth() === month - 1 && date.getUTCDate() === day ? date : null;
+            };
+            const collected = parseDate(review?.collected_at, true);
+            const stored = parseDate(review?.review_date);
+            if (!collected || !stored) return null;
+            const text = String(review?.date || '').trim().toLowerCase().replace(/\s+/g, ' ');
+            const match = text.match(/^(\d+|a|an|one|een|satu)\s*(minutes?|hours?|days?|weeks?|months?|분|시간|일|주|개월|달|menit|jam|hari|minggu|bulan|minuut|minuten|uur|dag|dagen|week|weken|maand|maanden)(?:\s*(?:ago|전|yang lalu|geleden))?$/);
+            if (!match) return null;
+            const amount = /^\d+$/.test(match[1]) ? Number(match[1]) : 1;
+            if (!Number.isSafeInteger(amount) || amount < 1) return null;
+            const unit = match[2];
+            const days = /^(minutes?|hours?|분|시간|menit|jam|minuut|minuten|uur)$/.test(unit) ? 0
+                : /^(days?|일|hari|dag|dagen)$/.test(unit) ? 1
+                : /^(weeks?|주|minggu|weken)$/.test(unit) ? 7 : 30;
+            const expected = collected.getTime() - amount * days * 86400000;
+            return Number.isFinite(expected) && stored.getTime() === expected ? stored : null;
+        }
+
+        function getMonthlyTrend(data) {
+            const months = new Map();
+            let excluded = 0;
+            data.forEach(review => {
+                const date = classifyMonthlyTrendDate(review);
+                if (!date) { excluded++; return; }
+                const key = date.getUTCFullYear() * 12 + date.getUTCMonth();
+                if (!months.has(key)) months.set(key, { count: 0, ratingSum: 0, ratingCount: 0 });
+                const bucket = months.get(key);
+                bucket.count++;
+                const rating = review.rating == null || String(review.rating).trim() === '' ? NaN : Number(review.rating);
+                if (Number.isFinite(rating) && rating >= 1 && rating <= 5) { bucket.ratingSum += rating; bucket.ratingCount++; }
+            });
+            const keys = [...months.keys()].sort((a, b) => a - b);
+            const buckets = [];
+            if (keys.length) for (let key = keys[0]; key <= keys[keys.length - 1]; key++) {
+                const year = Math.floor(key / 12), month = key % 12;
+                const start = new Date(0); start.setUTCFullYear(year, month, 1); start.setUTCHours(0, 0, 0, 0);
+                const end = new Date(0); end.setUTCFullYear(year, month + 1, 0); end.setUTCHours(0, 0, 0, 0);
+                const values = months.get(key) || { count: 0, ratingSum: 0, ratingCount: 0 };
+                buckets.push({ ...values, label: `${year}.${String(month + 1).padStart(2, '0')}`, start: start.toISOString().slice(0, 10), end: end.toISOString().slice(0, 10) });
+            }
+            return { buckets, excluded, included: data.length - excluded };
+        }
+
+        function showMonthlyTrendDetail(element) {
+            const detail = document.getElementById('monthly-trend-detail');
+            if (detail) detail.textContent = element.getAttribute('aria-label');
+        }
+
+        function renderMonthlyTrend(container, data) {
+            const { buckets, included, excluded } = getMonthlyTrend(data);
+            const summary = `<p class="monthly-trend-summary">월별 추이 ${included.toLocaleString()}건 · 제외 ${excluded.toLocaleString()}건</p>`;
+            const note = '<p class="monthly-trend-note">리뷰 작성 시점은 Google Maps의 상대 날짜를 기준으로 추정됩니다. 작성 월을 판단하기 어려운 리뷰는 월별 추이에서 제외되며 전체 리뷰 수에는 포함됩니다.</p>';
+            if (!buckets.length) {
+                container.innerHTML = `${summary}<div class="text-center py-12 text-xs text-slate-400 font-bold">월별 추이에 표시할 데이터가 없습니다.</div>${note}`;
+                return;
+            }
+            const width = Math.max(360, 100 + buckets.length * 74), height = 260;
+            const left = 48, right = width - 48, top = 35, bottom = 210;
+            const max = Math.max(1, ...buckets.map(b => b.count));
+            const points = buckets.map((b, i) => {
+                const x = left + (right - left) * (i + 0.5) / buckets.length;
+                const y = bottom - b.count / max * (bottom - top);
+                const average = b.ratingCount ? b.ratingSum / b.ratingCount : null;
+                return { ...b, x, y, average, ratingY: average === null ? null : bottom - (average - 1) / 4 * (bottom - top) };
+            });
+            // Break the line at months without valid ratings rather than implying values.
+            const segments = []; let segment = [];
+            points.forEach(p => { if (p.ratingY === null) { if (segment.length) segments.push(segment); segment = []; } else segment.push(p); });
+            if (segment.length) segments.push(segment);
+            container.innerHTML = `${summary}<div class="insight-chart-canvas"><div class="insight-chart-legend"><span>막대 · 리뷰 수 (왼쪽)</span><span>선 · 평균 별점 1–5 (오른쪽)</span></div>
+                <div class="monthly-trend-scroll" tabindex="0" aria-label="월별 리뷰 차트, 가로로 스크롤 가능"><svg width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" role="img" aria-label="월별 리뷰 수와 평균 별점">
+                    <line x1="${left}" y1="${bottom}" x2="${right}" y2="${bottom}" stroke="#CBD5E1" />
+                    <text x="${left}" y="18" fill="#817A71" font-size="11">리뷰 수</text><text x="${right}" y="18" text-anchor="end" fill="#817A71" font-size="11">평균 별점</text>
+                    <text x="${left - 6}" y="${top + 4}" text-anchor="end" fill="#817A71" font-size="11">${max}</text><text x="${left - 6}" y="${bottom}" text-anchor="end" fill="#817A71" font-size="11">0</text>
+                    <text x="${right + 6}" y="${top + 4}" fill="#817A71" font-size="11">5</text><text x="${right + 6}" y="${bottom}" fill="#817A71" font-size="11">1</text>
+                    ${segments.map(s => `<polyline points="${s.map(p => `${p.x},${p.ratingY}`).join(' ')}" fill="none" stroke="#514B44" stroke-width="3" />`).join('')}
+                    ${points.map(p => { const tip = `${p.label} (${p.start} ~ ${p.end}) · 리뷰 ${p.count}건 · 평균 별점 ${p.average === null ? 'N/A' : p.average.toFixed(2)}`; return `<g tabindex="0" role="img" aria-label="${tip}" onfocus="showMonthlyTrendDetail(this)" onclick="showMonthlyTrendDetail(this)" onmouseenter="showMonthlyTrendDetail(this)"><title>${tip}</title><rect x="${p.x - 15}" y="${p.y}" width="30" height="${bottom - p.y}" rx="4" fill="#D7D0C6" />${p.ratingY === null ? '' : `<circle cx="${p.x}" cy="${p.ratingY}" r="4" fill="#514B44" />`}<text x="${p.x}" y="${p.y - 7}" text-anchor="middle" fill="#514B44" font-size="11">${p.count}</text><text x="${p.x}" y="${bottom + 21}" text-anchor="middle" fill="#64748B" font-size="11">${p.label}</text><rect x="${p.x - 34}" y="${top}" width="68" height="${bottom - top + 25}" fill="transparent" /></g>`; }).join('')}
+                </svg></div><p id="monthly-trend-detail" class="monthly-trend-note" aria-live="polite">막대 또는 월을 선택하면 상세 정보를 볼 수 있습니다.</p></div>${note}`;
+        }
+
         function renderAgeLineChart(data) {
             const container = document.getElementById('age-line-chart');
+            document.getElementById('trend-description').innerText = currentPeriod === 'all' ? '월별 리뷰 흐름' : '기간별 리뷰 흐름';
+            if (currentPeriod === 'all') { renderMonthlyTrend(container, data); return; }
             const buckets = getChronologicalTrendBuckets(data);
             const max = Math.max(...buckets.map(b => b.count), 1);
 
