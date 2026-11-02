@@ -327,6 +327,8 @@
         /* Shared warm-neutral desktop system and responsive Insights workspace. */
         :root { --bg:#F7F5F1; --surface:#FFF; --soft:#F4F2EE; --ink:#2B2823; --muted:#7E776E; --border:#E6E1D9; --primary:#5D574F; --primary-soft:#F1EFEB; }
         .active-sv, .active-store, .active-keyword { border-color:#DDD8D0!important; background:#F1EFEB!important; color:#36312B!important; }
+        #sv-selector .sv-tab.active-sv { border-color:#C9C1B5!important; background:#F1EFEB!important; color:#302C27!important; }
+        .mobile-sv-picker .mobile-all-sv { grid-column:1 / -1; }
         .active-sv .sv-country { color:#696158!important; }
         .active-page { background:#F1EFEB!important; color:#302C27!important; box-shadow:none!important; }
         .active-filter { border-color:#D9D4CB!important; background:#F1EFEB!important; color:#302C27!important; }
@@ -525,6 +527,7 @@
 
         <section id="sv-selector" class="mb-4 rounded-xl border border-[#E7E4DF] bg-white p-3 sm:px-4">
             <div class="mb-2 flex items-center justify-between gap-4"><h2 class="text-sm font-bold text-[#1F2329]">담당 SV</h2><p class="hidden text-[11px] text-[#68717D] sm:block">선택한 담당자의 매장과 리뷰를 확인합니다.</p></div>
+        <button type="button" data-sv="" onclick="selectSV(null, this)" aria-pressed="true" class="sv-tab active-sv mb-2 w-full rounded-lg border border-[#E7E4DF] bg-white px-3 py-2 text-sm font-bold text-[#49515B] transition hover:bg-[#FBFAF8]">전체 SV</button>
         <div class="grid grid-cols-2 gap-2 sm:grid-cols-4">
             <button data-sv="이여명" onclick="selectSV('이여명', this)" class="sv-tab rounded-lg border border-[#E7E4DF] bg-white px-3 py-2.5 text-sm font-bold text-[#49515B] transition hover:bg-[#FBFAF8]">
                 SV A
@@ -549,8 +552,8 @@
         <section id="review-filters" class="mb-4 flex flex-col gap-3 rounded-xl border border-[#E7E4DF] bg-white p-3 sm:px-4">
             <div class="flex flex-wrap items-center justify-between gap-3">
                 <div class="flex items-baseline gap-2">
-                    <div id="current-title" class="text-sm font-bold text-[#1F2329]">SV를 선택해주세요</div>
-                    <div id="current-subtitle" class="hidden text-[11px] text-[#68717D] lg:block">담당 국가 기준으로 리뷰가 자동 분류됩니다.</div>
+                    <div id="current-title" class="text-sm font-bold text-[#1F2329]">전체 SV 리뷰</div>
+                    <div id="current-subtitle" class="hidden text-[11px] text-[#68717D] lg:block">모든 담당자의 리뷰를 확인합니다.</div>
                 </div>
 
                 <div class="flex items-center gap-2">
@@ -865,7 +868,7 @@
             if (nextMode === lastReviewResponsiveMode) return;
             lastReviewResponsiveMode = nextMode;
             resetMobileReviewPage();
-            if (currentSV) refreshCurrentReviews();
+            refreshCurrentReviews();
         });
 
         const SUPABASE_REST_URL = 'https://fourqytbdjxlpwzgvphy.supabase.co/rest/v1';
@@ -1016,16 +1019,11 @@
                 const defaultStart = new Date();
                 defaultStart.setDate(defaultStart.getDate() - 29);
                 document.getElementById('period-start').value = formatDateYmd(defaultStart);
-                document.getElementById('review-container').innerHTML = '<div class="text-center py-20 text-slate-400 font-bold">상단 SV 버튼을 눌러주세요.</div>';
-                if (currentSV) {
-                    initializeCurrentSVScope();
-                    renderCountryOptions();
-                    renderSvStoreCountSummary();
-                    renderMobileOperationalSummary();
-                    refreshAllViews();
-                } else {
-                    renderInsights();
-                }
+                if (currentSV) initializeCurrentSVScope();
+                renderCountryOptions();
+                renderSvStoreCountSummary();
+                renderMobileOperationalSummary();
+                refreshAllViews();
             } catch (error) {
                 console.error('Supabase 데이터 연결 실패', error);
                 status.innerText = '데이터 연결 실패';
@@ -1110,10 +1108,11 @@
                 target.innerHTML = `
                     <div class="mobile-operation-card">
                         <div class="mobile-operation-top">
-                            <div><span class="mobile-operation-eyebrow">REVIEW WORKSPACE</span><strong class="mobile-operation-sv">담당 SV를 선택하세요</strong><span class="mobile-operation-countries">상단 메뉴에서 담당 SV를 선택할 수 있습니다.</span></div>
-                            <button type="button" class="mobile-operation-change" onclick="toggleMobileSVPicker()">SV 선택 ›</button>
+                            <div><span class="mobile-operation-eyebrow">REVIEW WORKSPACE</span><strong class="mobile-operation-sv">전체 SV</strong><span class="mobile-operation-countries">모든 담당자의 리뷰를 확인합니다.</span></div>
+                            <button type="button" class="mobile-operation-change" onclick="toggleMobileSVPicker()">SV 변경 ›</button>
                         </div>
                         <div id="mobile-sv-picker" class="mobile-sv-picker hidden">
+                            <button type="button" class="mobile-all-sv ${!currentSV ? 'is-current' : ''}" aria-pressed="${!currentSV}" onclick="selectMobileSV(null)">전체 SV</button>
                             <button type="button" onclick="selectMobileSV('이여명')">SV A<span>대만 · 싱가포르</span></button>
                             <button type="button" onclick="selectMobileSV('강소영')">SV B<span>몽골 · 네덜란드</span></button>
                             <button type="button" onclick="selectMobileSV('소도희')">SV C<span>호주 · 태국 · 캄보디아</span></button>
@@ -1150,6 +1149,7 @@
                     </div>
                     <div class="mobile-operation-stores">${currentSVStores.length}개 매장 · ${[...countries].map(escapeHtml).join(' · ')}</div>
                     <div id="mobile-sv-picker" class="mobile-sv-picker hidden">
+                            <button type="button" class="mobile-all-sv ${!currentSV ? 'is-current' : ''}" aria-pressed="${!currentSV}" onclick="selectMobileSV(null)">전체 SV</button>
                         <button type="button" class="${currentSV === '이여명' ? 'is-current' : ''}" onclick="selectMobileSV('이여명')">SV A<span>대만 · 싱가포르</span></button>
                         <button type="button" class="${currentSV === '강소영' ? 'is-current' : ''}" onclick="selectMobileSV('강소영')">SV B<span>몽골 · 네덜란드</span></button>
                         <button type="button" class="${currentSV === '소도희' ? 'is-current' : ''}" onclick="selectMobileSV('소도희')">SV C<span>호주 · 태국 · 캄보디아</span></button>
@@ -1245,7 +1245,7 @@
         }
 
         function selectMobileSV(svName) {
-            const desktopButton = document.querySelector(`.sv-tab[data-sv="${svName}"]`);
+            const desktopButton = document.querySelector(`.sv-tab[data-sv="${svName || ''}"]`);
             selectSV(svName, desktopButton);
         }
 
@@ -1257,25 +1257,31 @@
             currentSV = svName;
             currentStore = 'ALL';
             currentCountry = 'ALL';
-            currentKeyword = null;
-            lowRatingOnly = false;
-            newReviewOnly = false;
+            if (svName) {
+                currentKeyword = null;
+                lowRatingOnly = false;
+                newReviewOnly = false;
+            }
             visibleReviewCount = 30;
             resetMobileReviewPage();
 
-            document.querySelectorAll('.sv-tab').forEach(b => b.classList.remove('active-sv'));
-            btn.classList.add('active-sv');
+            document.querySelectorAll('.sv-tab').forEach(b => {
+                const active = b === btn;
+                b.classList.toggle('active-sv', active);
+                b.setAttribute('aria-pressed', String(active));
+            });
 
-            document.querySelectorAll('.keyword-btn').forEach(b => b.classList.remove('active-keyword'));
+            if (svName) document.querySelectorAll('.keyword-btn').forEach(b => b.classList.remove('active-keyword'));
             const lowToggle = document.getElementById('low-rating-toggle');
-            if (lowToggle) lowToggle.classList.remove('active-keyword');
+            if (svName && lowToggle) lowToggle.classList.remove('active-keyword');
             const newToggle = document.getElementById('new-review-toggle');
-            if (newToggle) newToggle.classList.remove('active-keyword');
+            if (svName && newToggle) newToggle.classList.remove('active-keyword');
 
-            initializeCurrentSVScope();
+            if (svName) initializeCurrentSVScope();
+            else { currentSVStores = []; currentSVReviews = []; }
 
-            document.getElementById('current-title').innerText = `${getSVDisplayName(svName)} 담당 리뷰`;
-            document.getElementById('current-subtitle').innerText = `담당 국가: ${getCountryLabel(svName)}`;
+            document.getElementById('current-title').innerText = svName ? `${getSVDisplayName(svName)} 담당 리뷰` : '전체 SV 리뷰';
+            document.getElementById('current-subtitle').innerText = svName ? `담당 국가: ${getCountryLabel(svName)}` : '모든 담당자의 리뷰를 확인합니다.';
 
             renderCountryOptions();
             renderSvStoreCountSummary();
@@ -1405,7 +1411,7 @@
         }
 
         function getCountryFilteredSVReviews() {
-            return filterByCountry(currentSVReviews);
+            return filterByCountry(currentSV ? currentSVReviews : allReviews);
         }
 
         function getStoreListSourceReviews() {
@@ -1425,10 +1431,11 @@
         }
 
         function getCurrentSVStoreSource() {
+            if (!currentSV && allStores.length) return allStores;
             if (currentSVStores.length) return currentSVStores;
 
             return Array.from(new Map(
-                currentSVReviews
+                (currentSV ? currentSVReviews : allReviews)
                     .filter(review => review && review.store_name)
                     .map(review => [review.store_name, {
                         store_name: review.store_name,
@@ -1708,7 +1715,7 @@
             const section = document.getElementById('mobile-store-selector');
             const target = document.getElementById('mobile-store-selector-content');
 
-            if (!currentSV || !storeMaster.length) {
+            if (!storeMaster.length) {
                 section.classList.add('hidden');
                 target.innerHTML = '';
                 return;
@@ -1920,11 +1927,6 @@
         }
 
         function refreshCurrentReviews() {
-            if (!currentSV) {
-                document.getElementById('review-container').innerHTML = '<div class="text-center py-20 text-slate-400 font-bold">상단 SV 버튼을 눌러주세요.</div>';
-                return;
-            }
-
             const data = getCurrentFilteredReviews();
 
             renderReviews(data, currentStore === 'ALL' ? '전체' : currentStore);
@@ -2204,7 +2206,7 @@
             const stores = getCurrentStoreMaster().slice().sort((a, b) => String(a.store_name || '').localeCompare(String(b.store_name || '')));
             const periodOptions = [['all','전체 기간'],['today','오늘'],['7d','최근 7일'],['30d','최근 30일'],['this-month','이번 달'],['last-month','지난달'],['custom','직접 선택']];
             const countries = [...new Set(getCurrentSVStoreSource().map(store => store.country).filter(Boolean))].sort();
-            const disabled = currentSV ? '' : 'disabled';
+            const disabled = '';
             target.innerHTML = `
                 <label>기간<select onchange="handleInsightPeriodChange(this)" ${disabled}>${periodOptions.map(([value, label]) => `<option value="${value}" ${currentPeriod === value ? 'selected' : ''}>${label}</option>`).join('')}</select></label>
                 <label>국가<select onchange="handleInsightCountryChange(this)" ${disabled}><option value="ALL">전체 국가</option>${countries.map(country => `<option value="${escapeHtml(country)}" ${currentCountry === country ? 'selected' : ''}>${escapeHtml(country)}</option>`).join('')}</select></label>
@@ -2239,7 +2241,7 @@
 
             const scopeLabel = currentSV
                 ? `${getSVDisplayName(currentSV)} · ${currentCountry === 'ALL' ? '전체 국가' : currentCountry} · ${currentStore === 'ALL' ? '전체 매장' : currentStore} · ${getPeriodRange().label}`
-                : `전체 데이터 · ${getPeriodRange().label}`;
+                : `전체 SV · ${currentCountry === 'ALL' ? '전체 국가' : currentCountry} · ${currentStore === 'ALL' ? '전체 매장' : currentStore} · ${getPeriodRange().label}`;
 
             document.getElementById('insight-title').innerText = currentStore !== 'ALL' ? `${currentStore} 리뷰 인사이트` : currentCountry !== 'ALL' ? `${currentCountry} 리뷰 인사이트` : '전체 리뷰 인사이트';
             document.getElementById('insight-subtitle').innerText = '선택한 조건의 리뷰 데이터를 기반으로 주요 인사이트를 한눈에 확인할 수 있습니다.';
