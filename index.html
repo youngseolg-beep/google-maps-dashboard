@@ -752,7 +752,7 @@
                 <section class="insight-surface"><div class="insight-section-heading"><h3>별점 분포</h3><p>수집된 리뷰 기준</p></div><div id="rating-chart"></div></section>
             </div>
             <div class="insight-analysis-grid insight-analysis-secondary">
-                <section class="insight-surface"><div class="insight-section-heading"><h3>키워드 / 주제</h3><p>리뷰에서 언급된 주요 주제</p></div><div id="keyword-cloud"></div></section>
+                <section class="insight-surface"><div class="insight-section-heading"><h3>키워드 / 주제</h3><p>키워드가 포함된 리뷰 수 · 긍정/부정 미구분 · 주제 간 중복 가능</p></div><div id="keyword-cloud"></div></section>
                 <section class="insight-surface"><div class="insight-section-heading"><h3>주의 매장</h3><p>저평점 리뷰 수 기준</p></div><div id="store-risk-cards"></div></section>
             </div>
             <section id="insight-comparison" class="insight-surface insight-comparison"><div class="insight-section-heading"><h3>이전 기간 대비 변화</h3><p id="insight-comparison-note">선택 기간과 직전 동일 기간을 비교합니다.</p></div><div id="insight-comparison-content"></div></section>
@@ -806,14 +806,14 @@
                 'cold', 'not hot', 'lukewarm', 'cool', 'served cold',
                 'fresh', 'freshness', 'not fresh', 'stale', 'old',
                 'too', 'too much', 'too spicy', 'too cold', 'too oily', 'too sweet',
-                '맛', '맛있', '맛없', '풍미', '간', '간이', '짜다', '짠', '너무 짜', '소금', '염도',
+                '맛', '맛있', '맛없', '풍미', '짜다', '짠맛', '너무 짜', '소금', '염도',
                 '차갑', '식었', '미지근', '신선', '신선도', '오래된', '너무', '과하게', '지나치게'
             ],
             value: [
                 'value', 'worth', 'reasonable', 'expensive', 'cheap', 'price', 'pricing', 'overpriced', 'cost',
                 'quality', 'qality', 'poor quality', 'good quality', 'bad quality', 'standard',
                 'portion', 'small portion', 'large portion', 'quantity', 'amount',
-                '가성비', '가격', '비싸', '저렴', '퀄리티', '품질', '수준', '양', '양이', '적다', '많다'
+                '가성비', '가격', '비싸', '저렴', '퀄리티', '품질', '수준', '적다', '많다'
             ],
             service: [
                 'service', 'staff', 'friendly', 'kind', 'rude', 'unfriendly', 'attitude', 'hospitality',
@@ -828,7 +828,7 @@
             reservation: [
                 'booking', 'reservation', 'reserve', 'reserved', 'booked', 'table booking',
                 'wait', 'waiting', 'long wait', 'queue', 'line',
-                '예약', '웨이팅', '대기', '줄', '기다림'
+                '예약', '웨이팅', '대기', '기다림'
             ],
             hygiene: [
                 'hygiene', 'clean', 'dirty', 'toilet', 'bathroom', 'restroom', 'smell', 'sticky', 'sanitary',
@@ -836,7 +836,7 @@
             ],
             revisit: [
                 'again', 'come back', 'return', 'revisit', 'visit again', 'never again', 'will be back',
-                '재방문', '다시', '또', '두번', '다시는', '또 올'
+                '재방문', '다시', '두번', '다시는', '또 올'
             ],
             authentic: [
                 'authentic', 'traditional', 'real korean', 'korean style', 'original', 'local taste', 'genuine',
@@ -844,6 +844,24 @@
                 '정통', '한국식', '한국 맛', '현지', '오리지널', '숯', '숯불', '그릴', '바비큐'
             ]
         };
+
+        // One matcher is shared by the Insights counts, Reviews filters and highlights.
+        const KEYWORD_PATTERNS = Object.fromEntries(Object.entries(KEYWORD_GROUPS).map(([category, keywords]) => {
+            const patterns = [...keywords].sort((a, b) => b.length - a.length).map(keyword => {
+                const escaped = keyword.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/\s+/g, '\\s+');
+                if (!/^[a-z0-9]/i.test(keyword) || /[가-힣]/.test(keyword)) return escaped;
+                const stem = escaped.endsWith('y') ? `${escaped.slice(0, -1)}(?:y|ies)` : escaped;
+                return `(?<![\\p{L}\\p{M}\\p{N}])${stem}(?:s|es|ed|d|ing)?(?![\\p{L}\\p{M}\\p{N}])`;
+            });
+            return [category, new RegExp(patterns.join('|'), 'giu')];
+        }));
+
+        function matchesKeywordCategory(value, category) {
+            const pattern = KEYWORD_PATTERNS[category];
+            if (!pattern) return false;
+            pattern.lastIndex = 0;
+            return pattern.test(String(value || ''));
+        }
 
         let allReviews = [];
         let allStores = [];
@@ -1601,11 +1619,7 @@
             };
 
             const stats = Object.keys(KEYWORD_GROUPS).map(key => {
-                const keywords = KEYWORD_GROUPS[key] || [];
-                const count = data.filter(review => {
-                    const text = normalizeText(review.text || '');
-                    return keywords.some(keyword => text.includes(keyword.toLowerCase()));
-                }).length;
+                const count = data.filter(review => matchesKeywordCategory(review.text, key)).length;
                 return { key, label: labelMap[key] || key, count };
             }).sort((a, b) => b.count - a.count);
 
@@ -1878,12 +1892,7 @@
         function filterByKeyword(data) {
             if (!currentKeyword) return data;
 
-            const keywords = KEYWORD_GROUPS[currentKeyword] || [];
-
-            return data.filter(review => {
-                const text = normalizeText(review.text || '');
-                return keywords.some(keyword => text.includes(keyword.toLowerCase()));
-            });
+            return data.filter(review => matchesKeywordCategory(review.text, currentKeyword));
         }
 
         function filterLowRatings(data) {
@@ -2152,7 +2161,7 @@
 
                         ${
                             r.text
-                                ? `<p class="whitespace-pre-line text-sm leading-6 text-[#36404A]">${highlightKeywords(escapeHtml(r.text))}</p>`
+                                ? `<p class="whitespace-pre-line text-sm leading-6 text-[#36404A]">${highlightKeywords(r.text)}</p>`
                                 : `<p class="text-xs text-[#68717D]">리뷰 내용 없음 · 별점만 등록된 리뷰</p>`
                         }
                     </article>
@@ -2187,18 +2196,17 @@
         }
 
         function highlightKeywords(text) {
-            if (!currentKeyword) return text;
-
-            const keywords = KEYWORD_GROUPS[currentKeyword] || [];
-            let result = text;
-
-            keywords.forEach(keyword => {
-                const escapedKeyword = escapeRegex(keyword);
-                const regex = new RegExp(`(${escapedKeyword})`, 'gi');
-                result = result.replace(regex, '<mark class="bg-yellow-200 rounded px-0.5">$1</mark>');
-            });
-
-            return result;
+            const value = String(text || '');
+            const pattern = KEYWORD_PATTERNS[currentKeyword];
+            if (!pattern) return escapeHtml(value);
+            pattern.lastIndex = 0;
+            let result = '', last = 0;
+            for (const match of value.matchAll(pattern)) {
+                result += escapeHtml(value.slice(last, match.index));
+                result += `<mark class="bg-yellow-200 rounded px-0.5">${escapeHtml(match[0])}</mark>`;
+                last = match.index + match[0].length;
+            }
+            return result + escapeHtml(value.slice(last));
         }
 
         function renderSummary(data, selectedStoreLabel) {
@@ -2544,11 +2552,7 @@
             };
 
             const rows = Object.keys(KEYWORD_GROUPS).map(key => {
-                const keywords = KEYWORD_GROUPS[key] || [];
-                const count = data.filter(r => {
-                    const text = normalizeText(r.text || '');
-                    return keywords.some(keyword => text.includes(keyword.toLowerCase()));
-                }).length;
+                const count = data.filter(r => matchesKeywordCategory(r.text, key)).length;
 
                 return { key, label: labelMap[key] || key, count };
             }).sort((a, b) => b.count - a.count);
