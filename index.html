@@ -390,6 +390,9 @@
         .insight-chart-canvas .monthly-trend-scroll svg { display:block; max-width:none; height:285px; }
         .monthly-trend-x-label { text-align:center; color:#6F685F; font-size:11px; }
         .monthly-trend-note { margin:8px 4px 0; color:#817A71; font-size:12px; line-height:1.6; }
+        .monthly-trend-exclusions { margin:4px 4px 8px; color:#6F685F; font-size:12px; line-height:1.6; }
+        .monthly-trend-exclusions summary { cursor:pointer; font-weight:600; }
+        .monthly-trend-exclusions ul { margin:5px 0 0; padding-left:18px; }
         .monthly-trend-summary { margin:6px 4px; color:#514B44; font-size:12px; font-weight:700; }
         #keyword-cloud { display:grid; }
         .insight-keyword-row { display:grid; grid-template-columns:26px minmax(0,1fr) auto; align-items:center; gap:8px; min-height:38px; border:0; border-bottom:1px solid #F0ECE7; background:transparent; color:#4B453D; font-size:12px; font-weight:600; text-align:left; }
@@ -2371,26 +2374,29 @@
             };
             const collected = parseDate(review?.collected_at, true);
             const stored = parseDate(review?.review_date);
-            if (!collected || !stored) return null;
             const text = String(review?.date || '').trim().toLowerCase().replace(/\s+/g, ' ');
+            if (/^(?:\d+|a|an|one|een|satu)\s*(?:years?|년|tahun|jaar|jaren)(?:\s*(?:ago|전|yang lalu|geleden))?$/.test(text)) return { date: null, reason: 'year' };
+            if (text === 'unknown' || text === 'recent') return { date: null, reason: 'unknown' };
             const match = text.match(/^(\d+|a|an|one|een|satu)\s*(minutes?|hours?|days?|weeks?|months?|분|시간|일|주|개월|달|menit|jam|hari|minggu|bulan|minuut|minuten|uur|dag|dagen|week|weken|maand|maanden)(?:\s*(?:ago|전|yang lalu|geleden))?$/);
-            if (!match) return null;
+            if (!match) return { date: null, reason: 'unsupported' };
             const amount = /^\d+$/.test(match[1]) ? Number(match[1]) : 1;
-            if (!Number.isSafeInteger(amount) || amount < 1) return null;
+            if (!Number.isSafeInteger(amount) || amount < 1) return { date: null, reason: 'unsupported' };
+            if (!collected || !stored) return { date: null, reason: 'invalid' };
             const unit = match[2];
             const days = /^(minutes?|hours?|분|시간|menit|jam|minuut|minuten|uur)$/.test(unit) ? 0
                 : /^(days?|일|hari|dag|dagen)$/.test(unit) ? 1
                 : /^(weeks?|주|minggu|weken)$/.test(unit) ? 7 : 30;
             const expected = collected.getTime() - amount * days * 86400000;
-            return Number.isFinite(expected) && stored.getTime() === expected ? stored : null;
+            return Number.isFinite(expected) && stored.getTime() === expected ? { date: stored, reason: null } : { date: null, reason: 'invalid' };
         }
 
         function getMonthlyTrend(data) {
             const months = new Map();
             let excluded = 0;
+            const exclusions = { year: 0, unknown: 0, unsupported: 0, invalid: 0 };
             data.forEach(review => {
-                const date = classifyMonthlyTrendDate(review);
-                if (!date) { excluded++; return; }
+                const { date, reason } = classifyMonthlyTrendDate(review);
+                if (!date) { excluded++; exclusions[reason]++; return; }
                 const key = date.getUTCFullYear() * 12 + date.getUTCMonth();
                 if (!months.has(key)) months.set(key, { count: 0, ratingSum: 0, ratingCount: 0 });
                 const bucket = months.get(key);
@@ -2407,7 +2413,7 @@
                 const values = months.get(key) || { count: 0, ratingSum: 0, ratingCount: 0 };
                 buckets.push({ ...values, label: `${year}.${String(month + 1).padStart(2, '0')}`, start: start.toISOString().slice(0, 10), end: end.toISOString().slice(0, 10) });
             }
-            return { buckets, excluded, included: data.length - excluded };
+            return { buckets, excluded, exclusions, included: data.length - excluded };
         }
 
         function showMonthlyTrendDetail(element) {
@@ -2415,17 +2421,32 @@
             if (detail) detail.textContent = element.getAttribute('aria-label');
         }
 
+        function getMonthlyTrendAxis(maxCount) {
+            const roughStep = Math.max(1, maxCount) / 4;
+            const magnitude = 10 ** Math.floor(Math.log10(roughStep));
+            const normalized = roughStep / magnitude;
+            const step = Math.max(1, (normalized <= 1 ? 1 : normalized <= 2 ? 2 : normalized <= 5 ? 5 : 10) * magnitude);
+            return { step, max: step * 4 };
+        }
+
+        function getKstMonth(now = new Date()) {
+            const parts = new Intl.DateTimeFormat('en-US', { timeZone: 'Asia/Seoul', year: 'numeric', month: '2-digit' }).formatToParts(now);
+            return `${parts.find(part => part.type === 'year').value}.${parts.find(part => part.type === 'month').value}`;
+        }
+
         function renderMonthlyTrend(container, data) {
-            const { buckets, included, excluded } = getMonthlyTrend(data);
+            const { buckets, included, excluded, exclusions } = getMonthlyTrend(data);
             const summary = `<p class="monthly-trend-summary">월별 추이 ${included.toLocaleString()}건 · 제외 ${excluded.toLocaleString()}건</p>`;
+            const breakdown = `<details class="monthly-trend-exclusions"><summary>제외 사유 보기</summary><ul><li>연 단위 상대 날짜: ${exclusions.year.toLocaleString()}건</li><li>Unknown / Recent: ${exclusions.unknown.toLocaleString()}건</li><li>상대 날짜 누락 또는 지원하지 않는 표현: ${exclusions.unsupported.toLocaleString()}건</li><li>유효하지 않거나 일치하지 않는 날짜: ${exclusions.invalid.toLocaleString()}건</li></ul><p>제외된 리뷰도 전체 리뷰 수 KPI에는 포함됩니다.</p></details>`;
             const note = '<p class="monthly-trend-note">리뷰 작성 시점은 Google Maps의 상대 날짜를 기준으로 추정됩니다. 작성 월을 판단하기 어려운 리뷰는 월별 추이에서 제외되며 전체 리뷰 수에는 포함됩니다.</p>';
             if (!buckets.length) {
-                container.innerHTML = `${summary}<div class="text-center py-12 text-xs text-slate-400 font-bold">월별 추이에 표시할 데이터가 없습니다.</div>${note}`;
+                container.innerHTML = `${summary}${breakdown}<div class="text-center py-12 text-xs text-slate-400 font-bold">월별 추이에 표시할 데이터가 없습니다.</div>${note}`;
                 return;
             }
             const width = Math.max(220, buckets.length * 74), height = 285;
             const left = 0, right = width, top = 50, bottom = 225;
-            const max = Math.max(4, Math.ceil(Math.max(...buckets.map(b => b.count)) / 4) * 4);
+            const { max } = getMonthlyTrendAxis(Math.max(...buckets.map(b => b.count)));
+            const currentMonth = getKstMonth();
             const points = buckets.map((b, i) => {
                 const x = left + (right - left) * (i + 0.5) / buckets.length;
                 const y = bottom - b.count / max * (bottom - top);
@@ -2436,12 +2457,12 @@
             const segments = []; let segment = [];
             points.forEach(p => { if (p.ratingY === null) { if (segment.length) segments.push(segment); segment = []; } else segment.push(p); });
             if (segment.length) segments.push(segment);
-            container.innerHTML = `${summary}<div class="insight-chart-canvas"><div class="insight-chart-legend"><span>막대 · 리뷰 수 (왼쪽)</span><span>선 · 평균 별점 1–5 (오른쪽)</span></div>
+            container.innerHTML = `${summary}${breakdown}<div class="insight-chart-canvas"><div class="insight-chart-legend"><span>막대 · 리뷰 수 (왼쪽)</span><span>선 · 평균 별점 1–5 (오른쪽)</span></div>
                 <div class="monthly-trend-layout"><div class="monthly-trend-axis is-count" aria-label="리뷰 수, 단위 건"><span class="monthly-trend-axis-title">리뷰 수<br>(건)</span>${[0, 1, 2, 3, 4].map(i => `<span class="monthly-trend-axis-tick" style="top:${bottom - i * (bottom - top) / 4}px">${(max * i / 4).toLocaleString()}</span>`).join('')}</div>
                 <div class="monthly-trend-scroll" tabindex="0" aria-label="월별 리뷰 차트, 가로로 스크롤 가능"><svg width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" role="img" aria-label="월별 리뷰 수와 평균 별점">
                     ${[0, 1, 2, 3, 4].map(i => { const y = bottom - i * (bottom - top) / 4; return `<line x1="${left}" y1="${y}" x2="${right}" y2="${y}" stroke="${i === 0 ? '#B9B2A8' : '#E9E5DF'}" />`; }).join('')}
                     ${segments.map(s => `<polyline points="${s.map(p => `${p.x},${p.ratingY}`).join(' ')}" fill="none" stroke="#514B44" stroke-width="3" />`).join('')}
-                    ${points.map(p => { const tip = `${p.label} (${p.start} ~ ${p.end}) · 리뷰 ${p.count}건 · 평균 별점 ${p.average === null ? 'N/A' : p.average.toFixed(2)}`; return `<g tabindex="0" role="img" aria-label="${tip}" onfocus="showMonthlyTrendDetail(this)" onclick="showMonthlyTrendDetail(this)" onmouseenter="showMonthlyTrendDetail(this)"><title>${tip}</title><rect x="${p.x - 15}" y="${p.y}" width="30" height="${bottom - p.y}" rx="4" fill="#D7D0C6" />${p.ratingY === null ? '' : `<circle cx="${p.x}" cy="${p.ratingY}" r="4" fill="#514B44" />`}<text x="${p.x}" y="${p.y - 7}" text-anchor="middle" fill="#514B44" font-size="11">${p.count}</text><text x="${p.x}" y="${bottom + 21}" text-anchor="middle" fill="#64748B" font-size="11">${p.label}</text><rect x="${p.x - 34}" y="${top}" width="68" height="${bottom - top + 25}" fill="transparent" /></g>`; }).join('')}
+                    ${points.map(p => { const small = p.count >= 1 && p.count <= 4, current = p.label === currentMonth; const tip = `${p.label} (${p.start} ~ ${p.end}) · 리뷰 ${p.count}건 · 평균 별점 ${p.average === null ? 'N/A' : p.average.toFixed(2)}${small ? ' · 표본 적음: 리뷰가 적어 평균 별점이 크게 변동할 수 있습니다.' : ''}${current ? ' · 집계 중' : ''}`; return `<g tabindex="0" role="img" aria-label="${tip}" onfocus="showMonthlyTrendDetail(this)" onclick="showMonthlyTrendDetail(this)" onmouseenter="showMonthlyTrendDetail(this)"><title>${tip}</title><rect x="${p.x - 15}" y="${p.y}" width="30" height="${bottom - p.y}" rx="4" fill="#D7D0C6" />${p.ratingY === null ? '' : `<circle cx="${p.x}" cy="${p.ratingY}" r="4" fill="#514B44" />`}<text x="${p.x}" y="${p.y - 7}" text-anchor="middle" fill="#514B44" font-size="11">${p.count}</text><text x="${p.x}" y="${bottom + 21}" text-anchor="middle" fill="#64748B" font-size="11">${p.label}</text>${small ? `<text x="${p.x}" y="${bottom + 34}" text-anchor="middle" fill="#817A71" font-size="9">표본 적음</text>` : ''}${current ? `<text x="${p.x}" y="${bottom + (small ? 46 : 34)}" text-anchor="middle" fill="#817A71" font-size="9">집계 중</text>` : ''}<rect x="${p.x - 34}" y="${top}" width="68" height="${bottom - top + 50}" fill="transparent" /></g>`; }).join('')}
                 </svg></div><div class="monthly-trend-axis is-rating" aria-label="평균 별점, 단위 점"><span class="monthly-trend-axis-title">평균 별점<br>(점)</span>${[0, 1, 2, 3, 4].map(i => `<span class="monthly-trend-axis-tick" style="top:${bottom - i * (bottom - top) / 4}px">${i + 1}</span>`).join('')}</div></div><div class="monthly-trend-x-label">연도 · 월 (YYYY.MM)</div><p id="monthly-trend-detail" class="monthly-trend-note" aria-live="polite">막대 또는 월을 선택하면 상세 정보를 볼 수 있습니다.</p></div>${note}`;
         }
 
