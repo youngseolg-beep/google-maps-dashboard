@@ -136,6 +136,14 @@ class ReviewCrawlerRegressionTests(unittest.TestCase):
         self.assertEqual(clip["width"], 64)
         self.assertEqual(clip["height"], 54)
 
+    def test_diagnostic_label_allowlist_and_screenshot_redaction(self):
+        self.assertTrue(scraper.is_safe_sort_label("Newest"))
+        self.assertTrue(scraper.is_safe_sort_label("Sort reviews"))
+        self.assertFalse(scraper.is_safe_sort_label("Reviewer: newest restaurant experience"))
+        self.assertIn("-webkit-text-fill-color: transparent", scraper.SORT_CAPTURE_STYLE)
+        self.assertIn("background-image: none", scraper.SORT_CAPTURE_STYLE)
+        self.assertIn("visibility: hidden", scraper.SORT_CAPTURE_STYLE)
+
     def test_rendered_relative_dates_can_verify_newest_order_without_radio_metadata(self):
         self.assertTrue(scraper.review_dates_are_newest_first(["2 hours ago", "1 day ago", "3 weeks ago"]))
         self.assertFalse(scraper.review_dates_are_newest_first(["3 weeks ago", "1 day ago", "2 hours ago"]))

@@ -2,6 +2,7 @@ import os
 import json
 import re
 import hashlib
+import time
 from pathlib import Path
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
@@ -17,6 +18,11 @@ REPAIR_ONLY = os.environ.get("REPAIR_ONLY", "").strip().lower() in {"1", "true",
 TARGET_STORE = os.environ.get("TARGET_STORE", "").strip()
 SORT_DIAGNOSTICS = os.environ.get("SORT_DIAGNOSTICS", "").strip().lower() in {"1", "true", "yes", "on"}
 SORT_DIAGNOSTIC_DIR = Path(os.environ.get("SORT_DIAGNOSTIC_DIR", "sort-diagnostics"))
+SORT_CAPTURE_STYLE = """
+*, *::before, *::after { color: transparent !important; -webkit-text-fill-color: transparent !important;
+  text-shadow: none !important; background-image: none !important; }
+img, svg, canvas, video, iframe, input, textarea { visibility: hidden !important; }
+"""
 
 MAX_SCROLL_ROUNDS = 8
 STOP_STALLED_ROUNDS = 2
@@ -353,18 +359,29 @@ def sort_node_snapshot(locator, include_text=False):
             "visible": node.is_visible(timeout=1000),
             "tag": node.evaluate("el => el.tagName"),
             "role": node.get_attribute("role"),
-            "aria_label": sort_diagnostic_text(node.get_attribute("aria-label") or ""),
+            "aria_label": None,
             "aria_expanded": node.get_attribute("aria-expanded"),
             "aria_haspopup": node.get_attribute("aria-haspopup"),
             "aria_checked": node.get_attribute("aria-checked"),
             "aria_selected": node.get_attribute("aria-selected"),
             "bounding_box": node.bounding_box(),
         }
+        label = sort_diagnostic_text(node.get_attribute("aria-label") or "")
+        if is_safe_sort_label(label):
+            snapshot["aria_label"] = label
         if include_text:
-            snapshot["text"] = sort_diagnostic_text(safe_inner_text(node, ""))
+            value = sort_diagnostic_text(safe_inner_text(node, ""))
+            snapshot["text"] = value if is_safe_sort_label(value) else None
         return snapshot
     except Exception as error:
         return {"inspect_error": type(error).__name__}
+
+
+def is_safe_sort_label(value):
+    text = normalize_spaces(value)
+    return text.casefold() in {"sort", "sort reviews", "리뷰 정렬", "정렬"} or any(
+        re.fullmatch(pattern, text, re.I) for pattern in SORT_OPTION_PATTERNS
+    )
 
 
 def get_visible_sort_popups(page):
@@ -411,7 +428,51 @@ def bounded_sort_screenshot_clip(button_snapshot, popup_snapshots, viewport):
     }
 
 
-def capture_sort_click_diagnostics(page, button, click_succeeded, click_error=""):
+def visible_sort_dom_state(page):
+    """Capture geometry and allowlisted UI metadata, never arbitrary page text or attributes."""
+    return page.evaluate("""() => {
+      window.__sortDiagIds ||= new WeakMap(); window.__sortDiagNext ||= 1;
+      const roles = new Set(['menu','menuitem','menuitemradio','radio','listbox','option','dialog','button']);
+      const labels = new Set(['Sort','Sort reviews','Newest','Most relevant','Highest rating','Lowest rating',
+                              '정렬','리뷰 정렬','최신순','관련성순','높은 평점순','낮은 평점순']);
+      return Array.from(document.querySelectorAll('body *')).filter(el => {
+        const r = el.getBoundingClientRect(), s = getComputedStyle(el);
+        return r.width > 0 && r.height > 0 && r.bottom > 0 && r.right > 0 &&
+               r.top < innerHeight && r.left < innerWidth && s.visibility === 'visible' && s.display !== 'none';
+      }).map(el => {
+        if (!window.__sortDiagIds.has(el)) window.__sortDiagIds.set(el, window.__sortDiagNext++);
+        const r = el.getBoundingClientRect(), role = el.getAttribute('role');
+        const aria = el.getAttribute('aria-label') || '';
+        const text = el.children.length === 0 ? (el.textContent || '').trim() : '';
+        return {id: window.__sortDiagIds.get(el), tag: el.tagName,
+          role: roles.has(role) ? role : null, label: labels.has(aria) ? aria : (labels.has(text) ? text : null),
+          checked: ['true','false'].includes(el.getAttribute('aria-checked')) ? el.getAttribute('aria-checked') : null,
+          expanded: ['true','false'].includes(el.getAttribute('aria-expanded')) ? el.getAttribute('aria-expanded') : null,
+          box: {x:r.x,y:r.y,width:r.width,height:r.height}};
+      });
+    }""")
+
+
+def begin_sort_click_diagnostics(page):
+    if not SORT_DIAGNOSTICS:
+        return None
+    SORT_DIAGNOSTIC_DIR.mkdir(parents=True, exist_ok=True)
+    attempt = len(list(SORT_DIAGNOSTIC_DIR.glob("sort-after-click-*.json"))) + 1
+    stem = sort_diagnostic_stem(TARGET_STORE, attempt)
+    state = visible_sort_dom_state(page)
+    page.screenshot(path=str(SORT_DIAGNOSTIC_DIR / f"{stem}-before.png"), style=SORT_CAPTURE_STYLE)
+    return {"stem": stem, "before": state, "started": time.monotonic()}
+
+
+def safely_begin_sort_click_diagnostics(page):
+    try:
+        return begin_sort_click_diagnostics(page)
+    except Exception as error:
+        print(f"🔬 SORT_DIAGNOSTIC before-error={type(error).__name__}")
+        return None
+
+
+def capture_sort_click_diagnostics(page, button, click_succeeded, click_error="", before=None):
     if not SORT_DIAGNOSTICS:
         return
 
@@ -429,7 +490,7 @@ def capture_sort_click_diagnostics(page, button, click_succeeded, click_error=""
         for index in range(min(options.count(), 20)):
             option = options.nth(index)
             option_snapshot = sort_node_snapshot(option, include_text=True)
-            if option_snapshot and is_sort_option_text(option_snapshot.get("text", "")):
+            if option_snapshot and is_sort_option_text(option_snapshot.get("text") or ""):
                 popup_snapshot["options"].append(option_snapshot)
         popup_snapshots.append(popup_snapshot)
 
@@ -441,29 +502,27 @@ def capture_sort_click_diagnostics(page, button, click_succeeded, click_error=""
         "sort_popup_count": len(popup_snapshots),
         "sort_popups": popup_snapshots,
     }
+    if before:
+        after = visible_sort_dom_state(page)
+        prior_ids = {node["id"] for node in before["before"]}
+        after_ids = {node["id"] for node in after}
+        artifact["click_method"] = "locator.click(force=True, timeout=4000)"
+        artifact["elapsed_ms"] = round((time.monotonic() - before["started"]) * 1000)
+        artifact["newly_visible"] = [node for node in after if node["id"] not in prior_ids]
+        artifact["no_longer_visible"] = [node for node in before["before"] if node["id"] not in after_ids]
+        try:
+            page.screenshot(path=str(SORT_DIAGNOSTIC_DIR / f"{stem}-after.png"), style=SORT_CAPTURE_STYLE)
+        except Exception as error:
+            artifact["after_screenshot_error"] = type(error).__name__
     json_path = SORT_DIAGNOSTIC_DIR / f"{stem}.json"
     json_path.write_text(json.dumps(artifact, ensure_ascii=False, indent=2), encoding="utf-8")
 
-    screenshot_path = SORT_DIAGNOSTIC_DIR / f"{stem}.png"
-    clip = bounded_sort_screenshot_clip(
-        button_snapshot,
-        popup_snapshots,
-        page.viewport_size or {"width": 1440, "height": 1000},
-    )
-    try:
-        if clip:
-            page.screenshot(path=str(screenshot_path), clip=clip)
-            print(f"🔬 SORT_DIAGNOSTIC artifact screenshot={screenshot_path.name}")
-        else:
-            print("🔬 SORT_DIAGNOSTIC artifact screenshot=skipped-no-sort-control-bounds")
-    except Exception as error:
-        print(f"🔬 SORT_DIAGNOSTIC artifact screenshot-error={type(error).__name__}")
     print(f"🔬 SORT_DIAGNOSTIC artifact dom={json_path.name}")
 
 
-def safely_capture_sort_click_diagnostics(page, button, click_succeeded, click_error=""):
+def safely_capture_sort_click_diagnostics(page, button, click_succeeded, click_error="", before=None):
     try:
-        capture_sort_click_diagnostics(page, button, click_succeeded, click_error)
+        capture_sort_click_diagnostics(page, button, click_succeeded, click_error, before)
     except Exception as error:
         print(f"🔬 SORT_DIAGNOSTIC artifact-error={type(error).__name__}")
 
@@ -568,33 +627,37 @@ def open_reviews_sort_menu(page):
 
     for selector in direct_selectors:
         button = None
+        before = None
         try:
             button = page.locator(selector).first
             if button.count() > 0:
                 log_sort_ui_node(f"clicking selector={selector}", button)
+                before = safely_begin_sort_click_diagnostics(page)
                 button.click(timeout=4000, force=True)
-                safely_capture_sort_click_diagnostics(page, button, click_succeeded=True)
+                safely_capture_sort_click_diagnostics(page, button, click_succeeded=True, before=before)
                 page.wait_for_timeout(1200)
                 log_sort_menu_metadata(page)
                 return True
         except Exception as error:
             if button is not None:
-                safely_capture_sort_click_diagnostics(page, button, click_succeeded=False, click_error=type(error).__name__)
+                safely_capture_sort_click_diagnostics(page, button, click_succeeded=False, click_error=type(error).__name__, before=before)
 
     for pattern in SORT_BUTTON_PATTERNS:
         button = None
+        before = None
         try:
             button = page.get_by_role("button", name=re.compile(pattern, re.I)).first
             if button.count() > 0:
                 log_sort_ui_node(f"clicking role-button pattern={pattern}", button)
+                before = safely_begin_sort_click_diagnostics(page)
                 button.click(timeout=4000, force=True)
-                safely_capture_sort_click_diagnostics(page, button, click_succeeded=True)
+                safely_capture_sort_click_diagnostics(page, button, click_succeeded=True, before=before)
                 page.wait_for_timeout(1200)
                 log_sort_menu_metadata(page)
                 return True
         except Exception as error:
             if button is not None:
-                safely_capture_sort_click_diagnostics(page, button, click_succeeded=False, click_error=type(error).__name__)
+                safely_capture_sort_click_diagnostics(page, button, click_succeeded=False, click_error=type(error).__name__, before=before)
 
     return False
 
