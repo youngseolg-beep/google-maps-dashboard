@@ -119,6 +119,12 @@ class ReviewCrawlerRegressionTests(unittest.TestCase):
         self.assertFalse(scraper.newest_sort_is_selected(FakeSortPage(False)))
         self.assertTrue(scraper.newest_sort_is_selected(FakeSortPage(True)))
 
+    def test_sort_diagnostic_only_recognizes_sort_option_labels(self):
+        self.assertTrue(scraper.is_sort_option_text("Newest"))
+        self.assertTrue(scraper.is_sort_option_text("관련성순"))
+        self.assertTrue(scraper.is_sort_option_text("Highest rating"))
+        self.assertFalse(scraper.is_sort_option_text("A reviewer name or review body is not a sort option"))
+
     def test_rendered_relative_dates_can_verify_newest_order_without_radio_metadata(self):
         self.assertTrue(scraper.review_dates_are_newest_first(["2 hours ago", "1 day ago", "3 weeks ago"]))
         self.assertFalse(scraper.review_dates_are_newest_first(["3 weeks ago", "1 day ago", "2 hours ago"]))

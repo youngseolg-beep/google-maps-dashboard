@@ -315,6 +315,106 @@ NEWEST_SORT_PATTERNS = [
     r"最新",
 ]
 
+SORT_OPTION_PATTERNS = NEWEST_SORT_PATTERNS + [
+    r"Most relevant",
+    r"관련성순",
+    r"Highest rating",
+    r"높은 평점순",
+    r"Lowest rating",
+    r"낮은 평점순",
+]
+
+
+def sort_diagnostic_text(value, limit=100):
+    return normalize_spaces(value)[:limit]
+
+
+def is_sort_option_text(value):
+    text = normalize_spaces(value)
+    return any(re.search(pattern, text, re.I) for pattern in SORT_OPTION_PATTERNS)
+
+
+def log_sort_ui_node(label, locator, include_text=True):
+    """Log only small, relevant sort-control metadata; never page HTML or review content."""
+    try:
+        node = locator.first
+        if node.count() == 0:
+            print(f"🔬 SORT_DIAGNOSTIC {label}: count=0")
+            return False
+
+        visible = node.is_visible(timeout=1000)
+        text = sort_diagnostic_text(safe_inner_text(node, "")) if include_text else ""
+        print(
+            f"🔬 SORT_DIAGNOSTIC {label}: visible={visible} "
+            f"tag={node.evaluate('el => el.tagName')} "
+            f"role={node.get_attribute('role') or '-'} "
+            f"aria-label={sort_diagnostic_text(node.get_attribute('aria-label') or '') or '-'} "
+            f"aria-expanded={node.get_attribute('aria-expanded') or '-'} "
+            f"aria-haspopup={node.get_attribute('aria-haspopup') or '-'} "
+            f"aria-checked={node.get_attribute('aria-checked') or '-'} "
+            f"aria-selected={node.get_attribute('aria-selected') or '-'} "
+            f"text={text or '-'}"
+        )
+        return visible
+    except Exception as error:
+        print(f"🔬 SORT_DIAGNOSTIC {label}: inspect-error={type(error).__name__}")
+        return False
+
+
+def log_sort_button_candidates(page):
+    print("🔬 SORT_DIAGNOSTIC sort-button candidates")
+    for selector in [
+        "button[aria-label='리뷰 정렬']",
+        "button[aria-label*='Sort']",
+        "button[aria-label*='정렬']",
+    ]:
+        locator = page.locator(selector)
+        print(f"🔬 SORT_DIAGNOSTIC selector={selector} count={locator.count()}")
+        log_sort_ui_node(f"selector={selector}", locator)
+
+    for pattern in SORT_BUTTON_PATTERNS:
+        locator = page.get_by_role("button", name=re.compile(pattern, re.I))
+        print(f"🔬 SORT_DIAGNOSTIC role-button pattern={pattern} count={locator.count()}")
+        log_sort_ui_node(f"role-button pattern={pattern}", locator)
+
+
+def log_sort_menu_metadata(page):
+    popup_count = 0
+    option_count = 0
+    popups = page.locator("[role='menu'], [role='listbox'], [role='dialog']")
+
+    for popup_index in range(min(popups.count(), 8)):
+        popup = popups.nth(popup_index)
+        try:
+            is_sort_popup = popup.is_visible(timeout=1000) and is_sort_option_text(
+                safe_inner_text(popup, "")
+            )
+        except:
+            is_sort_popup = False
+        if not is_sort_popup:
+            continue
+        log_sort_ui_node(f"popup[{popup_index}]", popup, include_text=False)
+        popup_count += 1
+        options = popup.locator("[role='menuitemradio'], [role='menuitem'], [role='radio'], [role='option'], button")
+        for option_index in range(min(options.count(), 20)):
+            option = options.nth(option_index)
+            if log_sort_ui_node(f"popup[{popup_index}] option[{option_index}]", option):
+                option_count += 1
+
+    for pattern in SORT_OPTION_PATTERNS:
+        option = page.get_by_text(re.compile(f"^(?:{pattern})$", re.I))
+        count = option.count()
+        if count:
+            print(f"🔬 SORT_DIAGNOSTIC exact-option pattern={pattern} count={count}")
+            log_sort_ui_node(f"exact-option pattern={pattern}", option)
+            option_count += count
+
+    print(
+        "🔬 SORT_DIAGNOSTIC menu-open-signals: "
+        f"visible-popups={popup_count} visible-or-matched-options={option_count}"
+    )
+    return popup_count > 0 or option_count > 0
+
 
 def close_reviews_sort_menu(page):
     try:
@@ -330,12 +430,16 @@ def open_reviews_sort_menu(page):
         "button[aria-label*='정렬']",
     ]
 
+    log_sort_button_candidates(page)
+
     for selector in direct_selectors:
         try:
             button = page.locator(selector).first
             if button.count() > 0:
+                log_sort_ui_node(f"clicking selector={selector}", button)
                 button.click(timeout=4000, force=True)
                 page.wait_for_timeout(1200)
+                log_sort_menu_metadata(page)
                 return True
         except:
             pass
@@ -344,8 +448,10 @@ def open_reviews_sort_menu(page):
         try:
             button = page.get_by_role("button", name=re.compile(pattern, re.I)).first
             if button.count() > 0:
+                log_sort_ui_node(f"clicking role-button pattern={pattern}", button)
                 button.click(timeout=4000, force=True)
                 page.wait_for_timeout(1200)
+                log_sort_menu_metadata(page)
                 return True
         except:
             pass
@@ -367,10 +473,14 @@ def newest_sort_is_selected(page):
 
 
 def click_newest_sort_option(page):
+    print("🔬 SORT_DIAGNOSTIC newest option candidates")
+    log_sort_menu_metadata(page)
+
     for pattern in NEWEST_SORT_PATTERNS:
         try:
             option = page.get_by_role("menuitemradio", name=re.compile(pattern, re.I)).first
             if option.count() > 0:
+                log_sort_ui_node(f"clicking menuitemradio pattern={pattern}", option)
                 option.click(timeout=4000, force=True)
                 page.wait_for_timeout(3000)
                 return True
@@ -382,6 +492,7 @@ def click_newest_sort_option(page):
         try:
             option = page.get_by_text(re.compile(f"^(?:{pattern})$", re.I)).first
             if option.count() > 0:
+                log_sort_ui_node(f"clicking text pattern={pattern}", option)
                 option.click(timeout=4000, force=True)
                 page.wait_for_timeout(3000)
                 return True
