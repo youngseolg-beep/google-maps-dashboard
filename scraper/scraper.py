@@ -472,6 +472,51 @@ def safely_begin_sort_click_diagnostics(page):
         return None
 
 
+def capture_centered_overlay_metadata(page, prior_ids):
+    """Read text only from a uniquely identified new centered three-item overlay."""
+    return page.evaluate("""(priorIds) => {
+      const previous = new Set(priorIds);
+      const visible = el => {
+        const r = el.getBoundingClientRect(), s = getComputedStyle(el);
+        return r.width > 0 && r.height > 0 && s.display !== 'none' && s.visibility === 'visible';
+      };
+      const candidates = Array.from(document.querySelectorAll('body *')).filter(el => {
+        const id = window.__sortDiagIds && window.__sortDiagIds.get(el);
+        if (!id || previous.has(id) || !visible(el) || el.closest('.jftiEf, [data-review-id], [role="article"]')) return false;
+        const r = el.getBoundingClientRect();
+        if (r.width < 200 || r.height < 150 || r.width > innerWidth * .8 || r.height > innerHeight * .8 ||
+            Math.abs(r.left + r.width / 2 - innerWidth / 2) > innerWidth * .12 ||
+            Math.abs(r.top + r.height / 2 - innerHeight / 2) > innerHeight * .12) return false;
+        const lists = el.querySelectorAll('ul');
+        return lists.length === 1 && lists[0].querySelectorAll(':scope > li').length === 3 &&
+          el.querySelectorAll('button').length === 2 &&
+          !el.querySelector('.jftiEf, [data-review-id], [role="article"], input, textarea, iframe');
+      });
+      const smallest = candidates.filter(el => !candidates.some(other => other !== el && el.contains(other)));
+      if (smallest.length !== 1) return {status: 'ambiguous_or_not_found', candidate_count: smallest.length};
+      const overlay = smallest[0], list = overlay.querySelector('ul');
+      const clean = value => (value || '').replace(/https?:\\/\\/\\S+|[\\w.+-]+@[\\w.-]+\\.[a-z]{2,}|\\b(?:bearer|token|cookie|authorization)\\b\\s*[:=]?\\s*\\S*/gi, '[redacted]')
+        .replace(/\\s+/g, ' ').trim().slice(0, 200);
+      const metadata = el => ({tag: el.tagName, role: clean(el.getAttribute('role')) || null,
+        aria_label: clean(el.getAttribute('aria-label')) || null, text: clean(el.innerText)});
+      let heading = overlay.querySelector('h1,h2,h3,h4,h5,h6,[role="heading"]');
+      if (!heading) {
+        let current = list;
+        while (current && current !== overlay && !heading) {
+          let sibling = current.previousElementSibling;
+          while (sibling && !heading) {
+            if (visible(sibling) && !sibling.querySelector('ul,button,input,textarea') && clean(sibling.innerText)) heading = sibling;
+            sibling = sibling.previousElementSibling;
+          }
+          current = current.parentElement;
+        }
+      }
+      return {status: 'captured', heading: heading ? metadata(heading) : null,
+        list_items: Array.from(list.querySelectorAll(':scope > li')).map(metadata),
+        buttons: Array.from(overlay.querySelectorAll('button')).map(metadata)};
+    }""", prior_ids)
+
+
 def capture_sort_click_diagnostics(page, button, click_succeeded, click_error="", before=None):
     if not SORT_DIAGNOSTICS:
         return
@@ -510,6 +555,10 @@ def capture_sort_click_diagnostics(page, button, click_succeeded, click_error=""
         artifact["elapsed_ms"] = round((time.monotonic() - before["started"]) * 1000)
         artifact["newly_visible"] = [node for node in after if node["id"] not in prior_ids]
         artifact["no_longer_visible"] = [node for node in before["before"] if node["id"] not in after_ids]
+        try:
+            artifact["centered_overlay"] = capture_centered_overlay_metadata(page, list(prior_ids))
+        except Exception as error:
+            artifact["centered_overlay"] = {"status": "inspection_error", "error": type(error).__name__}
         try:
             page.screenshot(path=str(SORT_DIAGNOSTIC_DIR / f"{stem}-after.png"), style=SORT_CAPTURE_STYLE)
         except Exception as error:

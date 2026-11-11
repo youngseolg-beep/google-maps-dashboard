@@ -3,6 +3,7 @@ from pathlib import Path
 import sys
 import types
 import unittest
+from unittest.mock import Mock
 from unittest.mock import patch
 
 
@@ -143,6 +144,19 @@ class ReviewCrawlerRegressionTests(unittest.TestCase):
         self.assertIn("-webkit-text-fill-color: transparent", scraper.SORT_CAPTURE_STYLE)
         self.assertIn("background-image: none", scraper.SORT_CAPTURE_STYLE)
         self.assertIn("visibility: hidden", scraper.SORT_CAPTURE_STYLE)
+
+    def test_overlay_diagnostic_passes_only_preclick_ids_and_keeps_result(self):
+        page = Mock()
+        expected = {"status": "captured", "heading": {"text": "Notice"},
+                    "list_items": [{"text": "one"}, {"text": "two"}, {"text": "three"}],
+                    "buttons": [{"text": "Continue"}, {"text": "Cancel"}]}
+        page.evaluate.return_value = expected
+        self.assertEqual(scraper.capture_centered_overlay_metadata(page, [12, 13]), expected)
+        script, prior_ids = page.evaluate.call_args.args
+        self.assertEqual(prior_ids, [12, 13])
+        self.assertIn("smallest.length !== 1", script)
+        self.assertIn("[data-review-id]", script)
+        self.assertIn("querySelectorAll('button').length === 2", script)
 
     def test_rendered_relative_dates_can_verify_newest_order_without_radio_metadata(self):
         self.assertTrue(scraper.review_dates_are_newest_first(["2 hours ago", "1 day ago", "3 weeks ago"]))
