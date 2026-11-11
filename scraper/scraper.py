@@ -13,6 +13,7 @@ SUPABASE_URL = os.environ.get("SUPABASE_URL", "").rstrip("/")
 SUPABASE_SERVICE_ROLE_KEY = os.environ.get("SUPABASE_SERVICE_ROLE_KEY", "")
 STATUS_ONLY = os.environ.get("STATUS_ONLY", "").strip().lower() in {"1", "true", "yes", "on"}
 REPAIR_ONLY = os.environ.get("REPAIR_ONLY", "").strip().lower() in {"1", "true", "yes", "on"}
+TARGET_STORE = os.environ.get("TARGET_STORE", "").strip()
 
 MAX_SCROLL_ROUNDS = 8
 STOP_STALLED_ROUNDS = 2
@@ -66,6 +67,38 @@ def estimate_review_date(relative_date, base_date=None):
 
     # Unrecognized relative values remain usable, but are marked as estimated today.
     return base_date.strftime("%Y-%m-%d")
+
+
+def relative_review_age_days(relative_date):
+    """Return a comparable approximate age, or None when Maps' date is unknown."""
+    text = normalize_spaces(relative_date).lower()
+    if not text or text in {"unknown", "recent"}:
+        return None
+
+    text = re.sub(r"\b(?:a|an|one|een|satu)\b", "1", text)
+    unit_patterns = [
+        (r"(\d+)\s*(?:second|seconds|초|detik|seconde|seconden)", 0),
+        (r"(\d+)\s*(?:minute|minutes|분|menit|minuut|minuten)", 0),
+        (r"(\d+)\s*(?:hour|hours|시간|jam|uur)", 0),
+        (r"(\d+)\s*(?:day|days|일|hari|dag|dagen)", 1),
+        (r"(\d+)\s*(?:week|weeks|주|minggu|weken)", 7),
+        (r"(\d+)\s*(?:month|months|개월|달|bulan|maand|maanden)", 30),
+        (r"(\d+)\s*(?:year|years|년|tahun|jaar|jaren)", 365),
+    ]
+    for pattern, days_per_unit in unit_patterns:
+        match = re.search(pattern, text, re.I)
+        if match:
+            return int(match.group(1)) * days_per_unit
+    return None
+
+
+def review_dates_are_newest_first(relative_dates, minimum_samples=3):
+    ages = [relative_review_age_days(value) for value in relative_dates]
+    recognized_ages = [age for age in ages if age is not None]
+    return (
+        len(recognized_ages) >= minimum_samples
+        and all(left <= right for left, right in zip(recognized_ages, recognized_ages[1:]))
+    )
 
 
 def build_url_candidates(url):
@@ -344,7 +377,37 @@ def click_newest_sort_option(page):
         except:
             pass
 
+    # Google Maps occasionally paints sort labels outside the radio accessibility tree.
+    for pattern in NEWEST_SORT_PATTERNS:
+        try:
+            option = page.get_by_text(re.compile(f"^(?:{pattern})$", re.I)).first
+            if option.count() > 0:
+                option.click(timeout=4000, force=True)
+                page.wait_for_timeout(3000)
+                return True
+        except:
+            pass
+
     return False
+
+
+def newest_sort_order_is_verified(page):
+    """Verify the rendered result when Maps does not expose the checked radio item."""
+    try:
+        cards, _ = get_review_cards(page)
+        relative_dates = [
+            get_review_date(cards.nth(index))
+            for index in range(min(cards.count(), 8))
+        ]
+        verified = review_dates_are_newest_first(relative_dates)
+        if verified:
+            print("✅ 최신순 정렬 검증 완료: 렌더링된 리뷰 날짜가 최신순")
+        else:
+            print("⚠️ 최신순 정렬 검증: 렌더링된 리뷰 날짜 순서를 증명할 수 없음")
+        return verified
+    except Exception as error:
+        print(f"⚠️ 최신순 정렬 검증: 날짜 순서 확인 실패 ({error})")
+        return False
 
 
 def set_reviews_sort_to_newest(page):
@@ -366,16 +429,16 @@ def set_reviews_sort_to_newest(page):
             print("⚠️ 최신순 정렬 검증: 최신순 옵션을 선택할 수 없음")
             continue
 
-        if not open_reviews_sort_menu(page):
-            print("⚠️ 최신순 정렬 검증: 선택 후 메뉴를 다시 열 수 없음")
-            continue
-
-        if newest_sort_is_selected(page):
+        if open_reviews_sort_menu(page) and newest_sort_is_selected(page):
             close_reviews_sort_menu(page)
             print("✅ 최신순 정렬 검증 완료: aria-checked=true")
             return True
 
-        print("⚠️ 최신순 정렬 검증: aria-checked=true를 확인할 수 없음")
+        close_reviews_sort_menu(page)
+        if newest_sort_order_is_verified(page):
+            return True
+
+        print("⚠️ 최신순 정렬 검증: aria-checked=true 또는 날짜 순서를 확인할 수 없음")
 
     close_reviews_sort_menu(page)
     return False
@@ -1526,6 +1589,28 @@ def run_repair_only():
     print(f"✅ REPAIR_ONLY 완료: Supabase reviews {len(canonical_reviews)}건 / Google Maps 크롤링 없음")
 
 
+def select_target_stores(stores, target_store):
+    target = normalize_spaces(target_store).casefold()
+    if not target:
+        return stores
+
+    matches = [
+        store for store in stores
+        if normalize_spaces(store.get("store_name", "")).casefold() == target
+    ]
+    if len(matches) != 1:
+        raise RuntimeError(
+            f'TARGET_STORE와 정확히 일치하는 활성 매장이 필요합니다: "{target_store}" / 발견 {len(matches)}건'
+        )
+
+    print(f"🎯 단일 매장 모드: {matches[0]['store_name']}")
+    return matches
+
+
+def all_crawl_results_failed(results):
+    return bool(results) and not any(result.get("ok") for result in results)
+
+
 def scrape():
     if STATUS_ONLY:
         run_status_only()
@@ -1539,6 +1624,7 @@ def scrape():
     all_new_reviews = []
     crawl_results = []
     stores = load_stores_from_supabase()
+    stores = select_target_stores(stores, TARGET_STORE)
     store_id_map = load_store_id_map()
     validate_store_configuration(stores, store_id_map)
     existing_reviews = load_existing_reviews()
@@ -1576,6 +1662,7 @@ def scrape():
 
         page = context.new_page()
         page.set_default_timeout(45000)
+        crawl_run_finished = False
 
         try:
             for store in stores:
@@ -1591,13 +1678,18 @@ def scrape():
                 print("❌ 저장할 기존/신규 리뷰가 없습니다.")
 
             finish_crawl_run(crawl_run_id, crawl_results, started_at)
+            crawl_run_finished = True
+
+            if all_crawl_results_failed(crawl_results):
+                raise RuntimeError("모든 대상 매장 수집이 실패했습니다. GitHub Actions를 실패로 처리합니다.")
 
         except Exception as e:
             print(f"🔥 치명적 오류: {e}")
-            try:
-                finish_crawl_run(crawl_run_id, crawl_results, started_at)
-            except Exception as finish_error:
-                print(f"⚠️ 실패 상태 crawl_runs 업데이트 실패: {finish_error}")
+            if not crawl_run_finished:
+                try:
+                    finish_crawl_run(crawl_run_id, crawl_results, started_at)
+                except Exception as finish_error:
+                    print(f"⚠️ 실패 상태 crawl_runs 업데이트 실패: {finish_error}")
             raise
 
         finally:

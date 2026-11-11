@@ -3,6 +3,7 @@ from pathlib import Path
 import sys
 import types
 import unittest
+from unittest.mock import patch
 
 
 playwright_module = types.ModuleType("playwright")
@@ -118,6 +119,11 @@ class ReviewCrawlerRegressionTests(unittest.TestCase):
         self.assertFalse(scraper.newest_sort_is_selected(FakeSortPage(False)))
         self.assertTrue(scraper.newest_sort_is_selected(FakeSortPage(True)))
 
+    def test_rendered_relative_dates_can_verify_newest_order_without_radio_metadata(self):
+        self.assertTrue(scraper.review_dates_are_newest_first(["2 hours ago", "1 day ago", "3 weeks ago"]))
+        self.assertFalse(scraper.review_dates_are_newest_first(["3 weeks ago", "1 day ago", "2 hours ago"]))
+        self.assertFalse(scraper.review_dates_are_newest_first(["Unknown", "1 day ago", "2 weeks ago"]))
+
     def test_recent_stop_requires_verified_depth_and_consecutive_existing_reviews(self):
         self.assertFalse(scraper.should_stop_recent_collection(1, 20, 6))
         self.assertFalse(scraper.should_stop_recent_collection(2, 9, 6))
@@ -128,6 +134,19 @@ class ReviewCrawlerRegressionTests(unittest.TestCase):
         self.assertTrue(scraper.feed_grew(10, 20, 10, 20))
         self.assertTrue(scraper.feed_grew(20, 20, 10, 15))
         self.assertFalse(scraper.feed_grew(20, 20, 15, 15))
+
+    def test_target_store_mode_is_exact_and_all_failed_result_is_fatal(self):
+        stores = [
+            {"store_name": "Bornga Bangkok Sukhumvit"},
+            {"store_name": "Other Store"},
+        ]
+        with patch("builtins.print"):
+            selected = scraper.select_target_stores(stores, "bornga bangkok sukhumvit")
+        self.assertEqual(selected, [stores[0]])
+        with self.assertRaisesRegex(RuntimeError, "정확히 일치"):
+            scraper.select_target_stores(stores, "Bornga")
+        self.assertTrue(scraper.all_crawl_results_failed([{"ok": False}]))
+        self.assertFalse(scraper.all_crawl_results_failed([{"ok": True}, {"ok": False}]))
 
 
 if __name__ == "__main__":

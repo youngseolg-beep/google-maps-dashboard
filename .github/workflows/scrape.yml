@@ -15,6 +15,12 @@ on:
         default: false
         type: boolean
 
+      target_store:
+        description: "단일 매장 검증용 정확한 store_name (비우면 전체 정기 크롤과 동일)"
+        required: false
+        default: ""
+        type: string
+
   schedule:
     - cron: "0 22 * * *"
 
@@ -47,9 +53,11 @@ jobs:
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
           STATUS_ONLY: ${{ github.event_name == 'workflow_dispatch' && inputs.status_only || false }}
           REPAIR_ONLY: ${{ github.event_name == 'workflow_dispatch' && inputs.repair_only || false }}
+          TARGET_STORE: ${{ github.event_name == 'workflow_dispatch' && inputs.target_store || '' }}
 
         run: |
           echo "Event: ${{ github.event_name }}"
           echo "STATUS_ONLY: ${STATUS_ONLY}"
           echo "REPAIR_ONLY: ${REPAIR_ONLY}"
+          echo "TARGET_STORE: ${TARGET_STORE:-<all stores>}"
           python scraper/scraper.py
