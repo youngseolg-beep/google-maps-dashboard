@@ -773,6 +773,37 @@ def newest_sort_order_is_verified(page):
         return False
 
 
+def dismiss_confirmed_maps_sign_in_prompt(page):
+    """Dismiss only the known Maps prompt; never activate Sign in."""
+    try:
+        headings = page.get_by_text("Sign-in to get the best of Google Maps", exact=True)
+        visible_headings = [headings.nth(i) for i in range(headings.count()) if headings.nth(i).is_visible()]
+        if not visible_headings:
+            return "absent"
+        if len(visible_headings) != 1:
+            return "failed"
+        heading = visible_headings[0]
+        overlay = heading.locator(
+            "xpath=ancestor::*[.//button[normalize-space(.)='Dismiss'] "
+            "and .//button[normalize-space(.)='Sign in']][1]"
+        )
+        if overlay.count() != 1 or not overlay.is_visible():
+            return "failed"
+        dismiss = overlay.get_by_role("button", name="Dismiss", exact=True)
+        sign_in = overlay.get_by_role("button", name="Sign in", exact=True)
+        if dismiss.count() != 1 or sign_in.count() != 1 or not dismiss.is_visible() or not sign_in.is_visible():
+            return "failed"
+        dismiss.click(timeout=4000)
+        heading.wait_for(state="hidden", timeout=4000)
+        if overlay.is_visible():
+            return "failed"
+        print("✅ 확인된 Google Maps 로그인 안내를 닫았습니다.")
+        return "dismissed"
+    except Exception as error:
+        print(f"⚠️ Google Maps 로그인 안내 닫기 실패: {type(error).__name__}")
+        return "failed"
+
+
 def set_reviews_sort_to_newest(page):
     """Set Newest and prove its selected state before a recent-only scan."""
     for attempt in range(1, 3):
@@ -782,6 +813,17 @@ def set_reviews_sort_to_newest(page):
         if not open_reviews_sort_menu(page):
             print("⚠️ 최신순 정렬 검증: 정렬 메뉴를 열 수 없음")
             continue
+
+        prompt = dismiss_confirmed_maps_sign_in_prompt(page)
+        if prompt == "failed":
+            print("⚠️ 로그인 안내를 안전하게 닫지 못해 최신순 정렬을 중단합니다.")
+            return False
+        if prompt == "dismissed":
+            if not open_reviews_sort_menu(page):
+                continue
+            if dismiss_confirmed_maps_sign_in_prompt(page) != "absent":
+                print("⚠️ 로그인 안내가 다시 표시되어 최신순 정렬을 중단합니다.")
+                return False
 
         if newest_sort_is_selected(page):
             close_reviews_sort_menu(page)

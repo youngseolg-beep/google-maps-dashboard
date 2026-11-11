@@ -80,7 +80,72 @@ class FakeSortPage:
         return FakeSortLocator(self.checked if role == "menuitemradio" else False)
 
 
+class PromptElement:
+    def __init__(self, state, kind):
+        self.state, self.kind = state, kind
+
+    def count(self):
+        return 1 if self.state["present"] else 0
+
+    def nth(self, index):
+        return self
+
+    def is_visible(self):
+        return self.state["present"]
+
+    def locator(self, selector):
+        return PromptElement(self.state, "overlay")
+
+    def get_by_role(self, role, name, exact=False):
+        return PromptElement(self.state, name)
+
+    def click(self, timeout):
+        if self.kind != "Dismiss":
+            raise AssertionError("Unexpected button clicked")
+        if self.state.get("fail"):
+            raise RuntimeError("dismiss failed")
+        self.state["present"] = False
+
+    def wait_for(self, state, timeout):
+        if self.state["present"]:
+            raise RuntimeError("prompt remains visible")
+
+
+class PromptPage:
+    def __init__(self, present=True, fail=False):
+        self.state = {"present": present, "fail": fail}
+
+    def get_by_text(self, text, exact=False):
+        if text != "Sign-in to get the best of Google Maps" or not exact:
+            raise AssertionError("Unexpected prompt search")
+        return PromptElement(self.state, "heading")
+
+
 class ReviewCrawlerRegressionTests(unittest.TestCase):
+    def test_confirmed_prompt_is_dismissed_and_absent_prompt_is_ignored(self):
+        page = PromptPage()
+        with patch("builtins.print"):
+            self.assertEqual(scraper.dismiss_confirmed_maps_sign_in_prompt(page), "dismissed")
+        self.assertFalse(page.state["present"])
+        self.assertEqual(scraper.dismiss_confirmed_maps_sign_in_prompt(PromptPage(False)), "absent")
+
+    def test_prompt_dismiss_failure_fails_closed(self):
+        with patch("builtins.print"):
+            self.assertEqual(scraper.dismiss_confirmed_maps_sign_in_prompt(PromptPage(fail=True)), "failed")
+
+    def test_sort_retry_after_dismissal_requires_verified_newest(self):
+        for verified in (True, False):
+            with self.subTest(verified=verified), patch("builtins.print"), \
+                 patch.object(scraper, "close_reviews_sort_menu"), \
+                 patch.object(scraper, "open_reviews_sort_menu", return_value=True) as open_menu, \
+                 patch.object(scraper, "dismiss_confirmed_maps_sign_in_prompt", side_effect=["dismissed", "absent", "absent"]), \
+                 patch.object(scraper, "newest_sort_is_selected", side_effect=[False, verified] if verified else [False] * 4), \
+                 patch.object(scraper, "click_newest_sort_option", return_value=True) as click_newest, \
+                 patch.object(scraper, "newest_sort_order_is_verified", return_value=False):
+                self.assertEqual(scraper.set_reviews_sort_to_newest(Mock()), verified)
+                self.assertGreaterEqual(open_menu.call_count, 2)
+                self.assertGreaterEqual(click_newest.call_count, 1)
+
     def test_collapsed_and_expanded_review_are_one_candidate_with_full_text(self):
         collapsed = review("The staff were very helpful and the food was excellent")
         expanded = review("The staff were very helpful and the food was excellent during our family dinner. We will return soon.")
