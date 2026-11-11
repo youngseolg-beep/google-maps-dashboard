@@ -125,6 +125,17 @@ class ReviewCrawlerRegressionTests(unittest.TestCase):
         self.assertTrue(scraper.is_sort_option_text("Highest rating"))
         self.assertFalse(scraper.is_sort_option_text("A reviewer name or review body is not a sort option"))
 
+    def test_sort_artifact_name_and_clip_are_limited_to_sort_controls(self):
+        self.assertEqual(
+            scraper.sort_diagnostic_stem("Bornga Bangkok Sukhumvit", 1),
+            "sort-after-click-bornga-bangkok-sukhumvit-attempt-01",
+        )
+        button = {"bounding_box": {"x": 100, "y": 40, "width": 40, "height": 30}}
+        broad_popup = {"bounding_box": {"x": 0, "y": 0, "width": 1400, "height": 900}}
+        clip = scraper.bounded_sort_screenshot_clip(button, [broad_popup], {"width": 1440, "height": 1000})
+        self.assertEqual(clip["width"], 64)
+        self.assertEqual(clip["height"], 54)
+
     def test_rendered_relative_dates_can_verify_newest_order_without_radio_metadata(self):
         self.assertTrue(scraper.review_dates_are_newest_first(["2 hours ago", "1 day ago", "3 weeks ago"]))
         self.assertFalse(scraper.review_dates_are_newest_first(["3 weeks ago", "1 day ago", "2 hours ago"]))

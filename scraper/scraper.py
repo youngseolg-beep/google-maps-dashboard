@@ -2,6 +2,7 @@ import os
 import json
 import re
 import hashlib
+from pathlib import Path
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
@@ -14,6 +15,8 @@ SUPABASE_SERVICE_ROLE_KEY = os.environ.get("SUPABASE_SERVICE_ROLE_KEY", "")
 STATUS_ONLY = os.environ.get("STATUS_ONLY", "").strip().lower() in {"1", "true", "yes", "on"}
 REPAIR_ONLY = os.environ.get("REPAIR_ONLY", "").strip().lower() in {"1", "true", "yes", "on"}
 TARGET_STORE = os.environ.get("TARGET_STORE", "").strip()
+SORT_DIAGNOSTICS = os.environ.get("SORT_DIAGNOSTICS", "").strip().lower() in {"1", "true", "yes", "on"}
+SORT_DIAGNOSTIC_DIR = Path(os.environ.get("SORT_DIAGNOSTIC_DIR", "sort-diagnostics"))
 
 MAX_SCROLL_ROUNDS = 8
 STOP_STALLED_ROUNDS = 2
@@ -334,6 +337,137 @@ def is_sort_option_text(value):
     return any(re.search(pattern, text, re.I) for pattern in SORT_OPTION_PATTERNS)
 
 
+def sort_diagnostic_stem(target_store, attempt):
+    safe_store = re.sub(r"[^a-z0-9]+", "-", normalize_spaces(target_store).casefold()).strip("-")
+    return f"sort-after-click-{safe_store or 'unknown-store'}-attempt-{attempt:02d}"
+
+
+def sort_node_snapshot(locator, include_text=False):
+    """Return allowlisted sort-control metadata only; never outerHTML or review content."""
+    node = locator.first
+    if node.count() == 0:
+        return None
+
+    try:
+        snapshot = {
+            "visible": node.is_visible(timeout=1000),
+            "tag": node.evaluate("el => el.tagName"),
+            "role": node.get_attribute("role"),
+            "aria_label": sort_diagnostic_text(node.get_attribute("aria-label") or ""),
+            "aria_expanded": node.get_attribute("aria-expanded"),
+            "aria_haspopup": node.get_attribute("aria-haspopup"),
+            "aria_checked": node.get_attribute("aria-checked"),
+            "aria_selected": node.get_attribute("aria-selected"),
+            "bounding_box": node.bounding_box(),
+        }
+        if include_text:
+            snapshot["text"] = sort_diagnostic_text(safe_inner_text(node, ""))
+        return snapshot
+    except Exception as error:
+        return {"inspect_error": type(error).__name__}
+
+
+def get_visible_sort_popups(page):
+    popups = []
+    candidates = page.locator("[role='menu'], [role='listbox'], [role='dialog']")
+    for index in range(min(candidates.count(), 8)):
+        popup = candidates.nth(index)
+        try:
+            if popup.is_visible(timeout=1000) and is_sort_option_text(safe_inner_text(popup, "")):
+                popups.append(popup)
+        except:
+            pass
+    return popups
+
+
+def bounded_sort_screenshot_clip(button_snapshot, popup_snapshots, viewport):
+    boxes = [button_snapshot.get("bounding_box")] + [
+        snapshot.get("bounding_box") for snapshot in popup_snapshots
+    ]
+    boxes = [box for box in boxes if box and box["width"] > 0 and box["height"] > 0]
+    if not boxes:
+        return None
+
+    # A broad dialog could contain reviews. Keep the artifact tightly scoped to controls.
+    button_box = boxes[0]
+    min_x = min(box["x"] for box in boxes)
+    min_y = min(box["y"] for box in boxes)
+    max_x = max(box["x"] + box["width"] for box in boxes)
+    max_y = max(box["y"] + box["height"] for box in boxes)
+    if (max_x - min_x) * (max_y - min_y) > 180000:
+        min_x, min_y = button_box["x"], button_box["y"]
+        max_x, max_y = min_x + button_box["width"], min_y + button_box["height"]
+
+    padding = 12
+    width = viewport.get("width", 1440)
+    height = viewport.get("height", 1000)
+    x = max(0, min_x - padding)
+    y = max(0, min_y - padding)
+    return {
+        "x": x,
+        "y": y,
+        "width": min(width - x, max_x - min_x + padding * 2),
+        "height": min(height - y, max_y - min_y + padding * 2),
+    }
+
+
+def capture_sort_click_diagnostics(page, button, click_succeeded, click_error=""):
+    if not SORT_DIAGNOSTICS:
+        return
+
+    page.wait_for_timeout(700)
+    SORT_DIAGNOSTIC_DIR.mkdir(parents=True, exist_ok=True)
+    attempt = len(list(SORT_DIAGNOSTIC_DIR.glob("sort-after-click-*.json"))) + 1
+    stem = sort_diagnostic_stem(TARGET_STORE, attempt)
+    button_snapshot = sort_node_snapshot(button, include_text=True) or {}
+    popup_snapshots = []
+
+    for popup in get_visible_sort_popups(page):
+        popup_snapshot = sort_node_snapshot(popup)
+        popup_snapshot["options"] = []
+        options = popup.locator("[role='menuitemradio'], [role='menuitem'], [role='radio'], [role='option'], button")
+        for index in range(min(options.count(), 20)):
+            option = options.nth(index)
+            option_snapshot = sort_node_snapshot(option, include_text=True)
+            if option_snapshot and is_sort_option_text(option_snapshot.get("text", "")):
+                popup_snapshot["options"].append(option_snapshot)
+        popup_snapshots.append(popup_snapshot)
+
+    artifact = {
+        "kind": "google_maps_sort_popup_diagnostic",
+        "click_succeeded": click_succeeded,
+        "click_error": click_error or None,
+        "sort_button": button_snapshot,
+        "sort_popup_count": len(popup_snapshots),
+        "sort_popups": popup_snapshots,
+    }
+    json_path = SORT_DIAGNOSTIC_DIR / f"{stem}.json"
+    json_path.write_text(json.dumps(artifact, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    screenshot_path = SORT_DIAGNOSTIC_DIR / f"{stem}.png"
+    clip = bounded_sort_screenshot_clip(
+        button_snapshot,
+        popup_snapshots,
+        page.viewport_size or {"width": 1440, "height": 1000},
+    )
+    try:
+        if clip:
+            page.screenshot(path=str(screenshot_path), clip=clip)
+            print(f"🔬 SORT_DIAGNOSTIC artifact screenshot={screenshot_path.name}")
+        else:
+            print("🔬 SORT_DIAGNOSTIC artifact screenshot=skipped-no-sort-control-bounds")
+    except Exception as error:
+        print(f"🔬 SORT_DIAGNOSTIC artifact screenshot-error={type(error).__name__}")
+    print(f"🔬 SORT_DIAGNOSTIC artifact dom={json_path.name}")
+
+
+def safely_capture_sort_click_diagnostics(page, button, click_succeeded, click_error=""):
+    try:
+        capture_sort_click_diagnostics(page, button, click_succeeded, click_error)
+    except Exception as error:
+        print(f"🔬 SORT_DIAGNOSTIC artifact-error={type(error).__name__}")
+
+
 def log_sort_ui_node(label, locator, include_text=True):
     """Log only small, relevant sort-control metadata; never page HTML or review content."""
     try:
@@ -433,28 +567,34 @@ def open_reviews_sort_menu(page):
     log_sort_button_candidates(page)
 
     for selector in direct_selectors:
+        button = None
         try:
             button = page.locator(selector).first
             if button.count() > 0:
                 log_sort_ui_node(f"clicking selector={selector}", button)
                 button.click(timeout=4000, force=True)
+                safely_capture_sort_click_diagnostics(page, button, click_succeeded=True)
                 page.wait_for_timeout(1200)
                 log_sort_menu_metadata(page)
                 return True
-        except:
-            pass
+        except Exception as error:
+            if button is not None:
+                safely_capture_sort_click_diagnostics(page, button, click_succeeded=False, click_error=type(error).__name__)
 
     for pattern in SORT_BUTTON_PATTERNS:
+        button = None
         try:
             button = page.get_by_role("button", name=re.compile(pattern, re.I)).first
             if button.count() > 0:
                 log_sort_ui_node(f"clicking role-button pattern={pattern}", button)
                 button.click(timeout=4000, force=True)
+                safely_capture_sort_click_diagnostics(page, button, click_succeeded=True)
                 page.wait_for_timeout(1200)
                 log_sort_menu_metadata(page)
                 return True
-        except:
-            pass
+        except Exception as error:
+            if button is not None:
+                safely_capture_sort_click_diagnostics(page, button, click_succeeded=False, click_error=type(error).__name__)
 
     return False
 

@@ -21,6 +21,12 @@ on:
         default: ""
         type: string
 
+      sort_diagnostics:
+        description: "정렬 버튼/팝업의 제한된 스크린샷 및 DOM 메타데이터 artifact 생성"
+        required: false
+        default: false
+        type: boolean
+
   schedule:
     - cron: "0 22 * * *"
 
@@ -54,10 +60,22 @@ jobs:
           STATUS_ONLY: ${{ github.event_name == 'workflow_dispatch' && inputs.status_only || false }}
           REPAIR_ONLY: ${{ github.event_name == 'workflow_dispatch' && inputs.repair_only || false }}
           TARGET_STORE: ${{ github.event_name == 'workflow_dispatch' && inputs.target_store || '' }}
+          SORT_DIAGNOSTICS: ${{ github.event_name == 'workflow_dispatch' && inputs.sort_diagnostics || false }}
+          SORT_DIAGNOSTIC_DIR: sort-diagnostics
 
         run: |
           echo "Event: ${{ github.event_name }}"
           echo "STATUS_ONLY: ${STATUS_ONLY}"
           echo "REPAIR_ONLY: ${REPAIR_ONLY}"
           echo "TARGET_STORE: ${TARGET_STORE:-<all stores>}"
+          echo "SORT_DIAGNOSTICS: ${SORT_DIAGNOSTICS}"
           python scraper/scraper.py
+
+      - name: Upload Google Maps sort diagnostics
+        if: ${{ always() && github.event_name == 'workflow_dispatch' && inputs.sort_diagnostics }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: google-maps-sort-diagnostics-${{ github.run_id }}
+          path: sort-diagnostics
+          if-no-files-found: warn
+          retention-days: 7
