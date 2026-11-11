@@ -24,6 +24,8 @@ RECENT_ONLY_MAX_REVIEWS = 20
 RECENT_ONLY_EXISTING_HIT_LIMIT = 3
 RECENT_ONLY_MIN_CHECKED = 10
 RECENT_ONLY_MAX_ROUNDS = 3
+RECENT_ONLY_MIN_SCROLL_ROUNDS = 2
+MIN_EXPANSION_TEXT_LENGTH = 24
 
 KST = ZoneInfo("Asia/Seoul")
 
@@ -257,102 +259,143 @@ def wait_for_reviews(page):
     return False
 
 
-def set_reviews_sort_to_newest(page):
-    print("🆕 리뷰 정렬을 최신순으로 변경 시도 중...")
+SORT_BUTTON_PATTERNS = [
+    r"Sort",
+    r"정렬",
+    r"Sorteer",
+    r"Sorteren",
+    r"Urutkan",
+    r"排序",
+]
 
-    sort_button_patterns = [
-        r"Sort",
-        r"정렬",
-        r"Sorteer",
-        r"Sorteren",
-        r"Urutkan",
-    ]
+NEWEST_SORT_PATTERNS = [
+    r"Newest",
+    r"Newest first",
+    r"Most recent",
+    r"Latest",
+    r"최신",
+    r"최신순",
+    r"Nieuwste",
+    r"Meest recente",
+    r"Terbaru",
+    r"Paling baru",
+    r"最新",
+]
 
-    newest_patterns = [
-        r"Newest",
-        r"Newest first",
-        r"Most recent",
-        r"Latest",
-        r"최신",
-        r"최신순",
-        r"Nieuwste",
-        r"Meest recente",
-        r"Terbaru",
-        r"Paling baru",
-    ]
 
+def close_reviews_sort_menu(page):
     try:
-        sort_clicked = False
+        page.keyboard.press("Escape")
+    except:
+        pass
 
-        for pattern in sort_button_patterns:
-            try:
-                btn = page.get_by_role("button", name=re.compile(pattern, re.I)).first
 
-                if btn.count() > 0:
-                    btn.click(timeout=4000, force=True)
-                    page.wait_for_timeout(2000)
-                    print("✅ 정렬 버튼 클릭 성공")
-                    sort_clicked = True
-                    break
-            except:
-                pass
+def open_reviews_sort_menu(page):
+    direct_selectors = [
+        "button[aria-label='리뷰 정렬']",
+        "button[aria-label*='Sort']",
+        "button[aria-label*='정렬']",
+    ]
 
-        if not sort_clicked:
-            print("⚠️ 정렬 버튼 발견 실패")
-            return False
+    for selector in direct_selectors:
+        try:
+            button = page.locator(selector).first
+            if button.count() > 0:
+                button.click(timeout=4000, force=True)
+                page.wait_for_timeout(1200)
+                return True
+        except:
+            pass
 
-        newest_clicked = False
+    for pattern in SORT_BUTTON_PATTERNS:
+        try:
+            button = page.get_by_role("button", name=re.compile(pattern, re.I)).first
+            if button.count() > 0:
+                button.click(timeout=4000, force=True)
+                page.wait_for_timeout(1200)
+                return True
+        except:
+            pass
 
-        for pattern in newest_patterns:
-            try:
-                option = page.get_by_role("menuitemradio", name=re.compile(pattern, re.I)).first
+    return False
 
-                if option.count() > 0:
-                    option.click(timeout=4000, force=True)
-                    page.wait_for_timeout(4000)
-                    print("✅ 최신순 정렬 적용 성공")
-                    newest_clicked = True
-                    break
-            except:
-                pass
 
-        if not newest_clicked:
-            for pattern in newest_patterns:
-                try:
-                    option = page.get_by_text(re.compile(pattern, re.I)).first
+def newest_sort_is_selected(page):
+    """A click is not enough: Google Maps must expose Newest as checked."""
+    for pattern in NEWEST_SORT_PATTERNS:
+        try:
+            option = page.get_by_role("menuitemradio", name=re.compile(pattern, re.I)).first
+            if option.count() > 0 and option.get_attribute("aria-checked") == "true":
+                return True
+        except:
+            pass
 
-                    if option.count() > 0:
-                        option.click(timeout=4000, force=True)
-                        page.wait_for_timeout(4000)
-                        print("✅ 최신순 정렬 적용 성공")
-                        newest_clicked = True
-                        break
-                except:
-                    pass
+    return False
 
-        if not newest_clicked:
-            print("⚠️ 최신순 옵션 클릭 실패")
-            return False
 
-        return True
+def click_newest_sort_option(page):
+    for pattern in NEWEST_SORT_PATTERNS:
+        try:
+            option = page.get_by_role("menuitemradio", name=re.compile(pattern, re.I)).first
+            if option.count() > 0:
+                option.click(timeout=4000, force=True)
+                page.wait_for_timeout(3000)
+                return True
+        except:
+            pass
 
-    except Exception as e:
-        print(f"⚠️ 최신순 정렬 설정 실패: {e}")
-        return False
+    return False
+
+
+def set_reviews_sort_to_newest(page):
+    """Set Newest and prove its selected state before a recent-only scan."""
+    for attempt in range(1, 3):
+        close_reviews_sort_menu(page)
+        print(f"🆕 최신순 정렬 시도 {attempt}/2")
+
+        if not open_reviews_sort_menu(page):
+            print("⚠️ 최신순 정렬 검증: 정렬 메뉴를 열 수 없음")
+            continue
+
+        if newest_sort_is_selected(page):
+            close_reviews_sort_menu(page)
+            print("✅ 최신순 정렬 검증 완료: aria-checked=true")
+            return True
+
+        if not click_newest_sort_option(page):
+            print("⚠️ 최신순 정렬 검증: 최신순 옵션을 선택할 수 없음")
+            continue
+
+        if not open_reviews_sort_menu(page):
+            print("⚠️ 최신순 정렬 검증: 선택 후 메뉴를 다시 열 수 없음")
+            continue
+
+        if newest_sort_is_selected(page):
+            close_reviews_sort_menu(page)
+            print("✅ 최신순 정렬 검증 완료: aria-checked=true")
+            return True
+
+        print("⚠️ 최신순 정렬 검증: aria-checked=true를 확인할 수 없음")
+
+    close_reviews_sort_menu(page)
+    return False
+
+
+REVIEW_EXPAND_PATTERNS = [
+    r"More",
+    r"Read more",
+    r"자세히 보기",
+    r"더보기",
+    r"Meer",
+    r"Meer weergeven",
+    r"Volledige review",
+    r"Lainnya",
+    r"Selengkapnya",
+]
 
 
 def click_more_buttons(page):
-    patterns = [
-        r"More",
-        r"Read more",
-        r"자세히 보기",
-        r"더보기",
-        r"Meer",
-        r"Meer weergeven",
-        r"Volledige review",
-        r"Lainnya",
-        r"Selengkapnya",
-    ]
+    patterns = REVIEW_EXPAND_PATTERNS
 
     for pattern in patterns:
         try:
@@ -417,12 +460,33 @@ def get_review_cards(page):
 
 
 def get_review_text(card):
+    texts = []
     for selector in [".wiI7pd", ".MyEned"]:
         text = normalize_spaces(safe_inner_text(card.locator(selector), ""))
         if text:
-            return text
+            texts.append(text)
+
+    if texts:
+        return max(texts, key=len)
 
     return ""
+
+
+def expand_review_text(card, page=None):
+    """Expand the current card as well as the page-wide expansion pass."""
+    for pattern in REVIEW_EXPAND_PATTERNS:
+        try:
+            buttons = card.get_by_role("button", name=re.compile(pattern, re.I))
+            count = min(buttons.count(), 3)
+            for index in range(count):
+                try:
+                    buttons.nth(index).click(timeout=700, force=True)
+                    if page:
+                        page.wait_for_timeout(120)
+                except:
+                    pass
+        except:
+            pass
 
 
 def get_review_date(card):
@@ -810,6 +874,64 @@ def reconcile_existing_reviews(existing_reviews):
     print(f"   - 정리 후: {len(canonical_reviews)}건")
     return canonical_reviews
 
+
+def normalized_review_text_for_match(value):
+    """Compare Maps' collapsed and expanded text without changing review keys."""
+    text = normalize_spaces(value).casefold()
+    return re.sub(r"[^\w]+", "", text, flags=re.UNICODE)
+
+
+def same_review_metadata(left, right):
+    """Keep same-author/same-date reviews distinct unless their text also matches."""
+    if normalize_spaces(left.get("store_name", "")).casefold() != normalize_spaces(right.get("store_name", "")).casefold():
+        return False
+    if normalize_spaces(left.get("author", "Anonymous")).casefold() != normalize_spaces(right.get("author", "Anonymous")).casefold():
+        return False
+    if parse_rating(str(left.get("rating", ""))) != parse_rating(str(right.get("rating", ""))):
+        return False
+
+    left_date = normalize_spaces(left.get("date", ""))
+    right_date = normalize_spaces(right.get("date", ""))
+    if left_date and right_date and left_date.casefold() == right_date.casefold():
+        return True
+
+    left_review_date = normalize_spaces(left.get("review_date", ""))
+    right_review_date = normalize_spaces(right.get("review_date", ""))
+    return bool(left_review_date and right_review_date and left_review_date == right_review_date)
+
+
+def are_expanded_text_variants(left, right):
+    """True only when one sufficiently long review text is a prefix of the other."""
+    if not same_review_metadata(left, right):
+        return False
+
+    left_text = normalized_review_text_for_match(left.get("text", ""))
+    right_text = normalized_review_text_for_match(right.get("text", ""))
+    if not left_text or not right_text:
+        return False
+
+    shorter, longer = sorted((left_text, right_text), key=len)
+    return len(shorter) >= MIN_EXPANSION_TEXT_LENGTH and longer.startswith(shorter)
+
+
+def preferred_review(left, right):
+    """Keep the longer Maps text when a collapsed/expanded pair appears in one run."""
+    left_text = normalized_review_text_for_match(left.get("text", ""))
+    right_text = normalized_review_text_for_match(right.get("text", ""))
+    return right if len(right_text) > len(left_text) else left
+
+
+def find_existing_review_match(review, existing_reviews, existing_keys=None):
+    key = make_review_key(review)
+    keys = existing_keys if existing_keys is not None else {
+        make_review_key(item) for item in existing_reviews if make_review_key(item)
+    }
+    if key and key in keys:
+        return True
+
+    return any(are_expanded_text_variants(review, item) for item in existing_reviews)
+
+
 def merge_reviews(existing, new_reviews):
     merged = []
     seen = set()
@@ -818,6 +940,15 @@ def merge_reviews(existing, new_reviews):
         key = make_review_key(review)
 
         if not key or key in seen:
+            continue
+
+        variant_index = next(
+            (index for index, current in enumerate(merged) if are_expanded_text_variants(review, current)),
+            None,
+        )
+        if variant_index is not None:
+            merged[variant_index] = preferred_review(merged[variant_index], review)
+            seen.add(key)
             continue
 
         seen.add(key)
@@ -846,8 +977,16 @@ def count_new_reviews(existing_reviews, new_reviews):
 
 
 def get_existing_keys_for_store(existing_reviews, store_name):
+    return {
+        make_review_key(review)
+        for review in get_existing_reviews_for_store(existing_reviews, store_name)
+        if make_review_key(review)
+    }
+
+
+def get_existing_reviews_for_store(existing_reviews, store_name):
     target_store_name = normalize_spaces(store_name).lower()
-    keys = set()
+    store_reviews = []
 
     for review in existing_reviews:
         review_store_name = normalize_spaces(review.get("store_name", "")).lower()
@@ -855,24 +994,38 @@ def get_existing_keys_for_store(existing_reviews, store_name):
         if review_store_name != target_store_name:
             continue
 
-        key = make_review_key(review)
+        store_reviews.append(review)
 
-        if key:
-            keys.add(key)
-
-    return keys
+    return store_reviews
 
 
-def extract_reviews(page, store, existing_keys=None):
+def should_stop_recent_collection(round_count, checked_count, consecutive_existing_hits):
+    return (
+        round_count >= RECENT_ONLY_MIN_SCROLL_ROUNDS
+        and checked_count >= RECENT_ONLY_MIN_CHECKED
+        and consecutive_existing_hits >= RECENT_ONLY_EXISTING_HIT_LIMIT
+    )
+
+
+def feed_grew(previous_card_count, card_count, previous_processed_count, processed_count):
+    return card_count > previous_card_count or processed_count > previous_processed_count
+
+
+def extract_reviews(page, store, existing_reviews=None, newest_verified=False):
     collected = []
     processed_keys = set()
-    stalled_count = 0
-    last_total = 0
+    feed_stalled_count = 0
+    last_card_count = 0
+    last_processed_count = 0
     checked_count = 0
-    existing_hit_count = 0
+    consecutive_existing_hits = 0
 
-    existing_keys = existing_keys or set()
-    recent_only_mode = len(existing_keys) > 0
+    existing_reviews = existing_reviews or []
+    existing_keys = {make_review_key(review) for review in existing_reviews if make_review_key(review)}
+    recent_only_mode = bool(existing_reviews)
+
+    if recent_only_mode and not newest_verified:
+        raise RuntimeError("최근 리뷰 모드는 최신순 정렬 검증 후에만 실행할 수 있습니다.")
 
     if recent_only_mode:
         print(f"⚡ 최근 리뷰 모드 적용: {store['store_name']} / 기존 리뷰 key {len(existing_keys)}개")
@@ -894,6 +1047,7 @@ def extract_reviews(page, store, existing_keys=None):
         for i in range(card_count):
             try:
                 card = cards.nth(i)
+                expand_review_text(card, page)
 
                 text = get_review_text(card)
                 has_text = bool(text and len(text) >= 3)
@@ -943,22 +1097,20 @@ def extract_reviews(page, store, existing_keys=None):
                 processed_keys.add(key)
                 checked_count += 1
 
-                if recent_only_mode and key in existing_keys:
-                    existing_hit_count += 1
+                if recent_only_mode and find_existing_review_match(review, existing_reviews, existing_keys):
+                    consecutive_existing_hits += 1
                     print(
-                        f"🟡 기존 리뷰 감지: {existing_hit_count}/{RECENT_ONLY_EXISTING_HIT_LIMIT} "
+                        f"🟡 기존 리뷰 감지: 연속 {consecutive_existing_hits}/{RECENT_ONLY_EXISTING_HIT_LIMIT} "
                         f"/ 확인 {checked_count}/{RECENT_ONLY_MIN_CHECKED}"
                     )
 
-                    if (
-                        checked_count >= RECENT_ONLY_MIN_CHECKED
-                        and existing_hit_count >= RECENT_ONLY_EXISTING_HIT_LIMIT
-                    ):
-                        print("✅ 기존 리뷰 충분히 감지. 이 매장 최근 리뷰 확인 종료.")
+                    if should_stop_recent_collection(round_no + 1, checked_count, consecutive_existing_hits):
+                        print("✅ 최신순에서 연속 기존 리뷰를 충분히 감지. 최근 리뷰 확인 종료.")
                         return collected
 
                     continue
 
+                consecutive_existing_hits = 0
                 collected.append(review)
                 found_this_turn += 1
 
@@ -979,14 +1131,16 @@ def extract_reviews(page, store, existing_keys=None):
             print(f"✅ 목표 수집량 도달: {len(collected)}건")
             break
 
-        if len(collected) == last_total:
-            stalled_count += 1
+        if feed_grew(last_card_count, card_count, last_processed_count, len(processed_keys)):
+            feed_stalled_count = 0
         else:
-            stalled_count = 0
-            last_total = len(collected)
+            feed_stalled_count += 1
 
-        if stalled_count >= STOP_STALLED_ROUNDS and len(collected) > 0:
-            print("✅ 추가 로딩 정체 감지. 빠른 수집 종료.")
+        last_card_count = card_count
+        last_processed_count = len(processed_keys)
+
+        if feed_stalled_count >= STOP_STALLED_ROUNDS and checked_count > 0:
+            print("✅ 추가 카드 로딩 정체 감지. 수집 종료.")
             break
 
         if recent_only_mode and round_no + 1 >= max_rounds:
@@ -1006,6 +1160,7 @@ def scrape_store(page, store, existing_reviews=None):
 
     url_candidates = build_url_candidates(store["url"])
     valid_place_detected = False
+    recent_sort_verification_failed = False
 
     for idx, target_url in enumerate(url_candidates):
         print(f"🌐 URL 후보 {idx + 1}/{len(url_candidates)} 진입 시도: {target_url}")
@@ -1032,11 +1187,30 @@ def scrape_store(page, store, existing_reviews=None):
         page.wait_for_timeout(4000)
 
         if wait_for_reviews(page):
-            set_reviews_sort_to_newest(page)
-            existing_keys = get_existing_keys_for_store(existing_reviews or [], store["store_name"])
-            reviews = extract_reviews(page, store, existing_keys)
+            existing_store_reviews = get_existing_reviews_for_store(
+                existing_reviews or [], store["store_name"]
+            )
+            newest_verified = set_reviews_sort_to_newest(page)
 
-            if reviews or existing_keys:
+            if existing_store_reviews and not newest_verified:
+                recent_sort_verification_failed = True
+                print(
+                    "⚠️ 최근 리뷰 수집 검증 실패: 최신순 aria-checked=true를 확인할 수 없어 "
+                    "기존 리뷰 기반 수집을 중단합니다."
+                )
+                continue
+
+            if not newest_verified:
+                print("⚠️ 최신순 정렬을 검증하지 못했습니다. 초기 전체 수집만 안전 상한 내에서 계속합니다.")
+
+            reviews = extract_reviews(
+                page,
+                store,
+                existing_store_reviews,
+                newest_verified=newest_verified,
+            )
+
+            if reviews or existing_store_reviews:
                 if reviews:
                     print(f"✅ 매장 수집 성공: {store['store_name']} / 신규 후보 {len(reviews)}건")
                 else:
@@ -1054,6 +1228,19 @@ def scrape_store(page, store, existing_reviews=None):
                 }
 
         print(f"⚠️ URL 후보 {idx + 1}에서 리뷰 DOM 감지 실패 또는 리뷰 없음")
+
+    if recent_sort_verification_failed:
+        print(f"❌ 최신순 검증 실패로 최근 리뷰 수집을 완료하지 못함: {store['store_name']}")
+        return {
+            "ok": False,
+            "store_name": store["store_name"],
+            "sv": store["sv"],
+            "country": store["country"],
+            "collected_count": 0,
+            "error": "Google Maps 최신순 정렬 검증 실패로 최근 리뷰 수집 중단",
+            "crawled_at": now_kst().strftime("%Y-%m-%d %H:%M:%S"),
+            "reviews": [],
+        }
 
     # A real place page with no review DOM is a valid zero-review store, not a crawl failure.
     if valid_place_detected:
@@ -1125,14 +1312,24 @@ def upsert_review_batch(rows, batch_size=500):
         )
 
 
-def save_reviews(new_reviews, crawl_run_id, existing_reviews=None):
-    existing_reviews = existing_reviews if existing_reviews is not None else load_existing_reviews()
-    existing_keys = {make_review_key(r) for r in existing_reviews if make_review_key(r)}
+def get_new_reviews_to_insert(existing_reviews, new_reviews):
+    """Apply exact-key and collapsed/expanded safeguards before any DB write."""
+    existing_keys = {make_review_key(review) for review in existing_reviews if make_review_key(review)}
     unique_new_reviews = merge_reviews([], new_reviews)
     rows_to_insert = [
         review for review in unique_new_reviews
-        if make_review_key(review) not in existing_keys
+        if not find_existing_review_match(review, existing_reviews, existing_keys)
     ]
+    return unique_new_reviews, rows_to_insert
+
+
+def save_reviews(new_reviews, crawl_run_id, existing_reviews=None):
+    existing_reviews = existing_reviews if existing_reviews is not None else load_existing_reviews()
+    existing_keys = {make_review_key(r) for r in existing_reviews if make_review_key(r)}
+    unique_new_reviews, rows_to_insert = get_new_reviews_to_insert(existing_reviews, new_reviews)
+    expansion_variant_count = len(unique_new_reviews) - len(rows_to_insert) - sum(
+        1 for review in unique_new_reviews if make_review_key(review) in existing_keys
+    )
 
     store_id_map = load_store_id_map()
     rows = [prepare_review_row(review, store_id_map, crawl_run_id) for review in rows_to_insert]
@@ -1144,6 +1341,7 @@ def save_reviews(new_reviews, crawl_run_id, existing_reviews=None):
     print(f"   - 기존 리뷰: {len(existing_reviews)}건")
     print(f"   - 이번 수집 후보: {len(new_reviews)}건")
     print(f"   - 수집 내 중복 제외: {len(new_reviews) - len(unique_new_reviews)}건")
+    print(f"   - 기존 축약/전문 변형 제외: {max(0, expansion_variant_count)}건")
     print(f"   - 신규 추가: {len(rows_to_insert)}건")
     print(f"   - 최종 누적: {len(existing_reviews) + len(rows_to_insert)}건")
 
@@ -1345,7 +1543,8 @@ def scrape():
     validate_store_configuration(stores, store_id_map)
     existing_reviews = load_existing_reviews()
     save_migrated_existing_reviews(existing_reviews)
-    existing_reviews = reconcile_existing_reviews(existing_reviews)
+    # Preserve existing production rows during scheduled crawls.  The explicit
+    # REPAIR_ONLY path remains the only path that can reconcile legacy rows.
     crawl_run_id = create_crawl_run(len(stores))
 
     with sync_playwright() as p:
