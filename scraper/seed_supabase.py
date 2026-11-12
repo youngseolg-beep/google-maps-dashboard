@@ -14,6 +14,7 @@ SCRAPER_PATH = ROOT / "scraper" / "scraper.py"
 REVIEWS_PATH = ROOT / "public" / "data" / "reviews.json"
 SUPABASE_URL = os.environ.get("SUPABASE_URL", "").rstrip("/")
 SUPABASE_SERVICE_ROLE_KEY = os.environ.get("SUPABASE_SERVICE_ROLE_KEY", "")
+REVIEW_INSERT_PREFERENCE = "resolution=ignore-duplicates,return=minimal"
 
 
 def normalize_spaces(value):
@@ -26,6 +27,13 @@ def require_config():
 
 
 def supabase_request(method, table, *, query=None, body=None, prefer=None):
+    if table == "reviews" and method != "GET":
+        if (
+            method != "POST"
+            or query != {"on_conflict": "review_key"}
+            or prefer != REVIEW_INSERT_PREFERENCE
+        ):
+            raise ValueError("reviews 쓰기는 review_key 충돌을 건너뛰는 신규 삽입만 허용합니다.")
     require_config()
     url = f"{SUPABASE_URL}/rest/v1/{table}"
     if query:
@@ -91,6 +99,8 @@ def write_rows_adaptive(table, rows, *, query=None, prefer=None):
                 raise
 
             missing_column = match.group(1)
+            if table == "reviews" and missing_column == "review_key":
+                raise
             if missing_column in removed_columns:
                 raise
 
@@ -232,9 +242,9 @@ def upload_reviews(rows, batch_size=500):
             "reviews",
             batch,
             query={"on_conflict": "review_key"},
-            prefer="resolution=merge-duplicates,return=minimal",
+            prefer=REVIEW_INSERT_PREFERENCE,
         )
-        print(f"📦 reviews 업로드: {min(start + len(batch), len(rows))}/{len(rows)}")
+        print(f"📦 reviews 삽입 요청 처리: {min(start + len(batch), len(rows))}/{len(rows)} 후보")
 
 
 def main():
@@ -248,7 +258,7 @@ def main():
     store_map = load_store_map()
     rows = [prepare_review_row(review, store_map) for review in reviews if make_review_key(review)]
     upload_reviews(rows)
-    print(f"✅ 초기 이관 완료: stores {len(stores)}개 / reviews {len(rows)}건")
+    print(f"✅ 초기 이관 요청 완료: stores {len(stores)}개 / reviews 삽입 후보 {len(rows)}건")
 
 
 if __name__ == "__main__":

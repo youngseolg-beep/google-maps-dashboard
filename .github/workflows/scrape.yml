@@ -10,7 +10,7 @@ on:
         type: boolean
 
       repair_only:
-        description: "Supabase 리뷰 중복 및 review_key 정합성 복구"
+        description: "Supabase 리뷰 중복 후보 및 review_key 읽기 전용 점검"
         required: true
         default: false
         type: boolean

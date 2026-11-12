@@ -44,6 +44,7 @@ function loadDashboard() {
       getCurrentFilteredReviews, getInsightsBaseReviews,
       classifyMonthlyTrendDate, getMonthlyTrend, matchesKeywordCategory,
       renderKeywordCloud, getKstMonth,
+      summarizeCollectionRun, latestStoreCollectionLabel,
     };
   `, context, { filename: 'index.html:inline-script' });
   return { app: context.dashboardTest, element: id => elements.get(id) };
@@ -56,6 +57,37 @@ const review = (id, options = {}) => ({
   first_seen_run_id: 8, ...options,
 });
 const ids = reviews => Array.from(reviews, item => item.id);
+
+test('collection summary separates observation, verified completeness and execution failure', () => {
+  const { app } = loadDashboard();
+  const run = { total_stores: 5, success_count: 3, failed_count: 0, stores: [
+    { store_name: 'Verified store', collection_status: 'VERIFIED' },
+    { store_name: 'Observed store', collection_status: 'PARTIAL', collected_count: 0 },
+    { store_name: 'Blocked store', collection_status: 'FAILED', ok: true },
+    { store_name: 'Skipped store', collection_status: 'NOT_CHECKED' },
+    { store_name: 'Legacy store', ok: true, collected_count: 0 },
+  ] };
+  const summary = app.summarizeCollectionRun(run);
+  assert.deepEqual({ ...summary.counts }, { VERIFIED: 1, PARTIAL: 1, FAILED: 1, NOT_CHECKED: 1 });
+  assert.deepEqual(Array.from(summary.failedNames), ['Blocked store']);
+  assert.equal(summary.unrecorded, 1);
+  app.setState({ crawlStatus: run });
+  assert.equal(app.latestStoreCollectionLabel('Observed store'), '일부 관측');
+  assert.equal(app.latestStoreCollectionLabel('Skipped store'), '미시도');
+  assert.equal(app.latestStoreCollectionLabel('Outside run'), '미시도');
+  assert.equal(app.latestStoreCollectionLabel('Legacy store'), '상태 미기록');
+});
+
+test('legacy success counters never create verified stores and legacy failures are not double-counted', () => {
+  const { app } = loadDashboard();
+  const summary = app.summarizeCollectionRun({ total_stores: 4, success_count: 3, failed_count: 1, stores: [
+    { store_name: 'Legacy success', ok: true, collected_count: 0 },
+    { store_name: 'Legacy observation', ok: true, collected_count: 2 },
+    { store_name: 'Legacy failure', ok: false, collected_count: 0 },
+  ], failed_stores: [{ store_name: 'Legacy failure' }] });
+  assert.deepEqual({ ...summary.counts }, { VERIFIED: 0, PARTIAL: 1, FAILED: 1, NOT_CHECKED: 0 });
+  assert.equal(summary.unrecorded, 2);
+});
 
 test('Reviews and Insights share SV, country, store and inclusive period scope', () => {
   const { app } = loadDashboard();

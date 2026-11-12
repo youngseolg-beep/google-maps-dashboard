@@ -1,9 +1,11 @@
 import importlib.util
+import json
 from pathlib import Path
 import sys
 import types
 import unittest
 from unittest.mock import Mock
+from unittest.mock import call
 from unittest.mock import patch
 
 
@@ -17,6 +19,9 @@ MODULE_PATH = Path(__file__).with_name("scraper.py")
 SPEC = importlib.util.spec_from_file_location("review_scraper", MODULE_PATH)
 scraper = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(scraper)
+SEED_SPEC = importlib.util.spec_from_file_location("seed_supabase", MODULE_PATH.with_name("seed_supabase.py"))
+seed = importlib.util.module_from_spec(SEED_SPEC)
+SEED_SPEC.loader.exec_module(seed)
 
 
 STORE = {
@@ -251,6 +256,202 @@ class ReviewCrawlerRegressionTests(unittest.TestCase):
             scraper.select_target_stores(stores, "Bornga")
         self.assertTrue(scraper.all_crawl_results_failed([{"ok": False}]))
         self.assertFalse(scraper.all_crawl_results_failed([{"ok": True}, {"ok": False}]))
+
+    def test_verified_requires_independent_completeness_evidence(self):
+        classify = scraper.classify_collection_status
+        self.assertEqual(classify(attempted=True, observed_review_count=42), "PARTIAL")
+        self.assertEqual(classify(attempted=True, independent_completeness_confirmed=True), "VERIFIED")
+        self.assertEqual(classify(attempted=False), "NOT_CHECKED")
+        self.assertEqual(classify(attempted=True), "FAILED")
+        row = scraper.collection_status_row(STORE, attempted=True, independent_completeness_confirmed=True)
+        self.assertEqual((row["collection_status"], row["collection_reason"]),
+                         ("VERIFIED", "independent_completeness_confirmed"))
+
+    def test_existing_review_observation_is_partial_even_with_no_new_candidates(self):
+        text = "Existing review."
+        existing = review(text)
+        cards = Mock()
+        cards.count.return_value = 1
+        evidence = {"observed_review_count": 0}
+        with (
+            patch("builtins.print"),
+            patch.object(scraper, "click_more_buttons"),
+            patch.object(scraper, "click_original_review_buttons"),
+            patch.object(scraper, "get_review_cards", return_value=(cards, ".jftiEf")),
+            patch.object(scraper, "expand_review_text"),
+            patch.object(scraper, "get_review_text", return_value=text),
+            patch.object(scraper, "get_review_date", return_value=existing["date"]),
+            patch.object(scraper, "get_review_author", return_value=existing["author"]),
+            patch.object(scraper, "get_review_rating", return_value=existing["rating"]),
+            patch.object(scraper, "should_stop_recent_collection", return_value=True),
+        ):
+            candidates = scraper.extract_reviews(Mock(), STORE, [existing], newest_verified=True,
+                                                 collection_evidence=evidence)
+        self.assertEqual(candidates, [])
+        row = scraper.collection_status_row(STORE, attempted=True, **evidence, result={
+            "ok": True, "collected_count": len(candidates), "error": "", "crawled_at": "",
+        })
+        self.assertEqual(row["observed_review_count"], 1)
+        self.assertEqual(row["collection_status"], "PARTIAL")
+        self.assertEqual(row["collected_count"], 0)
+
+    def test_legacy_execution_success_with_no_reviews_observed_is_not_verified(self):
+        row = scraper.collection_status_row(STORE, attempted=True, result={
+            "ok": True, "collected_count": 0, "error": "", "crawled_at": "",
+        })
+        self.assertTrue(row["ok"])
+        self.assertEqual(row["collection_status"], "FAILED")
+        self.assertEqual(row["collection_reason"], "no_usable_reviews_observed")
+
+    def test_sort_gate_failure_preserves_its_reason(self):
+        row = scraper.collection_status_row(STORE, attempted=True, result={
+            "ok": False, "collected_count": 0, "error": "sort failed", "crawled_at": "",
+            "collection_issue": "newest_verification_failed",
+        })
+        self.assertEqual(row["collection_status"], "FAILED")
+        self.assertEqual(row["collection_reason"], "newest_verification_failed")
+
+    def test_interrupted_attempt_retains_observations_and_later_stores_stay_unattempted(self):
+        first = scraper.collection_status_row(STORE)
+        later = scraper.collection_status_row({**STORE, "store_name": "Later store"})
+
+        def fail_after_observing(*args, collection_evidence):
+            collection_evidence["observed_review_count"] = 2
+            raise RuntimeError("mock browser failed")
+
+        with patch.object(scraper, "scrape_store", side_effect=fail_after_observing):
+            with self.assertRaisesRegex(RuntimeError, "mock browser failed"):
+                scraper.scrape_store_with_reporting(Mock(), STORE, [], first)
+        self.assertEqual(first["collection_status"], "PARTIAL")
+        self.assertEqual(first["collection_reason"], "attempt_interrupted")
+        self.assertFalse(first["ok"])
+        self.assertEqual(later["collection_status"], "NOT_CHECKED")
+        self.assertIsNone(later["ok"])
+
+    def test_crawl_run_metadata_retains_plan_and_excludes_unattempted_from_legacy_failures(self):
+        planned = scraper.collection_status_row(STORE)
+        blocked = scraper.collection_status_row({**STORE, "store_name": "Blocked"}, attempted=True)
+        with patch.object(scraper, "supabase_request", return_value=[{"id": 123}]) as request, patch("builtins.print"):
+            self.assertEqual(scraper.create_crawl_run(2), 123)
+            self.assertEqual(request.call_args.kwargs["body"]["stores"], [])
+            self.assertEqual(request.call_args.kwargs["body"]["total_stores"], 2)
+            scraper.finish_crawl_run(123, [planned, blocked], scraper.now_kst())
+        self.assertEqual(request.call_args.args, ("PATCH", "crawl_runs"))
+        payload = request.call_args.kwargs["body"]
+        self.assertEqual(payload["total_stores"], 2)
+        self.assertEqual(payload["failed_count"], 1)
+        self.assertEqual(payload["failed_stores"], [blocked])
+        self.assertEqual(payload["stores"][0]["collection_status"], "NOT_CHECKED")
+
+    def test_execution_summary_does_not_promote_partial_to_verified(self):
+        row = scraper.collection_status_row(STORE, attempted=True, observed_review_count=5)
+        with patch.dict(scraper.os.environ, {"GITHUB_STEP_SUMMARY": ""}), patch("builtins.print") as log:
+            scraper.report_collection_status([row], "COMPLETED")
+        record = next(call.args[0] for call in log.call_args_list if call.args[0].startswith("COLLECTION_STATUS "))
+        data = json.loads(record.removeprefix("COLLECTION_STATUS "))
+        self.assertEqual(data["execution"], "COMPLETED")
+        self.assertEqual(data["counts"], {"VERIFIED": 0, "PARTIAL": 1, "FAILED": 0, "NOT_CHECKED": 0})
+
+
+class ReviewPersistenceRegressionTests(unittest.TestCase):
+    def test_both_review_writers_send_conflict_ignore_for_duplicate_keys(self):
+        # Two candidates can share a key, or the key can already exist on the server.
+        rows = [{"review_key": "shared", "rating": 5}, {"review_key": "shared", "rating": 3}]
+        for module, writer in ((scraper, scraper.upsert_review_batch), (seed, seed.upload_reviews)):
+            with self.subTest(writer=writer.__name__), patch.multiple(
+                module, SUPABASE_URL="https://example.invalid", SUPABASE_SERVICE_ROLE_KEY="test-only"
+            ), patch.object(module, "urlopen") as open_url, patch("builtins.print"):
+                open_url.return_value.__enter__.return_value.read.return_value = b""
+                writer(rows)
+                open_url.assert_called_once()
+                request = open_url.call_args.args[0]
+                self.assertEqual(request.get_method(), "POST")
+                self.assertTrue(request.full_url.endswith("/reviews?on_conflict=review_key"))
+                self.assertEqual(request.get_header("Prefer"), "resolution=ignore-duplicates,return=minimal")
+                self.assertEqual(json.loads(request.data), rows)
+
+    def test_review_updates_deletes_and_merge_upserts_are_blocked_before_network(self):
+        for module in (scraper, seed):
+            with self.subTest(module=module.__name__), patch.object(module, "urlopen") as open_url:
+                for method in ("PATCH", "DELETE", "PUT", "POST"):
+                    with self.subTest(method=method), self.assertRaisesRegex(ValueError, "신규 삽입만"):
+                        module.supabase_request(
+                            method, "reviews", query={"on_conflict": "review_key"},
+                            prefer="resolution=merge-duplicates,return=minimal",
+                        )
+                open_url.assert_not_called()
+
+    def test_partial_run_can_submit_new_rows_without_touching_saved_reviews(self):
+        existing = review("already saved", id="saved", rating=5)
+        found = review("new review from the store that could be scanned")
+        with (
+            patch.object(scraper, "load_store_id_map", return_value={STORE["store_name"].casefold(): "store"}),
+            patch.object(scraper, "supabase_request") as request,
+            patch("builtins.print"),
+        ):
+            # A failed store contributes no candidates. A repeat in another store's results is skipped.
+            scraper.save_reviews([dict(existing, rating=1), found], 42, [existing])
+        request.assert_called_once()
+        self.assertEqual(request.call_args.args, ("POST", "reviews"))
+        rows = request.call_args.kwargs["body"]
+        self.assertEqual([row["review_key"] for row in rows], [scraper.canonical_review_hash(found)])
+        self.assertEqual(rows[0]["first_seen_run_id"], 42)
+        self.assertEqual(existing["rating"], 5)
+
+    def test_interrupted_review_batch_stops_without_retries_or_rollback(self):
+        rows = [{"review_key": key} for key in ("first", "second", "third")]
+        interruption = TimeoutError("response lost")
+        with patch.object(scraper, "supabase_request", side_effect=[None, interruption]) as request:
+            with self.assertRaisesRegex(RuntimeError, "배치 2.*후보 1건") as failure:
+                scraper.upsert_review_batch(rows, batch_size=1)
+        self.assertIs(failure.exception.__cause__, interruption)
+        self.assertEqual(request.call_args_list, [
+            call("POST", "reviews", query={"on_conflict": "review_key"}, body=rows[:1],
+                 prefer=scraper.REVIEW_INSERT_PREFERENCE),
+            call("POST", "reviews", query={"on_conflict": "review_key"}, body=rows[1:2],
+                 prefer=scraper.REVIEW_INSERT_PREFERENCE),
+        ])
+
+    def test_repair_only_reads_and_reports_duplicate_candidates_without_mutating_rows(self):
+        current = review("same text", id="a", store_name="Paik's Noodle Sila")
+        current["review_key"] = scraper.canonical_review_hash(current)
+        legacy = dict(current, id="b", store_name="Paiks Noodle Mongolia", review_key="legacy")
+        ungrouped = review("missing store", id="c", store_name="")
+        rows = [current, legacy, ungrouped]
+        before = [dict(row) for row in rows]
+        with (
+            patch.object(scraper, "supabase_request", return_value=rows) as request,
+            patch.object(scraper, "sync_playwright") as browser,
+            patch("builtins.print") as log,
+        ):
+            scraper.run_repair_only()
+        request.assert_called_once()
+        self.assertEqual(request.call_args.args, ("GET", "reviews"))
+        browser.assert_not_called()
+        self.assertEqual(rows, before)
+        record = next(args.args[0] for args in log.call_args_list if args.args[0].startswith("REVIEW_INTEGRITY_AUDIT "))
+        self.assertEqual(json.loads(record.removeprefix("REVIEW_INTEGRITY_AUDIT ")), {
+            "review_rows": 3, "possible_duplicate_groups": 1, "noncanonical_keys": 1, "missing_store_names": 1,
+        })
+
+    def test_repair_read_failure_propagates_without_fallback_writes(self):
+        with (
+            patch.object(scraper, "supabase_request", side_effect=RuntimeError("read interrupted")) as request,
+            patch("builtins.print"),
+            self.assertRaisesRegex(RuntimeError, "read interrupted"),
+        ):
+            scraper.run_repair_only()
+        request.assert_called_once()
+        self.assertEqual(request.call_args.args, ("GET", "reviews"))
+
+    def test_seed_stops_if_schema_cache_does_not_expose_review_key(self):
+        rows = [{"review_key": "key", "rating": 4}]
+        error = RuntimeError("Could not find the 'review_key' column of 'reviews' in the schema cache")
+        with patch.object(seed, "supabase_request", side_effect=error) as request, self.assertRaises(RuntimeError) as failure:
+            seed.upload_reviews(rows)
+        request.assert_called_once()
+        self.assertEqual(request.call_args.kwargs["body"], rows)
+        self.assertIs(failure.exception, error)
 
 
 if __name__ == "__main__":

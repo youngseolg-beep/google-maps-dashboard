@@ -13,6 +13,7 @@ from playwright.sync_api import sync_playwright
 
 SUPABASE_URL = os.environ.get("SUPABASE_URL", "").rstrip("/")
 SUPABASE_SERVICE_ROLE_KEY = os.environ.get("SUPABASE_SERVICE_ROLE_KEY", "")
+REVIEW_INSERT_PREFERENCE = "resolution=ignore-duplicates,return=minimal"
 STATUS_ONLY = os.environ.get("STATUS_ONLY", "").strip().lower() in {"1", "true", "yes", "on"}
 REPAIR_ONLY = os.environ.get("REPAIR_ONLY", "").strip().lower() in {"1", "true", "yes", "on"}
 TARGET_STORE = os.environ.get("TARGET_STORE", "").strip()
@@ -1044,6 +1045,13 @@ def require_supabase_config():
 
 
 def supabase_request(method, table, *, query=None, body=None, prefer=None):
+    if table == "reviews" and method != "GET":
+        if (
+            method != "POST"
+            or query != {"on_conflict": "review_key"}
+            or prefer != REVIEW_INSERT_PREFERENCE
+        ):
+            raise ValueError("reviews 쓰기는 review_key 충돌을 건너뛰는 신규 삽입만 허용합니다.")
     require_supabase_config()
 
     url = f"{SUPABASE_URL}/rest/v1/{table}"
@@ -1283,66 +1291,6 @@ def canonical_review_hash(review):
     return hashlib.sha256(make_review_key(review).encode("utf-8")).hexdigest()
 
 
-def delete_review_ids(review_ids, batch_size=200):
-    for start in range(0, len(review_ids), batch_size):
-        batch = review_ids[start:start + batch_size]
-        if not batch:
-            continue
-        supabase_request(
-            "DELETE",
-            "reviews",
-            query={"id": f"in.({','.join(batch)})"},
-            prefer="return=minimal",
-        )
-
-
-def patch_review_by_id(review_id, body):
-    supabase_request(
-        "PATCH",
-        "reviews",
-        query={"id": f"eq.{review_id}"},
-        body=body,
-        prefer="return=minimal",
-    )
-
-
-def reconcile_existing_reviews(existing_reviews):
-    """Physically dedupe Supabase and restore canonical review_key values."""
-    groups = {}
-    for review in existing_reviews:
-        key = make_review_key(review)
-        if key:
-            groups.setdefault(key, []).append(review)
-
-    canonical_reviews = []
-    duplicate_ids = []
-    rekey_count = 0
-
-    for key, group in groups.items():
-        canonical_hash = hashlib.sha256(key.encode("utf-8")).hexdigest()
-        keeper = next((r for r in group if r.get("review_key") == canonical_hash), group[0])
-        canonical_reviews.append(keeper)
-
-        for row in group:
-            if row is not keeper and row.get("id"):
-                duplicate_ids.append(str(row["id"]))
-
-        if keeper.get("id") and keeper.get("review_key") != canonical_hash:
-            patch_review_by_id(str(keeper["id"]), {"review_key": canonical_hash})
-            keeper["review_key"] = canonical_hash
-            rekey_count += 1
-
-    if duplicate_ids:
-        delete_review_ids(duplicate_ids)
-
-    print("🧹 Supabase 기존 리뷰 정합성 정리 완료")
-    print(f"   - 정리 전: {len(existing_reviews)}건")
-    print(f"   - 실제 중복 삭제: {len(duplicate_ids)}건")
-    print(f"   - canonical review_key 복구: {rekey_count}건")
-    print(f"   - 정리 후: {len(canonical_reviews)}건")
-    return canonical_reviews
-
-
 def normalized_review_text_for_match(value):
     """Compare Maps' collapsed and expanded text without changing review keys."""
     text = normalize_spaces(value).casefold()
@@ -1479,7 +1427,7 @@ def feed_grew(previous_card_count, card_count, previous_processed_count, process
     return card_count > previous_card_count or processed_count > previous_processed_count
 
 
-def extract_reviews(page, store, existing_reviews=None, newest_verified=False):
+def extract_reviews(page, store, existing_reviews=None, newest_verified=False, collection_evidence=None):
     collected = []
     processed_keys = set()
     feed_stalled_count = 0
@@ -1564,6 +1512,10 @@ def extract_reviews(page, store, existing_reviews=None, newest_verified=False):
 
                 processed_keys.add(key)
                 checked_count += 1
+                if collection_evidence is not None:
+                    collection_evidence["observed_review_count"] = max(
+                        collection_evidence.get("observed_review_count", 0), checked_count
+                    )
 
                 if recent_only_mode and find_existing_review_match(review, existing_reviews, existing_keys):
                     consecutive_existing_hits += 1
@@ -1620,7 +1572,7 @@ def extract_reviews(page, store, existing_reviews=None, newest_verified=False):
     return collected
 
 
-def scrape_store(page, store, existing_reviews=None):
+def scrape_store(page, store, existing_reviews=None, collection_evidence=None):
     print(f"\n==============================")
     print(f"🏪 매장 크롤링 시작: {store['store_name']}")
     print(f"👤 담당 SV: {store['sv']} / 국가: {store['country']}")
@@ -1676,13 +1628,14 @@ def scrape_store(page, store, existing_reviews=None):
                 store,
                 existing_store_reviews,
                 newest_verified=newest_verified,
+                collection_evidence=collection_evidence,
             )
 
             if reviews or existing_store_reviews:
                 if reviews:
-                    print(f"✅ 매장 수집 성공: {store['store_name']} / 신규 후보 {len(reviews)}건")
+                    print(f"✅ 매장 스캔 완료: {store['store_name']} / 신규 후보 {len(reviews)}건")
                 else:
-                    print(f"✅ 매장 확인 완료: {store['store_name']} / 신규 리뷰 없음")
+                    print(f"✅ 매장 스캔 완료: {store['store_name']} / 감지된 신규 후보 0건")
 
                 return {
                     "ok": True,
@@ -1706,13 +1659,14 @@ def scrape_store(page, store, existing_reviews=None):
             "country": store["country"],
             "collected_count": 0,
             "error": "Google Maps 최신순 정렬 검증 실패로 최근 리뷰 수집 중단",
+            "collection_issue": "newest_verification_failed",
             "crawled_at": now_kst().strftime("%Y-%m-%d %H:%M:%S"),
             "reviews": [],
         }
 
     # A real place page with no review DOM is a valid zero-review store, not a crawl failure.
     if valid_place_detected:
-        print(f"✅ 리뷰 0건 매장 확인: {store['store_name']} / 정상 성공 처리")
+        print(f"⚠️ 매장 페이지 확인: {store['store_name']} / 검증 가능한 리뷰 관측 없음")
         return {
             "ok": True,
             "store_name": store["store_name"],
@@ -1720,6 +1674,7 @@ def scrape_store(page, store, existing_reviews=None):
             "country": store["country"],
             "collected_count": 0,
             "error": "",
+            "collection_issue": "no_usable_reviews_observed",
             "crawled_at": now_kst().strftime("%Y-%m-%d %H:%M:%S"),
             "reviews": [],
         }
@@ -1732,6 +1687,7 @@ def scrape_store(page, store, existing_reviews=None):
         "country": store["country"],
         "collected_count": 0,
         "error": "Google Maps 매장 상세 페이지 또는 리뷰 DOM 감지 실패",
+        "collection_issue": "place_or_review_dom_not_detected",
         "crawled_at": now_kst().strftime("%Y-%m-%d %H:%M:%S"),
         "reviews": [],
     }
@@ -1771,13 +1727,20 @@ def prepare_review_row(review, store_id_map, crawl_run_id):
 def upsert_review_batch(rows, batch_size=500):
     for start in range(0, len(rows), batch_size):
         batch = rows[start:start + batch_size]
-        supabase_request(
-            "POST",
-            "reviews",
-            query={"on_conflict": "review_key"},
-            body=batch,
-            prefer="resolution=merge-duplicates,return=minimal",
-        )
+        try:
+            supabase_request(
+                "POST",
+                "reviews",
+                query={"on_conflict": "review_key"},
+                body=batch,
+                prefer=REVIEW_INSERT_PREFERENCE,
+            )
+        except Exception as error:
+            # Each request commits separately. A lost response leaves that batch's outcome unknown.
+            raise RuntimeError(
+                f"reviews 배치 {start // batch_size + 1} 저장 응답 실패 "
+                f"(앞선 요청에서 응답을 받은 후보 {start}건). 후속 배치는 전송하지 않습니다."
+            ) from error
 
 
 def get_new_reviews_to_insert(existing_reviews, new_reviews):
@@ -1804,14 +1767,99 @@ def save_reviews(new_reviews, crawl_run_id, existing_reviews=None):
     if rows:
         upsert_review_batch(rows)
 
-    print("\n✨ Supabase 저장 완료")
+    print("\n✨ Supabase 리뷰 삽입 요청 완료")
     print(f"   - crawl_run_id: {crawl_run_id}")
     print(f"   - 기존 리뷰: {len(existing_reviews)}건")
     print(f"   - 이번 수집 후보: {len(new_reviews)}건")
     print(f"   - 수집 내 중복 제외: {len(new_reviews) - len(unique_new_reviews)}건")
     print(f"   - 기존 축약/전문 변형 제외: {max(0, expansion_variant_count)}건")
-    print(f"   - 신규 추가: {len(rows_to_insert)}건")
-    print(f"   - 최종 누적: {len(existing_reviews) + len(rows_to_insert)}건")
+    print(f"   - 삽입 요청 후보: {len(rows)}건 (키 충돌로 건너뛴 행 포함)")
+
+
+COLLECTION_STATUSES = ("VERIFIED", "PARTIAL", "FAILED", "NOT_CHECKED")
+
+
+def classify_collection_status(*, attempted, observed_review_count=0, independent_completeness_confirmed=False):
+    if not attempted:
+        return "NOT_CHECKED"
+    if independent_completeness_confirmed is True:
+        return "VERIFIED"
+    if observed_review_count > 0:
+        return "PARTIAL"
+    return "FAILED"
+
+
+def collection_status_row(store, *, attempted=False, observed_review_count=0, result=None,
+                          independent_completeness_confirmed=False):
+    # A successful scan, sort check, or zero candidate count cannot prove completeness.
+    # No current collection path has an independent completeness check.
+    status = classify_collection_status(
+        attempted=attempted,
+        observed_review_count=observed_review_count,
+        independent_completeness_confirmed=independent_completeness_confirmed,
+    )
+    if not attempted:
+        reason = "not_attempted"
+    elif status == "VERIFIED":
+        reason = "independent_completeness_confirmed"
+    elif result is None:
+        reason = "attempt_interrupted"
+    elif status == "PARTIAL":
+        reason = "completeness_unverified"
+    else:
+        reason = result.get("collection_issue") or "no_usable_reviews_observed"
+    return {
+        "store_name": store["store_name"],
+        "sv": store["sv"],
+        "country": store["country"],
+        "ok": result["ok"] if result is not None else (False if attempted else None),
+        "collected_count": result["collected_count"] if result is not None else 0,
+        "error": result["error"] if result is not None else ("매장 수집 실행 중단" if attempted else ""),
+        "crawled_at": result["crawled_at"] if result is not None else (
+            now_kst().strftime("%Y-%m-%d %H:%M:%S") if attempted else None
+        ),
+        "collection_status": status,
+        "collection_reason": reason,
+        "observed_review_count": observed_review_count,
+    }
+
+
+def collection_status_counts(store_rows):
+    counts = dict.fromkeys(COLLECTION_STATUSES, 0)
+    for row in store_rows:
+        counts[row["collection_status"]] += 1
+    return counts
+
+
+def scrape_store_with_reporting(page, store, existing_reviews, status_row):
+    evidence = {"observed_review_count": 0}
+    result = None
+    try:
+        result = scrape_store(page, store, existing_reviews, collection_evidence=evidence)
+        return result
+    finally:
+        status_row.update(collection_status_row(store, attempted=True, result=result, **evidence))
+
+
+def report_collection_status(store_rows, execution):
+    counts = collection_status_counts(store_rows)
+    summary = " · ".join(f"{status} {count}" for status, count in counts.items())
+    print(f"수집 완전성: {summary}")
+    print("COLLECTION_STATUS " + json.dumps({
+        "execution": execution,
+        "counts": counts,
+        "stores": [{key: row[key] for key in (
+            "store_name", "collection_status", "collection_reason", "observed_review_count", "collected_count",
+        )} for row in store_rows],
+    }, ensure_ascii=False))
+    summary_path = os.environ.get("GITHUB_STEP_SUMMARY")
+    if summary_path:
+        try:
+            with Path(summary_path).open("a", encoding="utf-8") as file:
+                file.write(f"## Review collection status\n\nExecution: **{execution}**\n\n{summary}\n\n"
+                           "PARTIAL means reviews were observed but completeness was not verified.\n")
+        except OSError as error:
+            print(f"⚠️ GitHub 실행 요약 기록 실패: {type(error).__name__}")
 
 
 def create_crawl_run(total_stores):
@@ -1823,6 +1871,7 @@ def create_crawl_run(total_stores):
         "success_count": 0,
         "failed_count": 0,
         "failed_stores": [],
+        # An unfinished row must not claim that stores were never attempted.
         "stores": [],
     }
 
@@ -1841,23 +1890,11 @@ def create_crawl_run(total_stores):
     return crawl_run_id
 
 
-def finish_crawl_run(crawl_run_id, results, started_at):
+def finish_crawl_run(crawl_run_id, store_rows, started_at):
     """Update the pre-created crawl run with final crawl results."""
     finished_at = now_kst()
-    store_rows = [
-        {
-            "store_name": r["store_name"],
-            "sv": r["sv"],
-            "country": r["country"],
-            "ok": r["ok"],
-            "collected_count": r["collected_count"],
-            "error": r["error"],
-            "crawled_at": r["crawled_at"],
-        }
-        for r in results
-    ]
-    failed_stores = [row for row in store_rows if not row["ok"]]
-    success_count = len(store_rows) - len(failed_stores)
+    failed_stores = [row for row in store_rows if row["ok"] is False]
+    success_count = sum(row["ok"] is True for row in store_rows)
 
     run_row = {
         "last_crawled_at": finished_at.strftime("%Y-%m-%d %H:%M:%S"),
@@ -1879,8 +1916,7 @@ def finish_crawl_run(crawl_run_id, results, started_at):
     elapsed_seconds = max(0, int((finished_at - started_at).total_seconds()))
     print("🧾 Supabase crawl_runs 업데이트 완료")
     print(f"   - id: {crawl_run_id}")
-    print(f"   - 성공: {success_count}/{len(store_rows)}")
-    print(f"   - 실패: {len(failed_stores)}건")
+    print(f"   - 기존 실행 결과(ok): 완료 {success_count} / 실패 {len(failed_stores)}")
     print(f"   - 실행 시간: {elapsed_seconds}초")
 
 def validate_store_configuration(stores, store_id_map):
@@ -1976,8 +2012,8 @@ def run_status_only():
         print(
             "✅ crawl_runs 조회 성공: "
             f"{latest_run.get('success_count', 0)}/"
-            f"{latest_run.get('total_stores', 0)} 성공 / "
-            f"실패 {latest_run.get('failed_count', 0)}건 / "
+            f"{latest_run.get('total_stores', 0)} 기존 실행 완료(ok) / "
+            f"실행 실패 {latest_run.get('failed_count', 0)}건 / "
             f"{latest_run.get('last_crawled_at', 'Unknown')}"
         )
     else:
@@ -1987,11 +2023,31 @@ def run_status_only():
 
 
 def run_repair_only():
-    print("🧹 REPAIR_ONLY 모드 시작")
+    print("🔍 REPAIR_ONLY 읽기 전용 점검 시작")
     existing_reviews = load_existing_reviews()
-    save_migrated_existing_reviews(existing_reviews)
-    canonical_reviews = reconcile_existing_reviews(existing_reviews)
-    print(f"✅ REPAIR_ONLY 완료: Supabase reviews {len(canonical_reviews)}건 / Google Maps 크롤링 없음")
+    groups = {}
+    noncanonical_keys = 0
+    missing_store = 0
+    for review in existing_reviews:
+        store_name = normalize_spaces(review.get("store_name", ""))
+        if not store_name:
+            missing_store += 1
+            continue
+        canonical_hash = canonical_review_hash({
+            **review, "store_name": STORE_NAME_MIGRATIONS.get(store_name, store_name),
+        })
+        groups[canonical_hash] = groups.get(canonical_hash, 0) + 1
+        if review.get("review_key") != canonical_hash:
+            noncanonical_keys += 1
+
+    summary = {
+        "review_rows": len(existing_reviews),
+        "possible_duplicate_groups": sum(count > 1 for count in groups.values()),
+        "noncanonical_keys": noncanonical_keys,
+        "missing_store_names": missing_store,
+    }
+    print("REVIEW_INTEGRITY_AUDIT " + json.dumps(summary))
+    print("✅ REPAIR_ONLY 완료: Supabase 변경 및 Google Maps 크롤링 없음")
 
 
 def select_target_stores(stores, target_store):
@@ -2034,71 +2090,70 @@ def scrape():
     validate_store_configuration(stores, store_id_map)
     existing_reviews = load_existing_reviews()
     save_migrated_existing_reviews(existing_reviews)
-    # Preserve existing production rows during scheduled crawls.  The explicit
-    # REPAIR_ONLY path remains the only path that can reconcile legacy rows.
-    crawl_run_id = create_crawl_run(len(stores))
+    store_rows = [collection_status_row(store) for store in stores]
+    crawl_run_id = None
+    crawl_run_finished = False
+    execution = "FAILED"
 
-    with sync_playwright() as p:
-        browser = p.chromium.launch(
-            headless=True,
-            args=[
-                "--disable-blink-features=AutomationControlled",
-                "--disable-dev-shm-usage",
-                "--no-sandbox",
-                "--disable-setuid-sandbox",
-                "--lang=en-US,en",
-            ],
-        )
+    try:
+        crawl_run_id = create_crawl_run(len(stores))
+        with sync_playwright() as p:
+            browser = p.chromium.launch(
+                headless=True,
+                args=[
+                    "--disable-blink-features=AutomationControlled",
+                    "--disable-dev-shm-usage",
+                    "--no-sandbox",
+                    "--disable-setuid-sandbox",
+                    "--lang=en-US,en",
+                ],
+            )
+            try:
+                context = browser.new_context(
+                    user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
+                    locale="en-US",
+                    timezone_id="Asia/Seoul",
+                    viewport={"width": 1440, "height": 1000},
+                )
+                context.add_init_script(
+                    """
+                    Object.defineProperty(navigator, 'webdriver', {
+                        get: () => undefined
+                    });
+                    """
+                )
+                page = context.new_page()
+                page.set_default_timeout(45000)
 
-        context = browser.new_context(
-            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
-            locale="en-US",
-            timezone_id="Asia/Seoul",
-            viewport={"width": 1440, "height": 1000},
-        )
+                for store, status_row in zip(stores, store_rows):
+                    result = scrape_store_with_reporting(page, store, existing_reviews, status_row)
+                    crawl_results.append(result)
+                    all_new_reviews.extend(result["reviews"])
+                    page.wait_for_timeout(3000)
 
-        context.add_init_script(
-            """
-            Object.defineProperty(navigator, 'webdriver', {
-                get: () => undefined
-            });
-            """
-        )
+                if all_new_reviews or existing_reviews:
+                    save_reviews(all_new_reviews, crawl_run_id, existing_reviews)
+                else:
+                    print("❌ 저장할 기존/신규 리뷰가 없습니다.")
 
-        page = context.new_page()
-        page.set_default_timeout(45000)
-        crawl_run_finished = False
+                finish_crawl_run(crawl_run_id, store_rows, started_at)
+                crawl_run_finished = True
 
-        try:
-            for store in stores:
-                result = scrape_store(page, store, existing_reviews)
-                crawl_results.append(result)
-                all_new_reviews.extend(result["reviews"])
-
-                page.wait_for_timeout(3000)
-
-            if all_new_reviews or existing_reviews:
-                save_reviews(all_new_reviews, crawl_run_id, existing_reviews)
-            else:
-                print("❌ 저장할 기존/신규 리뷰가 없습니다.")
-
-            finish_crawl_run(crawl_run_id, crawl_results, started_at)
-            crawl_run_finished = True
-
-            if all_crawl_results_failed(crawl_results):
-                raise RuntimeError("모든 대상 매장 수집이 실패했습니다. GitHub Actions를 실패로 처리합니다.")
-
-        except Exception as e:
-            print(f"🔥 치명적 오류: {e}")
-            if not crawl_run_finished:
-                try:
-                    finish_crawl_run(crawl_run_id, crawl_results, started_at)
-                except Exception as finish_error:
-                    print(f"⚠️ 실패 상태 crawl_runs 업데이트 실패: {finish_error}")
-            raise
-
-        finally:
-            browser.close()
+                if all_crawl_results_failed(crawl_results):
+                    raise RuntimeError("모든 대상 매장 수집이 실패했습니다. GitHub Actions를 실패로 처리합니다.")
+            finally:
+                browser.close()
+        execution = "COMPLETED"
+    except Exception as error:
+        print(f"🔥 치명적 오류: {error}")
+        if crawl_run_id is not None and not crawl_run_finished:
+            try:
+                finish_crawl_run(crawl_run_id, store_rows, started_at)
+            except Exception as finish_error:
+                print(f"⚠️ 실패 상태 crawl_runs 업데이트 실패: {finish_error}")
+        raise
+    finally:
+        report_collection_status(store_rows, execution)
 
 
 if __name__ == "__main__":

@@ -529,7 +529,7 @@
                 <div class="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm">
                     <div><p id="global-crawl-status" class="font-semibold text-[#278A62]">수집 상태 -</p></div>
                     <div class="hidden h-7 w-px bg-[#E7E4DF] sm:block"></div>
-                    <div class="text-[12px]"><span class="text-[#68717D]">최근 수집</span><span id="global-crawled-at" class="ml-1.5 font-medium text-[#1F2329]">-</span></div>
+                    <div class="text-[12px]"><span class="text-[#68717D]">최근 실행 기록</span><span id="global-crawled-at" class="ml-1.5 font-medium text-[#1F2329]">-</span></div>
                 </div>
                 <div class="flex items-center gap-2">
                     <div class="text-[12px]"><span class="text-[#68717D]">신규 리뷰</span><strong id="global-new-reviews" class="ml-1.5 text-[#1F2329]">0</strong></div>
@@ -992,6 +992,45 @@
             };
         }
 
+        const COLLECTION_STATUS_LABELS = Object.freeze({
+            VERIFIED: '완전성 검증',
+            PARTIAL: '일부 관측',
+            FAILED: '수집 실패',
+            NOT_CHECKED: '미시도'
+        });
+
+        function storeCollectionStatus(row) {
+            if (!row) return null;
+            if (Object.hasOwn(COLLECTION_STATUS_LABELS, row.collection_status)) return row.collection_status;
+            // Historical successful execution can mean that only the place page was seen.
+            if (Number(row.collected_count) > 0) return 'PARTIAL';
+            return row.ok === false ? 'FAILED' : null;
+        }
+
+        function summarizeCollectionRun(run) {
+            const counts = { VERIFIED: 0, PARTIAL: 0, FAILED: 0, NOT_CHECKED: 0 };
+            const failedNames = new Set();
+            const rows = run?.stores || [];
+            const recordedNames = new Set(rows.map(row => row.store_name));
+            let unrecorded = Math.max(0, Number(run?.total_stores || 0) - rows.length);
+            for (const row of rows) {
+                const status = storeCollectionStatus(row);
+                if (status) counts[status]++;
+                else unrecorded++;
+                if (status === 'FAILED' && row.store_name) failedNames.add(row.store_name);
+            }
+            for (const row of run?.failed_stores || []) {
+                // Legacy runs sometimes only persisted the separate failure list.
+                if (!row.store_name || recordedNames.has(row.store_name) || failedNames.has(row.store_name)) continue;
+                counts.FAILED++;
+                unrecorded = Math.max(0, unrecorded - 1);
+                failedNames.add(row.store_name);
+            }
+            const labels = Object.entries(counts).map(([status, count]) => `${COLLECTION_STATUS_LABELS[status]} ${count}`);
+            if (unrecorded) labels.push(`상태 미기록 ${unrecorded}`);
+            return { counts, unrecorded, failedNames: [...failedNames], label: run ? labels.join(' · ') : '수집 상태 없음' };
+        }
+
         async function loadLatestCrawlRunFromSupabase() {
             // first_seen_run_id is linked to crawl_runs.id, so the latest run must
             // be selected by the monotonically increasing bigint id first.
@@ -1088,11 +1127,8 @@
         function renderGlobalSummary() {
             document.getElementById('global-summary').classList.remove('hidden');
 
-            const crawledAt = crawlStatus?.last_crawled_at || getLatestCollectedAt(allReviews);
-            const totalStores = crawlStatus?.total_stores || '-';
-            const successCount = crawlStatus?.success_count ?? '-';
-            const failedCount = crawlStatus?.failed_count ?? 0;
-            const failedStores = crawlStatus?.failed_stores || [];
+            const crawledAt = crawlStatus?.last_crawled_at;
+            const collection = summarizeCollectionRun(crawlStatus);
 
             document.getElementById('global-crawled-at').innerText = crawledAt || '-';
 
@@ -1111,17 +1147,12 @@
             const failedEl = document.getElementById('global-failed-stores');
 
             if (crawlStatus) {
-                if (failedCount === 0) {
-                    statusEl.innerText = `수집 정상 ${successCount}/${totalStores}`;
-                    statusEl.className = 'mt-0.5 font-semibold text-[#278A62]';
-                    failedEl.classList.add('hidden');
-                    failedEl.innerText = '';
-                } else {
-                    statusEl.innerText = `수집 일부 실패 ${successCount}/${totalStores}`;
-                    statusEl.className = 'mt-0.5 font-semibold text-[#B83E3E]';
-                    failedEl.classList.remove('hidden');
-                    failedEl.innerText = `실패 매장: ${failedStores.map(s => s.store_name).join(', ')}`;
-                }
+                statusEl.innerText = collection.label;
+                statusEl.className = collection.counts.FAILED
+                    ? 'mt-0.5 font-semibold text-[#B83E3E]'
+                    : 'mt-0.5 font-semibold text-[#68717D]';
+                failedEl.classList.toggle('hidden', !collection.failedNames.length);
+                failedEl.innerText = collection.failedNames.length ? `실패 매장: ${collection.failedNames.join(', ')}` : '';
             } else {
                 statusEl.innerText = '수집 상태 없음';
                 statusEl.className = 'mt-0.5 font-semibold text-[#91631C]';
@@ -1155,18 +1186,13 @@
                 return;
             }
 
-            const crawledAt = crawlStatus?.last_crawled_at || getLatestCollectedAt(allReviews) || '-';
-            const totalStores = crawlStatus?.total_stores || '-';
-            const successCount = crawlStatus?.success_count ?? '-';
-            const failedCount = Number(crawlStatus?.failed_count || 0);
+            const crawledAt = crawlStatus?.last_crawled_at || '-';
+            const collection = summarizeCollectionRun(crawlStatus);
             const latestRunId = Number(crawlStatus?.id);
             const latestRunReviews = Number.isFinite(latestRunId)
                 ? allReviews.filter(review => Number(review.first_seen_run_id) === latestRunId)
                 : [];
             const latestRunLowReviews = latestRunReviews.filter(review => Number(review.rating || 0) <= 3);
-            const status = crawlStatus
-                ? (failedCount === 0 ? `수집 정상 ${successCount}/${totalStores}` : `수집 일부 실패 ${successCount}/${totalStores}`)
-                : '수집 상태 없음';
             const countries = currentSVStores.reduce((list, store) => list.add(store.country || 'Unknown'), new Set());
 
             target.innerHTML = `
@@ -1188,8 +1214,8 @@
                         <button type="button" class="${currentSV === '최성환' ? 'is-current' : ''}" onclick="selectMobileSV('최성환')">SV D<span>인도네시아 · 필리핀</span></button>
                     </div>
                     <div class="mobile-operation-divider"></div>
-                    <div class="mobile-operation-status ${failedCount ? 'is-problem' : ''}">${status}</div>
-                    <div class="mobile-operation-time">최근 수집 ${escapeHtml(crawledAt)}</div>
+                    <div class="mobile-operation-status ${collection.counts.FAILED ? 'is-problem' : ''}">${collection.label}</div>
+                    <div class="mobile-operation-time">최근 실행 기록 ${escapeHtml(crawledAt)}</div>
                     <div class="mobile-operation-metrics"><div>신규 리뷰<strong>${latestRunReviews.length}</strong></div><div>신규 저평점<strong>${latestRunLowReviews.length}</strong></div></div>
                 </div>
             `;
@@ -1482,6 +1508,20 @@
             return (crawlStatus?.stores || []).find(store => store.store_name === storeName) || null;
         }
 
+        function latestStoreCollectionLabel(storeName) {
+            if (!crawlStatus) return '';
+            const row = getLatestRunStoreResult(storeName);
+            const status = storeCollectionStatus(row);
+            if (status) return COLLECTION_STATUS_LABELS[status];
+            if (!row && crawlStatus.failed_stores?.some(store => store.store_name === storeName)) {
+                return COLLECTION_STATUS_LABELS.FAILED;
+            }
+            if (!row && crawlStatus.stores?.some(store => Object.hasOwn(COLLECTION_STATUS_LABELS, store.collection_status))) {
+                return COLLECTION_STATUS_LABELS.NOT_CHECKED;
+            }
+            return '상태 미기록';
+        }
+
         function renderCountryOptions() {
             const select = document.getElementById('country-select');
             const countrySource = getCurrentSVStoreSource();
@@ -1668,6 +1708,7 @@
                 const lowReviews = reviews.filter(review => Number(review.rating || 0) <= 3).length;
                 const latestRunResult = getLatestRunStoreResult(storeName);
                 const newReviews = Number(latestRunResult?.collected_count || 0);
+                const collectionLabel = latestStoreCollectionLabel(storeName);
                 const latestReview = getLatestReviewDate(reviews);
                 const isActive = currentStore === storeName;
                 const mobileExtraClass = index >= 4 && !isActive ? 'mobile-store-extra' : '';
@@ -1691,13 +1732,13 @@
                                         ${escapeHtml(storeName)}
                                     </div>
                                     <div class="mt-1 text-[10px] text-[#68717D]">
-                                        리뷰 ${totalReviews}건 · 최신 ${escapeHtml(latestReview)}
+                                        리뷰 ${totalReviews}건 · 최신 ${escapeHtml(latestReview)}${collectionLabel ? ` · ${collectionLabel}` : ''}
                                     </div>
                                 </div>
 
                                 <div class="flex flex-wrap justify-end gap-1 shrink-0">
                                     ${newReviews > 0
-                                        ? `<span class="rounded bg-[#EAF2FE] px-1.5 py-0.5 text-[10px] font-semibold text-[#3269B6]">NEW ${newReviews}</span>`
+                                        ? `<span class="rounded bg-[#EAF2FE] px-1.5 py-0.5 text-[10px] font-semibold text-[#3269B6]">후보 ${newReviews}</span>`
                                         : ''
                                     }
                                     ${statusBadge}
@@ -1761,7 +1802,8 @@
                 const reviews = reviewData.filter(review => (review.store_name || 'Unknown Store') === storeName);
                 const lowCount = reviews.filter(review => Number(review.rating || 0) <= 3).length;
                 const newCount = Number(getLatestRunStoreResult(storeName)?.collected_count || 0);
-                const signals = [newCount ? `NEW ${newCount}` : '', lowCount ? `LOW ${lowCount}` : ''].filter(Boolean).join(' · ');
+                const signals = [latestStoreCollectionLabel(storeName), newCount ? `후보 ${newCount}` : '',
+                    lowCount ? `LOW ${lowCount}` : ''].filter(Boolean).join(' · ');
                 return `<option value="${escapeHtml(storeName)}">${escapeHtml(storeName)}${signals ? ` — ${signals}` : ''}</option>`;
             }).join('');
 
@@ -1775,7 +1817,7 @@
                 context = `
                     <div class="mobile-selected-store-context">
                         <strong>${escapeHtml(currentStore)}</strong>
-                        <span>리뷰 ${selectedReviews.length} · 신규 ${newCount} · 저평점 ${lowCount}</span>
+                        <span>리뷰 ${selectedReviews.length} · 신규 후보 ${newCount} · 저평점 ${lowCount}</span>
                         <span>최근 리뷰 ${escapeHtml(getLatestReviewDate(selectedReviews))}</span>
                         ${mapsUrl ? `<a href="${mapsUrl}" target="_blank" rel="noopener noreferrer">Google Maps ↗</a>` : ''}
                     </div>
@@ -2015,11 +2057,6 @@
             if (text.includes('year') || text.includes('jaar') || text.includes('년')) return num * 365;
 
             return 999999;
-        }
-
-        function getLatestCollectedAt(data) {
-            const values = data.map(r => r.collected_at).filter(Boolean).sort().reverse();
-            return values[0] || '-';
         }
 
         function parseCollectedDate(value) {
