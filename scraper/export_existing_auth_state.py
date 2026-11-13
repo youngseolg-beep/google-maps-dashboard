@@ -6,7 +6,7 @@ import base64
 import json
 import os
 from pathlib import Path
-from playwright.sync_api import sync_playwright
+from playwright.sync_api import sync_playwright, Error as PlaywrightError
 
 PROFILE = Path(os.environ["LOCALAPPDATA"]) / "SVReviewMaster" / "GoogleMapsSortProfile"
 OUTPUT = Path.home() / "google-maps-auth-state.b64"
@@ -25,10 +25,15 @@ def main():
             page.goto("https://www.google.com/maps", wait_until="domcontentloaded", timeout=60000)
             print("Check the opened Google Maps window: is the dedicated account signed in?")
             answer = input("Type YES only if the account is visibly signed in: ").strip()
-            if answer != "YES":
+            if answer.upper() != "YES":
                 print("NOT_EXPORTED: login not confirmed")
                 return
-            state = context.storage_state()
+            if not context.browser or not context.browser.is_connected():
+                raise SystemExit("BROWSER_DISCONNECTED: browser exited before state export; keep the opened window running")
+            try:
+                state = context.storage_state()
+            except PlaywrightError as exc:
+                raise SystemExit("EXPORT_FAILED: browser connection closed during export. Close other windows using this dedicated profile, then retry once.") from exc
             if not state.get("cookies"):
                 raise SystemExit("NOT_EXPORTED: no cookies in browser state")
             encoded = base64.b64encode(json.dumps(state, ensure_ascii=False).encode()).decode()
@@ -41,7 +46,10 @@ def main():
             print("SENSITIVE: do not paste, upload, or commit this file.")
             print("Cloud authentication is NOT yet verified.")
         finally:
-            context.close()
+            try:
+                context.close()
+            except PlaywrightError:
+                pass
 
 if __name__ == "__main__":
     main()
