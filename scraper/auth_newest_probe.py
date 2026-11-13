@@ -3,6 +3,7 @@ import base64
 import json
 import os
 from playwright.sync_api import sync_playwright
+from scraper import open_reviews_panel, has_review_dom, is_valid_google_maps_place_page
 
 URL = "https://www.google.com/maps/place/Saemaeul+(새마을식당)+-+Central+Eastville/@13.8036867,100.6145723,17z/data=!4m8!3m7!1s0x30e29df2eeea54a1:0x484a32408c147d14!8m2!3d13.8036867!4d100.6145723!9m1!1b1!16s%2Fg%2F11s674rmb9?entry=ttu"
 
@@ -26,13 +27,14 @@ def main():
             page.wait_for_timeout(5000)
             if page.get_by_role("button", name="Accept all").count():
                 page.get_by_role("button", name="Accept all").first.click(timeout=3000)
-            tabs = page.get_by_role("tab", name="Reviews")
-            if tabs.count():
-                tabs.first.click(timeout=10000)
-            else:
-                raise RuntimeError("REVIEWS_TAB_NOT_FOUND")
+            print("PAGE_DIAG: url_is_maps_place=" + str("/maps/place/" in page.url))
+            print("PAGE_DIAG: place_detail_detected=" + str(is_valid_google_maps_place_page(page)))
+            print("PAGE_DIAG: review_dom_initial=" + str(has_review_dom(page)))
+            if not open_reviews_panel(page):
+                raise RuntimeError("REVIEWS_PANEL_NOT_OPENED: check page-detail or consent/interstitial; auth remains unverified")
             page.wait_for_timeout(3000)
-            sort = page.get_by_role("button", name="Sort", exact=False)
+            import re
+            sort = page.get_by_role("button", name=re.compile(r"Sort|정렬|Sorteer|Sorteren|Urutkan", re.I))
             if not sort.count():
                 raise RuntimeError("SORT_BUTTON_NOT_FOUND")
             sort.first.click(timeout=10000)
@@ -45,7 +47,7 @@ def main():
                 raise RuntimeError("NEWEST_OPTION_NOT_AVAILABLE: session may not be authenticated")
             newest.first.click(timeout=10000)
             page.wait_for_timeout(3000)
-            print("NEWEST_CLICKED: auth restored sufficiently to access the newest option")
+            print("NEWEST_CLICKED: newest option selected; login identity still not independently verified")
             print("NOTE: actual chronological ordering and session persistence across runs remain unverified")
         finally:
             browser.close()
