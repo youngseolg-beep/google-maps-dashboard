@@ -3,9 +3,29 @@ import base64
 import json
 import os
 from playwright.sync_api import sync_playwright
+import re
 from scraper import open_reviews_panel, has_review_dom, is_valid_google_maps_place_page
 
 URL = "https://www.google.com/maps/place/Saemaeul+(새마을식당)+-+Central+Eastville/@13.8036867,100.6145723,17z/data=!4m8!3m7!1s0x30e29df2eeea54a1:0x484a32408c147d14!8m2!3d13.8036867!4d100.6145723!9m1!1b1!16s%2Fg%2F11s674rmb9?entry=ttu"
+
+def safe_panel_diagnostics(page):
+    """Only booleans/counts: no cookies, page text, URLs or screenshots."""
+    selectors = {
+        "review_feed": "div[role=feed]",
+        "review_cards": ".jftiEf",
+        "review_articles": "div[role=article]",
+        "review_text": ".wiI7pd",
+        "review_sort_buttons": "button[aria-label*=Sort], button[aria-label*=sort], button[aria-label*=정렬]",
+        "review_tab": "[role=tab][aria-selected=true]",
+    }
+    for label, selector in selectors.items():
+        try:
+            print(f"PANEL_DIAG: {label}={min(page.locator(selector).count(), 100)}")
+        except Exception:
+            print(f"PANEL_DIAG: {label}=ERROR")
+    print("PANEL_DIAG: place_detail=" + str(is_valid_google_maps_place_page(page)))
+    print("PANEL_DIAG: google_consent=" + str("consent.google" in page.url))
+    print("PANEL_DIAG: account_signin=" + str("accounts.google" in page.url))
 
 def main():
     encoded = os.environ.get("GOOGLE_MAPS_STORAGE_STATE_B64", "")
@@ -30,10 +50,13 @@ def main():
             print("PAGE_DIAG: url_is_maps_place=" + str("/maps/place/" in page.url))
             print("PAGE_DIAG: place_detail_detected=" + str(is_valid_google_maps_place_page(page)))
             print("PAGE_DIAG: review_dom_initial=" + str(has_review_dom(page)))
-            if not open_reviews_panel(page):
-                raise RuntimeError("REVIEWS_PANEL_NOT_OPENED: check page-detail or consent/interstitial; auth remains unverified")
+            panel_opened = open_reviews_panel(page)
+            if not panel_opened:
+                page.wait_for_timeout(8000)
+                safe_panel_diagnostics(page)
+                if not has_review_dom(page):
+                    raise RuntimeError("REVIEWS_PANEL_NOT_OPENED: review DOM absent after extra wait; auth remains unverified")
             page.wait_for_timeout(3000)
-            import re
             sort = page.get_by_role("button", name=re.compile(r"Sort|정렬|Sorteer|Sorteren|Urutkan", re.I))
             if not sort.count():
                 raise RuntimeError("SORT_BUTTON_NOT_FOUND")
