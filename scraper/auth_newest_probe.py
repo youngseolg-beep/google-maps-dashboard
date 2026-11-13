@@ -27,6 +27,26 @@ def safe_panel_diagnostics(page):
     print("PANEL_DIAG: google_consent=" + str("consent.google" in page.url))
     print("PANEL_DIAG: account_signin=" + str("accounts.google" in page.url))
 
+def panel_state(page, stage):
+    """Non-sensitive counts before/after reviews click."""
+    checks = {
+        "reviews_tab": page.get_by_role("tab", name=re.compile(r"Reviews|리뷰|Recensies|Beoordelingen|Ulasan", re.I)),
+        "reviews_button": page.get_by_role("button", name=re.compile(r"Reviews|리뷰|Recensies|Beoordelingen|Ulasan", re.I)),
+        "review_feed": page.locator("div[role=feed]"),
+        "review_cards": page.locator(".jftiEf"),
+        "sort_button": page.get_by_role("button", name=re.compile(r"Sort|정렬|Sorteer|Sorteren|Urutkan", re.I)),
+    }
+    result = {}
+    for name, loc in checks.items():
+        try:
+            result[name] = min(loc.count(), 100)
+        except Exception:
+            result[name] = -1
+    result["maps_place_url"] = "/maps/place/" in page.url
+    result["maps_reviews_url"] = "/reviews/" in page.url
+    result["selected_tab_count"] = min(page.locator("[role=tab][aria-selected=true]").count(), 100)
+    print("PANEL_STATE_" + stage + ": " + json.dumps(result, sort_keys=True))
+
 def main():
     encoded = os.environ.get("GOOGLE_MAPS_STORAGE_STATE_B64", "")
     if not encoded:
@@ -78,9 +98,12 @@ def main():
             print("PAGE_DIAG: url_is_maps_place=" + str("/maps/place/" in page.url))
             print("PAGE_DIAG: place_detail_detected=" + str(is_valid_google_maps_place_page(page)))
             print("PAGE_DIAG: review_dom_initial=" + str(has_review_dom(page)))
+            panel_state(page, "BEFORE")
             panel_opened = open_reviews_panel(page)
+            panel_state(page, "AFTER")
             if not panel_opened:
                 page.wait_for_timeout(8000)
+                panel_state(page, "AFTER_WAIT")
                 safe_panel_diagnostics(page)
                 print("NETWORK_DIAG: " + json.dumps({**response_counts, **request_failures}, sort_keys=True))
                 print("NETWORK_FAILURE_TYPES: " + json.dumps(failure_types, sort_keys=True))
