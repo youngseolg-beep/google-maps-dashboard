@@ -43,6 +43,19 @@ def main():
         try:
             context = browser.new_context(storage_state=state, locale="en-US", viewport={"width": 1440, "height": 1000})
             page = context.new_page()
+            response_counts = {"maps_2xx": 0, "maps_3xx": 0, "maps_4xx": 0, "maps_5xx": 0, "maps_other": 0}
+            request_failures = {"maps_failed": 0}
+            def record_response(response):
+                if "google.com/maps" not in response.url and "google.com/$rpc" not in response.url:
+                    return
+                status = response.status
+                key = "maps_2xx" if 200 <= status < 300 else "maps_3xx" if 300 <= status < 400 else "maps_4xx" if 400 <= status < 500 else "maps_5xx" if 500 <= status < 600 else "maps_other"
+                response_counts[key] += 1
+            def record_failed(request):
+                if "google.com/maps" in request.url or "google.com/$rpc" in request.url:
+                    request_failures["maps_failed"] += 1
+            page.on("response", record_response)
+            page.on("requestfailed", record_failed)
             page.goto(URL, wait_until="domcontentloaded", timeout=60000)
             page.wait_for_timeout(5000)
             if page.get_by_role("button", name="Accept all").count():
@@ -54,6 +67,8 @@ def main():
             if not panel_opened:
                 page.wait_for_timeout(8000)
                 safe_panel_diagnostics(page)
+                print("NETWORK_DIAG: " + json.dumps({**response_counts, **request_failures}, sort_keys=True))
+                print("PAGE_DIAG: maps_page_title_present=" + str(bool(page.title().strip())))
                 if not has_review_dom(page):
                     raise RuntimeError("REVIEWS_PANEL_NOT_OPENED: review DOM absent after extra wait; auth remains unverified")
             page.wait_for_timeout(3000)
