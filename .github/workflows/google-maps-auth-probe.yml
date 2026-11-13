@@ -1,0 +1,25 @@
+name: google-maps-auth-probe
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  auth-probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install Playwright
+        run: |
+          pip install playwright
+          python -m playwright install --with-deps chromium
+      - name: Verify Google auth and Newest option (no database writes)
+        env:
+          GOOGLE_MAPS_STORAGE_STATE_B64: ${{ secrets.GOOGLE_MAPS_STORAGE_STATE_B64 }}
+        run: python scraper/auth_newest_probe.py
