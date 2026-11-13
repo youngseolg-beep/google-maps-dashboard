@@ -45,6 +45,7 @@ def main():
             page = context.new_page()
             response_counts = {"maps_2xx": 0, "maps_3xx": 0, "maps_4xx": 0, "maps_5xx": 0, "maps_other": 0}
             request_failures = {"maps_failed": 0}
+            failure_types = {}
             def record_response(response):
                 if "google.com/maps" not in response.url and "google.com/$rpc" not in response.url:
                     return
@@ -54,6 +55,20 @@ def main():
             def record_failed(request):
                 if "google.com/maps" in request.url or "google.com/$rpc" in request.url:
                     request_failures["maps_failed"] += 1
+                    failure = request.failure or "UNKNOWN"
+                    if "ERR_ABORTED" in failure:
+                        kind = "ERR_ABORTED"
+                    elif "ERR_TIMED_OUT" in failure:
+                        kind = "ERR_TIMED_OUT"
+                    elif "ERR_CONNECTION" in failure:
+                        kind = "ERR_CONNECTION"
+                    elif "ERR_FAILED" in failure:
+                        kind = "ERR_FAILED"
+                    elif "ERR_NAME_NOT_RESOLVED" in failure:
+                        kind = "ERR_NAME_NOT_RESOLVED"
+                    else:
+                        kind = "OTHER"
+                    failure_types[kind] = failure_types.get(kind, 0) + 1
             page.on("response", record_response)
             page.on("requestfailed", record_failed)
             page.goto(URL, wait_until="domcontentloaded", timeout=60000)
@@ -68,6 +83,7 @@ def main():
                 page.wait_for_timeout(8000)
                 safe_panel_diagnostics(page)
                 print("NETWORK_DIAG: " + json.dumps({**response_counts, **request_failures}, sort_keys=True))
+                print("NETWORK_FAILURE_TYPES: " + json.dumps(failure_types, sort_keys=True))
                 print("PAGE_DIAG: maps_page_title_present=" + str(bool(page.title().strip())))
                 if not has_review_dom(page):
                     raise RuntimeError("REVIEWS_PANEL_NOT_OPENED: review DOM absent after extra wait; auth remains unverified")
