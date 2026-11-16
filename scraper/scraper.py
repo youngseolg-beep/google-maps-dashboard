@@ -1530,6 +1530,7 @@ def extract_reviews(page, store, existing_reviews=None, newest_verified=False, c
     collected = []
     processed_keys = set()
     feed_stalled_count = 0
+    feed_stalled = False
     last_card_count = 0
     last_processed_count = 0
     checked_count = 0
@@ -1689,6 +1690,7 @@ def extract_reviews(page, store, existing_reviews=None, newest_verified=False, c
         last_processed_count = len(processed_keys)
 
         if feed_stalled_count >= STOP_STALLED_ROUNDS and checked_count > 0:
+            feed_stalled = True
             diagnose_review_access(page)
             if collection_evidence is not None:
                 collection_evidence["feed_stalled"] = True
@@ -1703,6 +1705,9 @@ def extract_reviews(page, store, existing_reviews=None, newest_verified=False, c
 
         scroll_reviews(page)
 
+    if collection_evidence is not None:
+        collection_evidence["feed_stalled"] = feed_stalled
+        collection_evidence["full_coverage_verified"] = False
     return collected
 
 
@@ -1749,12 +1754,13 @@ def scrape_store(page, store, existing_reviews=None, collection_evidence=None):
             if not newest_verified:
                 print("⚠️ 최신순 정렬 미확인: 기존 리뷰와 중복 비교하며 표시된 리뷰 탐색을 계속합니다.")
 
+            scan_evidence = collection_evidence if collection_evidence is not None else {}
             reviews = extract_reviews(
                 page,
                 store,
                 existing_store_reviews,
                 newest_verified=newest_verified,
-                collection_evidence=collection_evidence,
+                collection_evidence=scan_evidence,
             )
 
             if reviews or existing_store_reviews:
@@ -1774,7 +1780,7 @@ def scrape_store(page, store, existing_reviews=None, collection_evidence=None):
                     "reviews": reviews,
                     "collection_issue": (
                         "review_feed_stalled_partial"
-                        if collection_evidence is not None and collection_evidence.get("feed_stalled")
+                        if scan_evidence.get("feed_stalled")
                         else ("newest_sort_unverified_partial" if not newest_verified else None)
                     ),
                 }
