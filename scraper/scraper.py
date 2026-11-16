@@ -1770,7 +1770,7 @@ def scrape_store(page, store, existing_reviews=None, collection_evidence=None):
                         if scan_evidence.get("scroll_target_missing")
                         else ("review_feed_stalled_partial"
                               if scan_evidence.get("feed_stalled")
-                              else ("newest_sort_unverified_partial" if not newest_verified else None))
+                              else "completeness_unverified"))
                     ),
                 }
 
