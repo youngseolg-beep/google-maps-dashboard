@@ -1023,24 +1023,42 @@ def get_scroll_target(page):
 
 
 def diagnose_review_access(page):
-    """Read-only indicators for Google Maps review access restrictions."""
+    """Read-only signals: distinguish ordinary sign-in links from blocking dialogs."""
     try:
         signals = page.evaluate("""() => {
             const text = (document.body?.innerText || '').slice(0, 12000).toLowerCase();
             const phrases = [
                 'sign in', 'log in', '로그인', '로그인하여',
-                'sign in to', 'access denied', 'unusual traffic',
+                'access denied', 'unusual traffic',
                 'before you continue', 'verify you are human'
             ];
             const matched = phrases.filter(phrase => text.includes(phrase));
             const dialogs = [...document.querySelectorAll('[role="dialog"]')]
-                .filter(el => el.getClientRects().length > 0).length;
-            return { matched, visible_dialogs: dialogs };
+                .filter(el => el.getClientRects().length > 0)
+                .map(el => {
+                    const dialogText = (el.innerText || '').toLowerCase().slice(0, 1500);
+                    return {
+                        sign_in: /sign in|log in|로그인/.test(dialogText),
+                        consent: /accept all|reject all|cookies|동의/.test(dialogText),
+                        challenge: /unusual traffic|verify you are human|captcha/.test(dialogText),
+                        blocks_review_feed: (() => {
+                            const feed = [...document.querySelectorAll('[role="feed"]')]
+                                .find(feed => feed.querySelector('.jftiEf'));
+                            if (!feed) return false;
+                            const r = feed.getBoundingClientRect();
+                            const d = el.getBoundingClientRect();
+                            return d.left < r.right && d.right > r.left &&
+                                d.top < r.bottom && d.bottom > r.top;
+                        })()
+                    };
+                });
+            return { matched, dialogs };
         }""")
         print(
             "REVIEW_ACCESS_DIAGNOSTIC "
             f"signals={','.join(signals.get('matched', [])) or 'none'} "
-            f"visible_dialogs={signals.get('visible_dialogs', 0)}"
+            f"visible_dialogs={len(signals.get('dialogs', []))} "
+            f"dialog_flags={json.dumps(signals.get('dialogs', []), separators=(',', ':'))}"
         )
     except Exception as exc:
         print(f"REVIEW_ACCESS_DIAGNOSTIC unavailable={type(exc).__name__}")
