@@ -1096,6 +1096,18 @@ def scroll_reviews(page):
             f"maxScroll={metrics['maxScroll']} moved={metrics['moved']}"
         )
         page.wait_for_timeout(1700)
+        settled = target.evaluate("""element => ({
+            scrollTop: element.scrollTop,
+            scrollHeight: element.scrollHeight,
+            clientHeight: element.clientHeight,
+            cards: element.querySelectorAll('.jftiEf').length
+        })""")
+        print(
+            "SCROLL_SETTLED_DIAGNOSTIC "
+            f"scrollTop={settled['scrollTop']} scrollHeight={settled['scrollHeight']} "
+            f"clientHeight={settled['clientHeight']} cards={settled['cards']} "
+            f"at_bottom={settled['scrollTop'] + settled['clientHeight'] >= settled['scrollHeight'] - 4}"
+        )
         if not metrics["moved"]:
             target.hover(timeout=2000)
             page.mouse.wheel(0, 1300)
