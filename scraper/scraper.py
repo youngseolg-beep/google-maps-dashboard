@@ -1500,6 +1500,22 @@ def extract_reviews(page, store, existing_reviews=None, newest_verified=False, c
 
         print(f"🔎 {round_no + 1}회차 리뷰 카드 감지 수: {card_count} / selector={used_selector}")
 
+        # Track review-card identity between rounds, not only the live DOM count.
+        # Google Maps can recycle five visible cards while the feed is scrolling.
+        visible_review_ids = []
+        for i in range(card_count):
+            try:
+                card_id = cards.nth(i).get_attribute("data-review-id")
+                if card_id:
+                    visible_review_ids.append(hashlib.sha256(card_id.encode("utf-8")).hexdigest()[:12])
+            except Exception:
+                pass
+        print(
+            f"CARD_DIAGNOSTIC round={round_no + 1} "
+            f"visible={card_count} unique_card_ids={len(set(visible_review_ids))} "
+            f"fingerprints={','.join(visible_review_ids[:10])}"
+        )
+
         for i in range(card_count):
             try:
                 card = cards.nth(i)
