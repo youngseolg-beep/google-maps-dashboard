@@ -1,0 +1,30 @@
+name: review-no-sort-smoke
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  read-only-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Checkout isolated test branch
+        uses: actions/checkout@v4
+        with:
+          ref: test/review-collection-without-sort
+          persist-credentials: false
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Unit regression tests
+        run: python -m unittest discover -s scraper -p "test_scraper_regression.py"
+      - name: Install browser dependencies
+        run: |
+          pip install -r scraper/requirements.txt
+          python -m playwright install --with-deps chromium
+      - name: One-store no-sort collection smoke test (no DB secrets)
+        run: python scraper/no_sort_smoke_probe.py
