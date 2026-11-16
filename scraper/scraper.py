@@ -1003,38 +1003,51 @@ def get_review_rating(card):
 
 
 def get_scroll_target(page):
+    # Google Maps may render multiple feeds; only the one containing review cards
+    # should be scrolled. Do not accidentally scroll the main place-details pane.
     candidates = [
         "div[role='feed']",
         "div.m6QErb.DxyBCb.kA9KIf.dS8AEf",
         "div.m6QErb[tabindex='-1']",
     ]
-
     for selector in candidates:
         try:
-            target = page.locator(selector).first
-            if target.count() > 0:
-                return target
-        except:
-            pass
-
+            targets = page.locator(selector)
+            for index in range(min(targets.count(), 12)):
+                target = targets.nth(index)
+                if target.locator(".jftiEf").count() > 0 and target.is_visible():
+                    return target
+        except Exception:
+            continue
     return None
 
 
 def scroll_reviews(page):
     target = get_scroll_target(page)
+    if target is None:
+        print("⚠️ 리뷰 카드가 포함된 스크롤 영역을 찾지 못했습니다.")
+        return False
 
     try:
-        if target:
+        # Explicitly scroll the review feed instead of relying on mouse focus.
+        # Avoid PageDown, which can move the unrelated place-details pane.
+        moved = target.evaluate("""element => {
+            const before = element.scrollTop;
+            element.scrollTop = Math.min(
+                element.scrollTop + Math.max(element.clientHeight * 2, 900),
+                element.scrollHeight
+            );
+            return element.scrollTop > before;
+        }""")
+        page.wait_for_timeout(1700)
+        if not moved:
             target.hover(timeout=2000)
-        else:
-            page.mouse.move(500, 500)
-    except:
-        page.mouse.move(500, 500)
-
-    page.mouse.wheel(0, 8000)
-    page.wait_for_timeout(900)
-    page.keyboard.press("PageDown")
-    page.wait_for_timeout(1400)
+            page.mouse.wheel(0, 1300)
+            page.wait_for_timeout(1200)
+        return True
+    except Exception as exc:
+        print(f"⚠️ 리뷰 피드 스크롤 실패: {type(exc).__name__}")
+        return False
 
 
 def require_supabase_config():
