@@ -1970,8 +1970,10 @@ def classify_collection_status(*, attempted, observed_review_count=0, independen
 
 
 def collection_status_row(store, *, attempted=False, observed_review_count=0, result=None,
-                          independent_completeness_confirmed=False):
+                          independent_completeness_confirmed=False, feed_stalled=False,
+                          scroll_target_missing=False, full_coverage_verified=False):
     # A successful scan, sort check, or zero candidate count cannot prove completeness.
+    # full_coverage_verified is diagnostic evidence, not independent verification.
     # No current collection path has an independent completeness check.
     status = classify_collection_status(
         attempted=attempted,
@@ -1985,7 +1987,11 @@ def collection_status_row(store, *, attempted=False, observed_review_count=0, re
     elif result is None:
         reason = "attempt_interrupted"
     elif status == "PARTIAL":
-        reason = "completeness_unverified"
+        reason = (
+            "review_scroll_unavailable_partial" if scroll_target_missing
+            else "review_feed_stalled_partial" if feed_stalled
+            else "completeness_unverified"
+        )
     else:
         reason = result.get("collection_issue") or "no_usable_reviews_observed"
     return {
