@@ -1022,6 +1022,30 @@ def get_scroll_target(page):
     return None
 
 
+def diagnose_review_access(page):
+    """Read-only indicators for Google Maps review access restrictions."""
+    try:
+        signals = page.evaluate("""() => {
+            const text = (document.body?.innerText || '').slice(0, 12000).toLowerCase();
+            const phrases = [
+                'sign in', 'log in', '로그인', '로그인하여',
+                'sign in to', 'access denied', 'unusual traffic',
+                'before you continue', 'verify you are human'
+            ];
+            const matched = phrases.filter(phrase => text.includes(phrase));
+            const dialogs = [...document.querySelectorAll('[role="dialog"]')]
+                .filter(el => el.getClientRects().length > 0).length;
+            return { matched, visible_dialogs: dialogs };
+        }""")
+        print(
+            "REVIEW_ACCESS_DIAGNOSTIC "
+            f"signals={','.join(signals.get('matched', [])) or 'none'} "
+            f"visible_dialogs={signals.get('visible_dialogs', 0)}"
+        )
+    except Exception as exc:
+        print(f"REVIEW_ACCESS_DIAGNOSTIC unavailable={type(exc).__name__}")
+
+
 def scroll_reviews(page):
     target = get_scroll_target(page)
     if target is None:
@@ -1627,6 +1651,7 @@ def extract_reviews(page, store, existing_reviews=None, newest_verified=False, c
         last_processed_count = len(processed_keys)
 
         if feed_stalled_count >= STOP_STALLED_ROUNDS and checked_count > 0:
+            diagnose_review_access(page)
             print("✅ 추가 카드 로딩 정체 감지. 수집 종료.")
             break
 
