@@ -197,6 +197,38 @@ class ReviewCrawlerRegressionTests(unittest.TestCase):
         self.assertEqual(result, [])
         self.assertEqual(scroll.call_count, scraper.MAX_SCROLL_ROUNDS)
 
+    def test_unsorted_existing_store_keeps_only_new_review_candidates(self):
+        saved = review("Existing full review text that is long enough")
+        fresh = review("New review with completely different content", author="New Reviewer")
+        cards = Mock()
+        cards.count.return_value = 2
+        evidence = {"observed_review_count": 0}
+
+        def text_for_card(card):
+            return saved["text"] if card is cards.nth.return_value else fresh["text"]
+
+        # Mock nth() with stable distinct card objects, so each visible card is checked.
+        old_card, new_card = Mock(), Mock()
+        cards.nth.side_effect = [old_card, new_card] * scraper.MAX_SCROLL_ROUNDS
+        with (
+            patch("builtins.print"),
+            patch.object(scraper, "click_more_buttons"),
+            patch.object(scraper, "click_original_review_buttons"),
+            patch.object(scraper, "get_review_cards", return_value=(cards, ".jftiEf")),
+            patch.object(scraper, "expand_review_text"),
+            patch.object(scraper, "get_review_text", side_effect=lambda card: saved["text"] if card is old_card else fresh["text"]),
+            patch.object(scraper, "get_review_date", return_value=saved["date"]),
+            patch.object(scraper, "get_review_author", side_effect=lambda card: saved["author"] if card is old_card else fresh["author"]),
+            patch.object(scraper, "get_review_rating", return_value=5),
+            patch.object(scraper, "scroll_reviews"),
+            patch.object(scraper, "should_stop_recent_collection", return_value=True) as recent_stop,
+        ):
+            found = scraper.extract_reviews(Mock(), STORE, [saved], newest_verified=False, collection_evidence=evidence)
+        self.assertEqual(len(found), 1)
+        self.assertEqual(found[0]["author"], fresh["author"])
+        self.assertEqual(evidence["observed_review_count"], 2)
+        recent_stop.assert_not_called()
+
     def test_newest_sort_verification_requires_aria_checked_true(self):
         self.assertFalse(scraper.newest_sort_is_selected(FakeSortPage(False)))
         self.assertTrue(scraper.newest_sort_is_selected(FakeSortPage(True)))
