@@ -1706,10 +1706,6 @@ def extract_reviews(page, store, existing_reviews=None, newest_verified=False, c
         else:
             print(f"⚠️ {round_no + 1}회차: 신규 후보 없음 / 이번 매장 누적 {len(collected)}건")
 
-        if not recent_only_mode and len(collected) >= MIN_REVIEWS_TARGET:
-            print(f"✅ 목표 수집량 도달: {len(collected)}건")
-            break
-
         if feed_grew(last_card_count, card_count, last_processed_count, len(processed_keys)):
             feed_stalled_count = 0
         else:
@@ -1755,7 +1751,6 @@ def scrape_store(page, store, existing_reviews=None, collection_evidence=None):
 
     url_candidates = build_url_candidates(store["url"])
     valid_place_detected = False
-    recent_sort_verification_failed = False
 
     for idx, target_url in enumerate(url_candidates):
         print(f"🌐 URL 후보 {idx + 1}/{len(url_candidates)} 진입 시도: {target_url}")
@@ -1790,10 +1785,9 @@ def scrape_store(page, store, existing_reviews=None, collection_evidence=None):
             existing_store_reviews = get_existing_reviews_for_store(
                 existing_reviews or [], store["store_name"]
             )
-            newest_verified = set_reviews_sort_to_newest(page)
-
-            if not newest_verified:
-                print("⚠️ 최신순 정렬 미확인: 기존 리뷰와 중복 비교하며 표시된 리뷰 탐색을 계속합니다.")
+            # Google Maps ordering is not a prerequisite for collection.
+            # Collect in display order; sort stored reviews in our own system.
+            newest_verified = False
 
             scan_evidence = collection_evidence if collection_evidence is not None else {}
             reviews = extract_reviews(
@@ -1829,20 +1823,6 @@ def scrape_store(page, store, existing_reviews=None, collection_evidence=None):
                 }
 
         print(f"⚠️ URL 후보 {idx + 1}에서 리뷰 DOM 감지 실패 또는 리뷰 없음")
-
-    if recent_sort_verification_failed:
-        print(f"❌ 최신순 검증 실패로 최근 리뷰 수집을 완료하지 못함: {store['store_name']}")
-        return {
-            "ok": False,
-            "store_name": store["store_name"],
-            "sv": store["sv"],
-            "country": store["country"],
-            "collected_count": 0,
-            "error": "Google Maps 최신순 정렬 검증 실패로 최근 리뷰 수집 중단",
-            "collection_issue": "newest_verification_failed",
-            "crawled_at": now_kst().strftime("%Y-%m-%d %H:%M:%S"),
-            "reviews": [],
-        }
 
     # A real place page with no review DOM is a valid zero-review store, not a crawl failure.
     if valid_place_detected:
