@@ -1031,19 +1031,43 @@ def scroll_reviews(page):
     try:
         # Explicitly scroll the review feed instead of relying on mouse focus.
         # Avoid PageDown, which can move the unrelated place-details pane.
-        moved = target.evaluate("""element => {
+        metrics = target.evaluate("""element => {
             const before = element.scrollTop;
+            const maxScroll = Math.max(0, element.scrollHeight - element.clientHeight);
             element.scrollTop = Math.min(
                 element.scrollTop + Math.max(element.clientHeight * 2, 900),
-                element.scrollHeight
+                maxScroll
             );
-            return element.scrollTop > before;
+            return {
+                before: before,
+                after: element.scrollTop,
+                scrollHeight: element.scrollHeight,
+                clientHeight: element.clientHeight,
+                maxScroll: maxScroll,
+                moved: element.scrollTop > before
+            };
         }""")
+        print(
+            "SCROLL_DIAGNOSTIC "
+            f"before={metrics['before']} after={metrics['after']} "
+            f"scrollHeight={metrics['scrollHeight']} clientHeight={metrics['clientHeight']} "
+            f"maxScroll={metrics['maxScroll']} moved={metrics['moved']}"
+        )
         page.wait_for_timeout(1700)
-        if not moved:
+        if not metrics["moved"]:
             target.hover(timeout=2000)
             page.mouse.wheel(0, 1300)
             page.wait_for_timeout(1200)
+            fallback = target.evaluate("""element => ({
+                after: element.scrollTop,
+                scrollHeight: element.scrollHeight,
+                clientHeight: element.clientHeight
+            })""")
+            print(
+                "SCROLL_FALLBACK_DIAGNOSTIC "
+                f"after={fallback['after']} scrollHeight={fallback['scrollHeight']} "
+                f"clientHeight={fallback['clientHeight']}"
+            )
         return True
     except Exception as exc:
         print(f"⚠️ 리뷰 피드 스크롤 실패: {type(exc).__name__}")
