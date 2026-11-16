@@ -1690,7 +1690,11 @@ def extract_reviews(page, store, existing_reviews=None, newest_verified=False, c
 
         if feed_stalled_count >= STOP_STALLED_ROUNDS and checked_count > 0:
             diagnose_review_access(page)
-            print("✅ 추가 카드 로딩 정체 감지. 수집 종료.")
+            if collection_evidence is not None:
+                collection_evidence["feed_stalled"] = True
+                collection_evidence["full_coverage_verified"] = False
+                collection_evidence["observed_review_count"] = checked_count
+            print("⚠️ 추가 카드 로딩 정체: 관측 리뷰만 수집했으며 전체 리뷰 확인은 불가.")
             break
 
         if recent_only_mode and round_no + 1 >= max_rounds:
@@ -1768,6 +1772,11 @@ def scrape_store(page, store, existing_reviews=None, collection_evidence=None):
                     "error": "",
                     "crawled_at": now_kst().strftime("%Y-%m-%d %H:%M:%S"),
                     "reviews": reviews,
+                    "collection_issue": (
+                        "review_feed_stalled_partial"
+                        if collection_evidence is not None and collection_evidence.get("feed_stalled")
+                        else ("newest_sort_unverified_partial" if not newest_verified else None)
+                    ),
                 }
 
         print(f"⚠️ URL 후보 {idx + 1}에서 리뷰 DOM 감지 실패 또는 리뷰 없음")
