@@ -73,6 +73,28 @@ def main():
                 };
             }""")
             print("REVIEW_ENTRY_LAYOUT: " + json.dumps(initial_card_layout, sort_keys=True))
+            # Compare initial deep-link cards with the explicit Reviews tab.
+            # This probe is isolated from the crawler; the crawler reloads the URL.
+            tabs = page.locator('[role="tab"]').filter(has_text="Reviews")
+            if tabs.count() == 0:
+                tabs = page.locator('[role="tab"]').filter(has_text="리뷰")
+            if tabs.count():
+                try:
+                    tabs.first.click(timeout=5000)
+                    page.wait_for_timeout(2500)
+                    tab_state = page.evaluate("""() => ({
+                        cards: document.querySelectorAll('.jftiEf').length,
+                        in_feed: [...document.querySelectorAll('.jftiEf')]
+                            .filter(c => c.closest('[role="feed"]')).length,
+                        selected_tabs: document.querySelectorAll('[role="tab"][aria-selected="true"]').length
+                    })""")
+                    print("REVIEW_TAB_OPEN_DIAGNOSTIC: " + json.dumps(tab_state, sort_keys=True))
+                except Exception as exc:
+                    print("REVIEW_TAB_OPEN_DIAGNOSTIC: " + json.dumps({
+                        "error_type": type(exc).__name__
+                    }))
+            else:
+                print('REVIEW_TAB_OPEN_DIAGNOSTIC: {"error_type":"tab_not_found"}')
             result = scrape_store(page, STORE, existing_reviews=EXISTING)
             # Read-only DOM geometry: identify whether the five review cards live
             # inside a nested scrollable container rather than the selected feed.
