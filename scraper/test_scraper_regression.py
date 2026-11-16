@@ -237,6 +237,42 @@ class ReviewCrawlerRegressionTests(unittest.TestCase):
         page.mouse.wheel.assert_not_called()
         page.keyboard.press.assert_not_called()
 
+    def test_failed_scroll_records_partial_evidence_and_stops_retrying(self):
+        class EmptyCards:
+            def count(self):
+                return 0
+
+        evidence = {}
+        with patch("builtins.print"), \
+             patch.object(scraper, "click_more_buttons"), \
+             patch.object(scraper, "click_original_review_buttons"), \
+             patch.object(scraper, "get_review_cards", return_value=(EmptyCards(), ".jftiEf")), \
+             patch.object(scraper, "scroll_reviews", return_value=False) as scroll:
+            found = scraper.extract_reviews(
+                Mock(), STORE, [], newest_verified=False, collection_evidence=evidence
+            )
+        self.assertEqual(found, [])
+        self.assertEqual(scroll.call_count, 1)
+        self.assertTrue(evidence["scroll_target_missing"])
+        self.assertFalse(evidence["full_coverage_verified"])
+
+    def test_successful_scroll_does_not_mark_target_missing(self):
+        class EmptyCards:
+            def count(self):
+                return 0
+
+        evidence = {}
+        with patch("builtins.print"), \
+             patch.object(scraper, "click_more_buttons"), \
+             patch.object(scraper, "click_original_review_buttons"), \
+             patch.object(scraper, "get_review_cards", return_value=(EmptyCards(), ".jftiEf")), \
+             patch.object(scraper, "scroll_reviews", return_value=True) as scroll:
+            scraper.extract_reviews(
+                Mock(), STORE, [], newest_verified=False, collection_evidence=evidence
+            )
+        self.assertEqual(scroll.call_count, scraper.MAX_SCROLL_ROUNDS)
+        self.assertFalse(evidence["scroll_target_missing"])
+
     def test_unverified_sort_falls_back_to_bounded_scan(self):
         class EmptyCards:
             def count(self):
