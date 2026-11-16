@@ -137,10 +137,29 @@ def main():
                     pass
             page.on("response", record_response)
             try:
-                feed = page.locator("div[role='feed']").filter(has=page.locator(".jftiEf")).first
-                if feed.count():
-                    feed.evaluate("""element => { element.scrollTop = element.scrollHeight; }""")
-                    page.wait_for_timeout(2500)
+                # Select the nearest genuinely scrollable ancestor of a review card,
+                # even when Google Maps does not expose role="feed".
+                scroll_state = page.evaluate("""() => {
+                    const card = document.querySelector('.jftiEf');
+                    if (!card) return {found: false, reason: 'no_cards'};
+                    let el = card.parentElement;
+                    while (el) {
+                        const style = getComputedStyle(el);
+                        if (['auto', 'scroll'].includes(style.overflowY) &&
+                            el.scrollHeight > el.clientHeight + 30) {
+                            const before = el.scrollTop;
+                            el.scrollTop = el.scrollHeight;
+                            return {found: true, role_feed: el.getAttribute('role') === 'feed',
+                                    moved: el.scrollTop > before,
+                                    cards_before: document.querySelectorAll('.jftiEf').length};
+                        }
+                        el = el.parentElement;
+                    }
+                    return {found: false, reason: 'no_scrollable_ancestor'};
+                }""")
+                if scroll_state["found"]:
+                    page.wait_for_timeout(3500)
+                print("REVIEW_SCROLL_TARGET_DIAGNOSTIC: " + json.dumps(scroll_state, sort_keys=True))
                 print("REVIEW_LOAD_NETWORK_DIAGNOSTIC: " + json.dumps({
                     "response_count": len(network_events),
                     "statuses": {str(code): sum(e["status"] == code for e in network_events)
