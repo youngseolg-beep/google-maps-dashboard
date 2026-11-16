@@ -53,6 +53,26 @@ def main():
                     .filter(el => /reviews|리뷰/i.test(el.getAttribute('aria-label') || '')).length
             })""")
             print("REVIEW_ENTRY_DIAGNOSTIC: " + json.dumps(initial_panel, sort_keys=True))
+            # Distinguish an unopened review feed from cards rendered in place details.
+            # Only element counts, roles and scroll geometry are recorded.
+            initial_card_layout = page.evaluate("""() => {
+                const cards = [...document.querySelectorAll('.jftiEf')];
+                return {
+                    cards: cards.length,
+                    in_dialog: cards.filter(c => c.closest('[role="dialog"]')).length,
+                    in_feed: cards.filter(c => c.closest('[role="feed"]')).length,
+                    in_scrollable_ancestor: cards.filter(c => {
+                        for (let e = c.parentElement; e; e = e.parentElement) {
+                            if (getComputedStyle(e).overflowY === 'auto' &&
+                                e.scrollHeight > e.clientHeight + 30) return true;
+                        }
+                        return false;
+                    }).length,
+                    review_tab_buttons: [...document.querySelectorAll('[role="tab"]')]
+                        .filter(e => /reviews|리뷰/i.test(e.getAttribute('aria-label') || e.innerText || '')).length
+                };
+            }""")
+            print("REVIEW_ENTRY_LAYOUT: " + json.dumps(initial_card_layout, sort_keys=True))
             result = scrape_store(page, STORE, existing_reviews=EXISTING)
             # Read-only DOM geometry: identify whether the five review cards live
             # inside a nested scrollable container rather than the selected feed.
