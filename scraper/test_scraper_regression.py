@@ -182,6 +182,35 @@ class ReviewCrawlerRegressionTests(unittest.TestCase):
             "Short preview with the full expanded review text available",
         )
 
+    def test_scroll_target_falls_back_to_review_card_ancestor_without_feed_role(self):
+        page = Mock()
+        page.locator.return_value.count.return_value = 1
+        page.locator.return_value.is_visible.return_value = False
+        ancestor = Mock()
+        page.locator.return_value.first.evaluate_handle.return_value.as_element.return_value = ancestor
+        with patch("builtins.print"):
+            target = scraper.get_scroll_target(page)
+        self.assertIs(target, ancestor)
+        script = page.locator.return_value.first.evaluate_handle.call_args.args[0]
+        self.assertIn("card.parentElement", script)
+        self.assertIn("scrollHeight > el.clientHeight + 30", script)
+        self.assertIn("rect.width > 0", script)
+
+    def test_scroll_target_rejects_non_scrollable_review_ancestor(self):
+        page = Mock()
+        page.locator.return_value.count.return_value = 1
+        page.locator.return_value.is_visible.return_value = False
+        page.locator.return_value.first.evaluate_handle.return_value.as_element.return_value = None
+        with patch("builtins.print"):
+            self.assertIsNone(scraper.get_scroll_target(page))
+
+    def test_scroll_target_without_review_cards_does_not_select_place_pane(self):
+        page = Mock()
+        page.locator.return_value.count.return_value = 0
+        with patch("builtins.print"):
+            self.assertIsNone(scraper.get_scroll_target(page))
+        page.locator.return_value.first.evaluate_handle.assert_not_called()
+
     def test_scroll_targets_review_feed_without_page_down(self):
         page = Mock()
         feed = Mock()
