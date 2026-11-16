@@ -47,6 +47,20 @@ def panel_state(page, stage):
     result["selected_tab_count"] = min(page.locator("[role=tab][aria-selected=true]").count(), 100)
     print("PANEL_STATE_" + stage + ": " + json.dumps(result, sort_keys=True))
 
+def auth_ui_diagnostics(page):
+    """Only boolean UI indicators. Never print account names, emails, cookies or HTML."""
+    indicators = {
+        "google_account_button": "a[aria-label^='Google Account'], button[aria-label^='Google Account'], a[aria-label^='Google 계정'], button[aria-label^='Google 계정']",
+        "signin_link": "a[href*='accounts.google.com/ServiceLogin'], a[href*='accounts.google.com/InteractiveLogin']",
+        "account_avatar": "a[href*='SignOutOptions'], a[href*='AccountChooser']",
+    }
+    for label, selector in indicators.items():
+        try:
+            print("AUTH_UI_DIAG: " + label + "=" + str(page.locator(selector).count() > 0))
+        except Exception:
+            print("AUTH_UI_DIAG: " + label + "=UNKNOWN")
+    print("AUTH_UI_DIAG: signals_are_heuristic_not_proof=True")
+
 def main():
     encoded = os.environ.get("GOOGLE_MAPS_STORAGE_STATE_B64", "")
     if not encoded:
@@ -98,6 +112,7 @@ def main():
             print("PAGE_DIAG: url_is_maps_place=" + str("/maps/place/" in page.url))
             print("PAGE_DIAG: place_detail_detected=" + str(is_valid_google_maps_place_page(page)))
             print("PAGE_DIAG: review_dom_initial=" + str(has_review_dom(page)))
+            auth_ui_diagnostics(page)
             panel_state(page, "BEFORE")
             panel_opened = open_reviews_panel(page)
             panel_state(page, "AFTER")
