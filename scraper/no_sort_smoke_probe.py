@@ -66,6 +66,38 @@ def main():
                 return nodes;
             }""")
             print("REVIEW_SCROLL_ANCESTORS: " + json.dumps(scroll_candidates, separators=(',', ':')))
+            # Inspect network *metadata* only: status and request type, never
+            # request bodies, URLs, cookies, review text, or account details.
+            # Registered before a single controlled end-of-feed scroll.
+            network_events = []
+            def record_response(response):
+                try:
+                    request = response.request
+                    if "google.com" not in response.url and "googleapis.com" not in response.url:
+                        return
+                    network_events.append({
+                        "status": response.status,
+                        "type": request.resource_type,
+                        "method": request.method,
+                    })
+                except Exception:
+                    pass
+            page.on("response", record_response)
+            try:
+                feed = page.locator("div[role='feed']").filter(has=page.locator(".jftiEf")).first
+                if feed.count():
+                    feed.evaluate("""element => { element.scrollTop = element.scrollHeight; }""")
+                    page.wait_for_timeout(2500)
+                print("REVIEW_LOAD_NETWORK_DIAGNOSTIC: " + json.dumps({
+                    "response_count": len(network_events),
+                    "statuses": {str(code): sum(e["status"] == code for e in network_events)
+                                 for code in sorted({e["status"] for e in network_events})},
+                    "types": {kind: sum(e["type"] == kind for e in network_events)
+                              for kind in sorted({e["type"] for e in network_events})},
+                    "cards_after": page.locator(".jftiEf").count(),
+                }, sort_keys=True))
+            finally:
+                page.remove_listener("response", record_response)
             # Never log review text, author, account data, or URLs from extracted reviews.
             print("NO_SORT_SMOKE_RESULT: " + json.dumps({
                 "ok": result["ok"],
