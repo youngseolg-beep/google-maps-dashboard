@@ -42,6 +42,17 @@ def main():
             context.add_init_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined});")
             page = context.new_page()
             page.set_default_timeout(45000)
+            # Capture the initial panel state without exposing page content.
+            page.goto(STORE["url"], wait_until="domcontentloaded", timeout=45000)
+            page.wait_for_timeout(3500)
+            initial_panel = page.evaluate("""() => ({
+                cards: document.querySelectorAll('.jftiEf').length,
+                review_feeds: [...document.querySelectorAll('[role="feed"]')]
+                    .filter(el => el.querySelector('.jftiEf')).length,
+                review_buttons: [...document.querySelectorAll('button')]
+                    .filter(el => /reviews|리뷰/i.test(el.getAttribute('aria-label') || '')).length
+            })""")
+            print("REVIEW_ENTRY_DIAGNOSTIC: " + json.dumps(initial_panel, sort_keys=True))
             result = scrape_store(page, STORE, existing_reviews=EXISTING)
             # Read-only DOM geometry: identify whether the five review cards live
             # inside a nested scrollable container rather than the selected feed.
