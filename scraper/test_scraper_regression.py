@@ -302,6 +302,25 @@ class ReviewCrawlerRegressionTests(unittest.TestCase):
         self.assertEqual(scroll.call_count, scraper.MAX_SCROLL_ROUNDS)
         self.assertFalse(evidence["scroll_target_missing"])
 
+    def test_store_scan_does_not_invoke_google_sort(self):
+        page = Mock()
+        page.locator.return_value.filter.return_value.count.return_value = 1
+        existing = review("Existing full review text that is long enough")
+        evidence = {"observed_review_count": 0}
+        with (
+            patch("builtins.print"),
+            patch.object(scraper, "build_url_candidates", return_value=["https://maps.google.com/example"]),
+            patch.object(scraper, "click_cookie_buttons"),
+            patch.object(scraper, "is_valid_google_maps_place_page", return_value=True),
+            patch.object(scraper, "wait_for_reviews", return_value=True),
+            patch.object(scraper, "set_reviews_sort_to_newest") as google_sort,
+            patch.object(scraper, "extract_reviews", return_value=[]) as extract,
+        ):
+            result = scraper.scrape_store(page, STORE, [existing], collection_evidence=evidence)
+        self.assertTrue(result["ok"])
+        google_sort.assert_not_called()
+        self.assertFalse(extract.call_args.kwargs["newest_verified"])
+
     def test_legacy_scroll_uses_wheel_and_pagedown_on_review_pane(self):
         page = Mock()
         target = Mock()
