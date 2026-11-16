@@ -267,9 +267,15 @@ def open_reviews_panel(page):
                 page.wait_for_timeout(6000)
                 print(f"✅ 클릭 실행 완료: {name}")
 
-                if has_review_dom(page):
-                    print("✅ 클릭 후 리뷰 DOM 감지")
+                # Cards may already exist in the place details pane.
+                # Clicking alone is not proof of a functioning review feed.
+                feed_count = page.locator("div[role='feed']").filter(
+                    has=page.locator(".jftiEf")
+                ).count()
+                if feed_count:
+                    print("✅ 클릭 후 리뷰 피드 감지")
                     return True
+                print("⚠️ 클릭 후 리뷰 피드 미확인; 다음 후보 확인")
         except Exception as e:
             print(f"⚠️ 클릭 실패: {name} / {e}")
 
@@ -1739,7 +1745,12 @@ def scrape_store(page, store, existing_reviews=None, collection_evidence=None):
             valid_place_detected = True
             print("✅ Google Maps 매장 상세 페이지 확인")
 
-        if not has_review_dom(page):
+        # Initial cards in place details are not proof that the Reviews panel
+        # opened. Prefer an explicit tab activation when no review feed exists.
+        review_feed_present = page.locator("div[role='feed']").filter(
+            has=page.locator(".jftiEf")
+        ).count() > 0
+        if not review_feed_present:
             open_reviews_panel(page)
 
         print("⏳ Google Maps 리뷰 패널 렌더링 대기 중...")
