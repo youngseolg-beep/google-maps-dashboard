@@ -4,7 +4,7 @@ import json
 import os
 from playwright.sync_api import sync_playwright
 import re
-from scraper import open_reviews_panel, has_review_dom, is_valid_google_maps_place_page
+from scraper import open_reviews_panel, has_review_dom, is_valid_google_maps_place_page, build_url_candidates
 
 URL = "https://www.google.com/maps/place/Saemaeul+(새마을식당)+-+Central+Eastville/@13.8036867,100.6145723,17z/data=!4m8!3m7!1s0x30e29df2eeea54a1:0x484a32408c147d14!8m2!3d13.8036867!4d100.6145723!9m1!1b1!16s%2Fg%2F11s674rmb9?entry=ttu"
 
