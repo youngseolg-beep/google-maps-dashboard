@@ -302,6 +302,22 @@ class ReviewCrawlerRegressionTests(unittest.TestCase):
         self.assertEqual(scroll.call_count, scraper.MAX_SCROLL_ROUNDS)
         self.assertFalse(evidence["scroll_target_missing"])
 
+    def test_legacy_scroll_uses_wheel_and_pagedown_on_review_pane(self):
+        page = Mock()
+        target = Mock()
+        with patch.object(scraper, "get_scroll_target", return_value=target):
+            self.assertTrue(scraper.scroll_reviews(page))
+        target.hover.assert_called_once_with(timeout=2000)
+        page.mouse.wheel.assert_called_once_with(0, 8000)
+        page.keyboard.press.assert_called_once_with("PageDown")
+
+    def test_legacy_scroll_does_not_scroll_when_review_pane_missing(self):
+        page = Mock()
+        with patch.object(scraper, "get_scroll_target", return_value=None):
+            self.assertFalse(scraper.scroll_reviews(page))
+        page.mouse.wheel.assert_not_called()
+        page.keyboard.press.assert_not_called()
+
     def test_unverified_sort_falls_back_to_bounded_scan(self):
         class EmptyCards:
             def count(self):
