@@ -256,6 +256,35 @@ class ReviewCrawlerRegressionTests(unittest.TestCase):
         self.assertTrue(evidence["scroll_target_missing"])
         self.assertFalse(evidence["full_coverage_verified"])
 
+    def test_stalled_review_feed_is_reported_as_partial(self):
+        class OneCardList:
+            def count(self):
+                return 1
+
+            def nth(self, index):
+                return Mock()
+
+        evidence = {}
+        with patch("builtins.print"), \
+             patch.object(scraper, "click_more_buttons"), \
+             patch.object(scraper, "click_original_review_buttons"), \
+             patch.object(scraper, "get_review_cards", return_value=(OneCardList(), ".jftiEf")), \
+             patch.object(scraper, "expand_review_text"), \
+             patch.object(scraper, "get_review_text", return_value="A complete and useful review"), \
+             patch.object(scraper, "get_review_date", return_value="2 weeks ago"), \
+             patch.object(scraper, "get_review_author", return_value="Reviewer A"), \
+             patch.object(scraper, "get_review_rating", return_value=5), \
+             patch.object(scraper, "scroll_reviews", return_value=True), \
+             patch.object(scraper, "diagnose_review_access") as diagnose:
+            found = scraper.extract_reviews(
+                Mock(), STORE, [], newest_verified=False, collection_evidence=evidence
+            )
+        self.assertEqual(len(found), 1)
+        self.assertTrue(evidence["feed_stalled"])
+        self.assertFalse(evidence["full_coverage_verified"])
+        self.assertEqual(evidence["observed_review_count"], 1)
+        diagnose.assert_called_once()
+
     def test_successful_scroll_does_not_mark_target_missing(self):
         class EmptyCards:
             def count(self):
