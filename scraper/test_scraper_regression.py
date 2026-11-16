@@ -316,7 +316,10 @@ class ReviewCrawlerRegressionTests(unittest.TestCase):
             patch.object(scraper, "set_reviews_sort_to_newest") as google_sort,
             patch.object(scraper, "extract_reviews", return_value=[]) as extract,
         ):
-            result = scraper.scrape_store(page, STORE, [existing], collection_evidence=evidence)
+            result = scraper.scrape_store(
+                page, {**STORE, "url": "https://maps.google.com/example"},
+                [existing], collection_evidence=evidence
+            )
         self.assertTrue(result["ok"])
         google_sort.assert_not_called()
         self.assertFalse(extract.call_args.kwargs["newest_verified"])
