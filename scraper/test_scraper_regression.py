@@ -420,6 +420,35 @@ class ReviewCrawlerRegressionTests(unittest.TestCase):
         self.assertTrue(scraper.all_crawl_results_failed([{"ok": False}]))
         self.assertFalse(scraper.all_crawl_results_failed([{"ok": True}, {"ok": False}]))
 
+    def test_collection_reporting_accepts_scroll_and_stall_evidence(self):
+        result = {"ok": True, "collected_count": 0, "error": "",
+                  "crawled_at": "2026-11-16 16:00:00",
+                  "collection_issue": "review_scroll_unavailable_partial"}
+        for evidence, expected in (
+            ({"observed_review_count": 5, "scroll_target_missing": True,
+              "feed_stalled": False, "full_coverage_verified": False},
+             "review_scroll_unavailable_partial"),
+            ({"observed_review_count": 5, "scroll_target_missing": False,
+              "feed_stalled": True, "full_coverage_verified": False},
+             "review_feed_stalled_partial"),
+        ):
+            with self.subTest(expected=expected):
+                row = scraper.collection_status_row(
+                    STORE, attempted=True, result=result, **evidence
+                )
+                self.assertEqual(row["collection_status"], "PARTIAL")
+                self.assertEqual(row["collection_reason"], expected)
+                self.assertEqual(row["observed_review_count"], 5)
+
+    def test_collection_reporting_does_not_upgrade_diagnostic_coverage_to_verified(self):
+        row = scraper.collection_status_row(
+            STORE, attempted=True, observed_review_count=5,
+            full_coverage_verified=True,
+            result={"ok": True, "collected_count": 5, "error": "",
+                    "crawled_at": "2026-11-16 16:00:00"},
+        )
+        self.assertEqual(row["collection_status"], "PARTIAL")
+
     def test_verified_requires_independent_completeness_evidence(self):
         classify = scraper.classify_collection_status
         self.assertEqual(classify(attempted=True, observed_review_count=42), "PARTIAL")
