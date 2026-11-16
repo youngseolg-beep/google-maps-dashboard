@@ -1093,76 +1093,26 @@ def diagnose_review_access(page):
 
 
 def scroll_reviews(page):
+    """Use the original mouse-wheel/PageDown loading behavior on the review pane.
+
+    Keep a review-card-anchored target so the wheel is not sent blindly to
+    unrelated Maps UI. This is not evidence of complete collection.
+    """
     target = get_scroll_target(page)
     if target is None:
         print("⚠️ 리뷰 카드가 포함된 스크롤 영역을 찾지 못했습니다.")
         return False
-
     try:
-        # Explicitly scroll the review feed instead of relying on mouse focus.
-        # Avoid PageDown, which can move the unrelated place-details pane.
-        metrics = target.evaluate("""element => {
-            const before = element.scrollTop;
-            const maxScroll = Math.max(0, element.scrollHeight - element.clientHeight);
-            element.scrollTop = Math.min(
-                element.scrollTop + Math.max(element.clientHeight * 2, 900),
-                maxScroll
-            );
-            return {
-                before: before,
-                after: element.scrollTop,
-                scrollHeight: element.scrollHeight,
-                clientHeight: element.clientHeight,
-                maxScroll: maxScroll,
-                moved: element.scrollTop > before
-            };
-        }""")
-        print(
-            "SCROLL_DIAGNOSTIC "
-            f"before={metrics['before']} after={metrics['after']} "
-            f"scrollHeight={metrics['scrollHeight']} clientHeight={metrics['clientHeight']} "
-            f"maxScroll={metrics['maxScroll']} moved={metrics['moved']}"
-        )
-        page.wait_for_timeout(1700)
-        settled = target.evaluate("""element => ({
-            scrollTop: element.scrollTop,
-            scrollHeight: element.scrollHeight,
-            clientHeight: element.clientHeight,
-            cards: element.querySelectorAll('.jftiEf').length
-        })""")
-        reset_after_scroll = (
-            metrics["moved"]
-            and settled["scrollTop"] + 4 < metrics["after"]
-            and settled["scrollHeight"] < metrics["scrollHeight"]
-        )
-        print(
-            "SCROLL_SETTLED_DIAGNOSTIC "
-            f"scrollTop={settled['scrollTop']} scrollHeight={settled['scrollHeight']} "
-            f"clientHeight={settled['clientHeight']} cards={settled['cards']} "
-            f"at_bottom={settled['scrollTop'] + settled['clientHeight'] >= settled['scrollHeight'] - 4} "
-            f"feed_reset={reset_after_scroll}"
-        )
-        if reset_after_scroll:
-            print("⚠️ 리뷰 피드가 스크롤 후 재렌더링되어 위치가 초기화됨; 새 리뷰 확인 전까지 전체 수집으로 판단하지 않음.")
-        if not metrics["moved"]:
-            target.hover(timeout=2000)
-            page.mouse.wheel(0, 1300)
-            page.wait_for_timeout(1200)
-            fallback = target.evaluate("""element => ({
-                after: element.scrollTop,
-                scrollHeight: element.scrollHeight,
-                clientHeight: element.clientHeight
-            })""")
-            print(
-                "SCROLL_FALLBACK_DIAGNOSTIC "
-                f"after={fallback['after']} scrollHeight={fallback['scrollHeight']} "
-                f"clientHeight={fallback['clientHeight']}"
-            )
+        target.hover(timeout=2000)
+        page.mouse.wheel(0, 8000)
+        page.wait_for_timeout(900)
+        page.keyboard.press("PageDown")
+        page.wait_for_timeout(1400)
+        print("SCROLL_DIAGNOSTIC method=legacy_wheel_pagedown")
         return True
     except Exception as exc:
-        print(f"⚠️ 리뷰 피드 스크롤 실패: {type(exc).__name__}")
+        print(f"⚠️ 기존 방식 리뷰 스크롤 실패: {type(exc).__name__}")
         return False
-
 
 def require_supabase_config():
     if not SUPABASE_URL or not SUPABASE_SERVICE_ROLE_KEY:
