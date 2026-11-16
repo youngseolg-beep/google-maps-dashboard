@@ -182,9 +182,20 @@ class ReviewCrawlerRegressionTests(unittest.TestCase):
             "Short preview with the full expanded review text available",
         )
 
-    def test_recent_collection_refuses_unverified_newest_sort(self):
-        with self.assertRaisesRegex(RuntimeError, "최신순 정렬 검증"):
-            scraper.extract_reviews(None, STORE, [review("Existing full review text that is long enough")], newest_verified=False)
+    def test_unverified_sort_falls_back_to_bounded_scan(self):
+        class EmptyCards:
+            def count(self):
+                return 0
+        with patch.object(scraper, "click_more_buttons"), \
+             patch.object(scraper, "click_original_review_buttons"), \
+             patch.object(scraper, "get_review_cards", return_value=(EmptyCards(), ".jftiEf")), \
+             patch.object(scraper, "scroll_reviews") as scroll:
+            result = scraper.extract_reviews(
+                Mock(), STORE, [review("Existing full review text that is long enough")],
+                newest_verified=False
+            )
+        self.assertEqual(result, [])
+        self.assertEqual(scroll.call_count, scraper.MAX_SCROLL_ROUNDS)
 
     def test_newest_sort_verification_requires_aria_checked_true(self):
         self.assertFalse(scraper.newest_sort_is_selected(FakeSortPage(False)))
