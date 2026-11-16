@@ -109,7 +109,15 @@ def main():
                 print("NETWORK_FAILURE_TYPES: " + json.dumps(failure_types, sort_keys=True))
                 print("PAGE_DIAG: maps_page_title_present=" + str(bool(page.title().strip())))
                 if not has_review_dom(page):
-                    raise RuntimeError("REVIEWS_PANEL_NOT_OPENED: review DOM absent after extra wait; auth remains unverified")
+                    print("FALLBACK_DIAG: testing direct /reviews/ URL without database writes")
+                    review_url = build_url_candidates(URL)[1]
+                    page.goto(review_url, wait_until="domcontentloaded", timeout=60000)
+                    page.wait_for_timeout(7000)
+                    panel_state(page, "DIRECT_REVIEWS_URL")
+                    print("FALLBACK_DIAG: review_dom=" + str(has_review_dom(page)))
+                    print("FALLBACK_DIAG: place_detail=" + str(is_valid_google_maps_place_page(page)))
+                    if not has_review_dom(page):
+                        raise RuntimeError("REVIEWS_PANEL_NOT_OPENED: click and direct reviews URL both failed; auth unverified")
             page.wait_for_timeout(3000)
             sort = page.get_by_role("button", name=re.compile(r"Sort|정렬|Sorteer|Sorteren|Urutkan", re.I))
             if not sort.count():
