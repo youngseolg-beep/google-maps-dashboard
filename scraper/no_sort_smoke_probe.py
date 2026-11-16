@@ -43,6 +43,29 @@ def main():
             page = context.new_page()
             page.set_default_timeout(45000)
             result = scrape_store(page, STORE, existing_reviews=EXISTING)
+            # Read-only DOM geometry: identify whether the five review cards live
+            # inside a nested scrollable container rather than the selected feed.
+            scroll_candidates = page.evaluate("""() => {
+                const card = document.querySelector('.jftiEf');
+                if (!card) return [];
+                const nodes = [];
+                for (let el = card.parentElement; el && nodes.length < 12; el = el.parentElement) {
+                    const style = getComputedStyle(el);
+                    const height = el.scrollHeight - el.clientHeight;
+                    if (height > 30 || el.getAttribute('role') === 'feed') {
+                        nodes.push({
+                            tag: el.tagName.toLowerCase(),
+                            role: el.getAttribute('role') || '',
+                            overflowY: style.overflowY,
+                            scrollable_px: Math.round(height),
+                            scroll_top: Math.round(el.scrollTop),
+                            cards: el.querySelectorAll('.jftiEf').length
+                        });
+                    }
+                }
+                return nodes;
+            }""")
+            print("REVIEW_SCROLL_ANCESTORS: " + json.dumps(scroll_candidates, separators=(',', ':')))
             # Never log review text, author, account data, or URLs from extracted reviews.
             print("NO_SORT_SMOKE_RESULT: " + json.dumps({
                 "ok": result["ok"],
