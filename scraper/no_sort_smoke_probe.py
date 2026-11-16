@@ -178,8 +178,22 @@ def main():
                 "database_writes": False,
                 "full_coverage_verified": False,
             }, sort_keys=True))
+            # A successful page load is not proof that the five-card ceiling
+            # was overcome. Make this diagnostic fail visibly when it was not.
+            observed = max(
+                initial_panel["cards"],
+                page.locator(".jftiEf").count(),
+                len(result["reviews"]),
+            )
+            print("REVIEW_LOAD_VERDICT: " + json.dumps({
+                "more_than_five_reviews_observed": observed > 5,
+                "maximum_observed": observed,
+                "full_coverage_verified": False,
+            }, sort_keys=True))
             if not result["ok"]:
                 raise SystemExit(2)
+            if observed <= 5:
+                raise SystemExit("REVIEW_LOAD_BLOCKED: five-card ceiling not overcome")
         finally:
             browser.close()
 
