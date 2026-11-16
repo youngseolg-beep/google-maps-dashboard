@@ -1025,6 +1025,28 @@ def get_scroll_target(page):
                     return target
         except Exception:
             continue
+    # Google Maps sometimes omits role="feed". In that case, use only
+    # a visible, genuinely scrollable ancestor of an actual review card.
+    # Do not fall back to a generic place-details pane.
+    try:
+        cards = page.locator(".jftiEf")
+        if cards.count() > 0:
+            ancestor = cards.first.evaluate_handle("""card => {
+                for (let el = card.parentElement; el; el = el.parentElement) {
+                    const style = getComputedStyle(el);
+                    const rect = el.getBoundingClientRect();
+                    if (['auto', 'scroll'].includes(style.overflowY) &&
+                        el.scrollHeight > el.clientHeight + 30 &&
+                        rect.width > 0 && rect.height > 0) return el;
+                }
+                return null;
+            }""")
+            element = ancestor.as_element()
+            if element is not None:
+                print("SCROLL_TARGET_DIAGNOSTIC fallback=review_card_scrollable_ancestor")
+                return element
+    except Exception as exc:
+        print(f"SCROLL_TARGET_DIAGNOSTIC fallback_error={type(exc).__name__}")
     return None
 
 
