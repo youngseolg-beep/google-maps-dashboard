@@ -1440,8 +1440,11 @@ def extract_reviews(page, store, existing_reviews=None, newest_verified=False, c
     existing_keys = {make_review_key(review) for review in existing_reviews if make_review_key(review)}
     recent_only_mode = bool(existing_reviews)
 
+    # When newest sorting is unavailable, scan the visible feed without assuming chronology.
+    # Keep existing-review deduplication, but disable the recent-only early-stop heuristic.
     if recent_only_mode and not newest_verified:
-        raise RuntimeError("최근 리뷰 모드는 최신순 정렬 검증 후에만 실행할 수 있습니다.")
+        print("📦 최신순 미확인: 전체 탐색 모드로 전환 (날짜순/신규 누락 없음 보장 불가)")
+        recent_only_mode = False
 
     if recent_only_mode:
         print(f"⚡ 최근 리뷰 모드 적용: {store['store_name']} / 기존 리뷰 key {len(existing_keys)}개")
@@ -1517,14 +1520,14 @@ def extract_reviews(page, store, existing_reviews=None, newest_verified=False, c
                         collection_evidence.get("observed_review_count", 0), checked_count
                     )
 
-                if recent_only_mode and find_existing_review_match(review, existing_reviews, existing_keys):
+                if find_existing_review_match(review, existing_reviews, existing_keys):
                     consecutive_existing_hits += 1
                     print(
                         f"🟡 기존 리뷰 감지: 연속 {consecutive_existing_hits}/{RECENT_ONLY_EXISTING_HIT_LIMIT} "
                         f"/ 확인 {checked_count}/{RECENT_ONLY_MIN_CHECKED}"
                     )
 
-                    if should_stop_recent_collection(round_no + 1, checked_count, consecutive_existing_hits):
+                    if recent_only_mode and should_stop_recent_collection(round_no + 1, checked_count, consecutive_existing_hits):
                         print("✅ 최신순에서 연속 기존 리뷰를 충분히 감지. 최근 리뷰 확인 종료.")
                         return collected
 
@@ -1612,16 +1615,8 @@ def scrape_store(page, store, existing_reviews=None, collection_evidence=None):
             )
             newest_verified = set_reviews_sort_to_newest(page)
 
-            if existing_store_reviews and not newest_verified:
-                recent_sort_verification_failed = True
-                print(
-                    "⚠️ 최근 리뷰 수집 검증 실패: 최신순 aria-checked=true를 확인할 수 없어 "
-                    "기존 리뷰 기반 수집을 중단합니다."
-                )
-                continue
-
             if not newest_verified:
-                print("⚠️ 최신순 정렬을 검증하지 못했습니다. 초기 전체 수집만 안전 상한 내에서 계속합니다.")
+                print("⚠️ 최신순 정렬 미확인: 기존 리뷰와 중복 비교하며 표시된 리뷰 탐색을 계속합니다.")
 
             reviews = extract_reviews(
                 page,
