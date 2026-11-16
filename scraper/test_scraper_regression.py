@@ -182,6 +182,23 @@ class ReviewCrawlerRegressionTests(unittest.TestCase):
             "Short preview with the full expanded review text available",
         )
 
+    def test_scroll_targets_review_feed_without_page_down(self):
+        page = Mock()
+        feed = Mock()
+        feed.evaluate.return_value = True
+        with patch.object(scraper, "get_scroll_target", return_value=feed):
+            self.assertTrue(scraper.scroll_reviews(page))
+        feed.evaluate.assert_called_once()
+        page.keyboard.press.assert_not_called()
+        page.mouse.wheel.assert_not_called()
+
+    def test_scroll_without_review_feed_does_not_scroll_unrelated_pane(self):
+        page = Mock()
+        with patch.object(scraper, "get_scroll_target", return_value=None), patch("builtins.print"):
+            self.assertFalse(scraper.scroll_reviews(page))
+        page.mouse.wheel.assert_not_called()
+        page.keyboard.press.assert_not_called()
+
     def test_unverified_sort_falls_back_to_bounded_scan(self):
         class EmptyCards:
             def count(self):
