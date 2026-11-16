@@ -25,8 +25,10 @@ SORT_CAPTURE_STYLE = """
 img, svg, canvas, video, iframe, input, textarea { visibility: hidden !important; }
 """
 
-MAX_SCROLL_ROUNDS = 8
-STOP_STALLED_ROUNDS = 2
+# A fixed eight-round limit truncated stores with long review histories.
+# Keep a configurable safety ceiling, but continue until the feed actually stalls.
+MAX_SCROLL_ROUNDS = max(1, min(int(os.environ.get("REVIEW_MAX_SCROLL_ROUNDS", "80")), 300))
+STOP_STALLED_ROUNDS = 3
 MIN_REVIEWS_TARGET = 50
 
 # Recent-only mode settings
