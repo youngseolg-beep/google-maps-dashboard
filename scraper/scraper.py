@@ -1102,12 +1102,20 @@ def scroll_reviews(page):
             clientHeight: element.clientHeight,
             cards: element.querySelectorAll('.jftiEf').length
         })""")
+        reset_after_scroll = (
+            metrics["moved"]
+            and settled["scrollTop"] + 4 < metrics["after"]
+            and settled["scrollHeight"] < metrics["scrollHeight"]
+        )
         print(
             "SCROLL_SETTLED_DIAGNOSTIC "
             f"scrollTop={settled['scrollTop']} scrollHeight={settled['scrollHeight']} "
             f"clientHeight={settled['clientHeight']} cards={settled['cards']} "
-            f"at_bottom={settled['scrollTop'] + settled['clientHeight'] >= settled['scrollHeight'] - 4}"
+            f"at_bottom={settled['scrollTop'] + settled['clientHeight'] >= settled['scrollHeight'] - 4} "
+            f"feed_reset={reset_after_scroll}"
         )
+        if reset_after_scroll:
+            print("⚠️ 리뷰 피드가 스크롤 후 재렌더링되어 위치가 초기화됨; 새 리뷰 확인 전까지 전체 수집으로 판단하지 않음.")
         if not metrics["moved"]:
             target.hover(timeout=2000)
             page.mouse.wheel(0, 1300)
