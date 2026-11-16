@@ -1505,9 +1505,20 @@ def extract_reviews(page, store, existing_reviews=None, newest_verified=False, c
         visible_review_ids = []
         for i in range(card_count):
             try:
-                card_id = cards.nth(i).get_attribute("data-review-id")
+                card = cards.nth(i)
+                card_id = card.get_attribute("data-review-id")
                 if card_id:
-                    visible_review_ids.append(hashlib.sha256(card_id.encode("utf-8")).hexdigest()[:12])
+                    identity = "id:" + card_id
+                else:
+                    # Google Maps may omit data-review-id; use visible review fields
+                    # solely for anonymized diagnostics, never for persistence.
+                    identity = "fields:" + "|".join((
+                        get_review_author(card),
+                        get_review_date(card),
+                        get_review_text(card),
+                        str(get_review_rating(card)),
+                    ))
+                visible_review_ids.append(hashlib.sha256(identity.encode("utf-8")).hexdigest()[:12])
             except Exception:
                 pass
         print(
