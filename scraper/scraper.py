@@ -1559,6 +1559,7 @@ def extract_reviews(page, store, existing_reviews=None, newest_verified=False, c
     processed_keys = set()
     feed_stalled_count = 0
     feed_stalled = False
+    scroll_target_missing = False
     last_card_count = 0
     last_processed_count = 0
     checked_count = 0
@@ -1731,10 +1732,17 @@ def extract_reviews(page, store, existing_reviews=None, newest_verified=False, c
             print("✅ 최근 리뷰 모드 확인 라운드 완료. 다음 매장으로 이동.")
             break
 
-        scroll_reviews(page)
+        if not scroll_reviews(page):
+            scroll_target_missing = True
+            if collection_evidence is not None:
+                collection_evidence["scroll_target_missing"] = True
+                collection_evidence["full_coverage_verified"] = False
+            print("⚠️ 리뷰 스크롤 실패: 추가 리뷰 로딩을 확인할 수 없어 부분 수집으로 기록합니다.")
+            break
 
     if collection_evidence is not None:
         collection_evidence["feed_stalled"] = feed_stalled
+        collection_evidence["scroll_target_missing"] = scroll_target_missing
         collection_evidence["full_coverage_verified"] = False
     return collected
 
@@ -1812,9 +1820,11 @@ def scrape_store(page, store, existing_reviews=None, collection_evidence=None):
                     "crawled_at": now_kst().strftime("%Y-%m-%d %H:%M:%S"),
                     "reviews": reviews,
                     "collection_issue": (
-                        "review_feed_stalled_partial"
-                        if scan_evidence.get("feed_stalled")
-                        else ("newest_sort_unverified_partial" if not newest_verified else None)
+                        "review_scroll_unavailable_partial"
+                        if scan_evidence.get("scroll_target_missing")
+                        else ("review_feed_stalled_partial"
+                              if scan_evidence.get("feed_stalled")
+                              else ("newest_sort_unverified_partial" if not newest_verified else None))
                     ),
                 }
 
