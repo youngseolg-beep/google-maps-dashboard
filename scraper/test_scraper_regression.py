@@ -185,13 +185,19 @@ class ReviewCrawlerRegressionTests(unittest.TestCase):
     def test_scroll_targets_review_feed_without_page_down(self):
         page = Mock()
         feed = Mock()
-        feed.evaluate.return_value = {
-            "before": 0, "after": 900, "scrollHeight": 3000,
-            "clientHeight": 1000, "maxScroll": 2000, "moved": True,
-        }
+        feed.evaluate.side_effect = [
+            {
+                "before": 0, "after": 900, "scrollHeight": 3000,
+                "clientHeight": 1000, "maxScroll": 2000, "moved": True,
+            },
+            {
+                "scrollTop": 900, "scrollHeight": 3000,
+                "clientHeight": 1000, "cards": 5,
+            },
+        ]
         with patch.object(scraper, "get_scroll_target", return_value=feed):
             self.assertTrue(scraper.scroll_reviews(page))
-        feed.evaluate.assert_called_once()
+        self.assertEqual(feed.evaluate.call_count, 2)
         page.keyboard.press.assert_not_called()
         page.mouse.wheel.assert_not_called()
 
