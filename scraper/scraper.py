@@ -1450,7 +1450,7 @@ def extract_reviews(page, store, existing_reviews=None, newest_verified=False, c
         print(f"⚡ 최근 리뷰 모드 적용: {store['store_name']} / 기존 리뷰 key {len(existing_keys)}개")
         max_rounds = min(MAX_SCROLL_ROUNDS, RECENT_ONLY_MAX_ROUNDS)
     else:
-        print(f"📦 기존 리뷰 없음: {store['store_name']} / 초기 수집 모드")
+        print(f"📦 정렬 미검증 전체 탐색: {store['store_name']} / 기존 리뷰 {len(existing_reviews)}건" if existing_reviews else f"📦 기존 리뷰 없음: {store['store_name']} / 초기 수집 모드")
         max_rounds = MAX_SCROLL_ROUNDS
 
     for round_no in range(max_rounds):
