@@ -6,6 +6,8 @@ on:
       - test/review-collection-without-sort
     paths:
       - ".github/workflows/review-no-sort-live-diagnostic.yml"
+      - "scraper/scraper.py"
+      - "scraper/no_sort_smoke_probe.py"
   workflow_dispatch:
 
 permissions:
