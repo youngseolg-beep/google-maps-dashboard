@@ -119,6 +119,46 @@ def main():
                 return nodes;
             }""")
             print("REVIEW_SCROLL_ANCESTORS: " + json.dumps(scroll_candidates, separators=(',', ':')))
+            # Metadata-only snapshot: locate the selected tab, card container and
+            # scroll geometry without printing reviews, URLs or user identifiers.
+            panel_layout = page.evaluate("""() => {
+                const cards = [...document.querySelectorAll('.jftiEf')];
+                const tabs = [...document.querySelectorAll('[role="tab"]')];
+                const selected = tabs.filter(t => t.getAttribute('aria-selected') === 'true');
+                const reviewTab = tabs.find(t => /reviews|리뷰|recensies|beoordelingen|ulasan/i.test(
+                    t.getAttribute('aria-label') || t.textContent || ''
+                ));
+                const card = cards[0];
+                const ancestors = [];
+                for (let e = card?.parentElement, depth = 0; e && depth < 16; e = e.parentElement, depth++) {
+                    const css = getComputedStyle(e);
+                    const box = e.getBoundingClientRect();
+                    ancestors.push({
+                        depth, role: e.getAttribute('role') || '',
+                        overflow_y: css.overflowY,
+                        scroll_range: Math.round(e.scrollHeight - e.clientHeight),
+                        scroll_top: Math.round(e.scrollTop),
+                        client_height: Math.round(e.clientHeight),
+                        visible: box.width > 0 && box.height > 0,
+                        cards: e.querySelectorAll('.jftiEf').length
+                    });
+                }
+                return {
+                    selected_tab_count: selected.length,
+                    review_tab_selected: reviewTab?.getAttribute('aria-selected') === 'true',
+                    review_tab_controls_target_exists: !!(reviewTab?.getAttribute('aria-controls') &&
+                        document.getElementById(reviewTab.getAttribute('aria-controls'))),
+                    review_tab_expanded: reviewTab?.getAttribute('aria-expanded') || null,
+                    cards: cards.length,
+                    cards_in_feed: cards.filter(c => c.closest('[role="feed"]')).length,
+                    cards_in_dialog: cards.filter(c => c.closest('[role="dialog"]')).length,
+                    review_feed_count: [...document.querySelectorAll('[role="feed"]')]
+                        .filter(f => f.querySelector('.jftiEf')).length,
+                    card_ancestors: ancestors
+                };
+            }""")
+            print("REVIEW_PANEL_LAYOUT_DIAGNOSTIC: " + json.dumps(panel_layout, separators=(',', ':')))
+
             # Inspect network *metadata* only: status and request type, never
             # request bodies, URLs, cookies, review text, or account details.
             # Registered before a single controlled end-of-feed scroll.
