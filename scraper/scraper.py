@@ -1024,28 +1024,19 @@ def get_review_rating(card):
 
 
 def get_scroll_target(page):
-    """Find a visible, scrollable ancestor of a review card, not the place pane."""
-    try:
-        cards = page.locator(".jftiEf")
-        if cards.count() == 0:
-            return None
-        ancestor = cards.first.evaluate_handle("""card => {
-            for (let el = card.parentElement; el; el = el.parentElement) {
-                const style = getComputedStyle(el);
-                const rect = el.getBoundingClientRect();
-                if (['auto', 'scroll'].includes(style.overflowY) &&
-                    el.scrollHeight > el.clientHeight + 30 &&
-                    rect.width > 0 && rect.height > 0) return el;
-            }
-            return null;
-        }""")
-        element = ancestor.as_element()
-        if element is not None:
-            print("SCROLL_TARGET_DIAGNOSTIC source=review_card_scrollable_ancestor")
-        return element
-    except Exception as exc:
-        print(f"SCROLL_TARGET_DIAGNOSTIC error={type(exc).__name__}")
-        return None
+    """Original Google Maps review-pane selector order."""
+    for selector in (
+        "div[role='feed']",
+        "div.m6QErb.DxyBCb.kA9KIf.dS8AEf",
+        "div.m6QErb[tabindex='-1']",
+    ):
+        try:
+            target = page.locator(selector).first
+            if target.count() > 0:
+                return target
+        except Exception:
+            pass
+    return None
 
 
 def diagnose_review_access(page):
@@ -1091,35 +1082,27 @@ def diagnose_review_access(page):
 
 
 def scroll_reviews(page):
-    """Use the original mouse-wheel/PageDown loading behavior on the review pane.
-
-    Keep a review-card-anchored target so the wheel is not sent blindly to
-    unrelated Maps UI. This is not evidence of complete collection.
-    """
+    """Restore the original mouse fallback, wheel and PageDown sequence."""
     target = get_scroll_target(page)
-    if target is None:
-        print("⚠️ 리뷰 카드가 포함된 스크롤 영역을 찾지 못했습니다.")
-        return False
     try:
-        try:
+        if target:
             target.hover(timeout=2000)
-        except Exception as exc:
-            # A covered/virtualized pane can reject both hover and focus.
-            # Scroll the review-card ancestor directly instead of failing
-            # before attempting to load any additional review cards.
-            print(f"SCROLL_DIAGNOSTIC hover_failed={type(exc).__name__} fallback=scroll_by")
-            target.evaluate("(el) => el.scrollBy(0, Math.max(el.clientHeight, 800))")
-            page.wait_for_timeout(900)
-            return True
+        else:
+            page.mouse.move(500, 500)
+    except Exception:
+        page.mouse.move(500, 500)
+
+    try:
         page.mouse.wheel(0, 8000)
         page.wait_for_timeout(900)
         page.keyboard.press("PageDown")
         page.wait_for_timeout(1400)
-        print("SCROLL_DIAGNOSTIC method=legacy_wheel_pagedown")
+        print("SCROLL_DIAGNOSTIC method=original_wheel_pagedown")
         return True
     except Exception as exc:
-        print(f"⚠️ 기존 방식 리뷰 스크롤 실패: {type(exc).__name__}")
+        print(f"SCROLL_DIAGNOSTIC error={type(exc).__name__}")
         return False
+
 
 def require_supabase_config():
     if not SUPABASE_URL or not SUPABASE_SERVICE_ROLE_KEY:
