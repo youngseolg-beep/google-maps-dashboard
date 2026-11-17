@@ -247,6 +247,29 @@ class ReviewCrawlerRegressionTests(unittest.TestCase):
         self.assertTrue(evidence["scroll_target_missing"])
         self.assertFalse(evidence["full_coverage_verified"])
 
+    def test_empty_review_feed_stops_after_stall_threshold(self):
+        class EmptyCards:
+            def count(self):
+                return 0
+
+        evidence = {}
+        with (
+            patch("builtins.print"),
+            patch.object(scraper, "click_more_buttons"),
+            patch.object(scraper, "click_original_review_buttons"),
+            patch.object(scraper, "get_review_cards", return_value=(EmptyCards(), ".jftiEf")),
+            patch.object(scraper, "scroll_reviews", return_value=True) as scroll,
+            patch.object(scraper, "diagnose_review_access") as diagnose,
+        ):
+            found = scraper.extract_reviews(
+                Mock(), STORE, [], newest_verified=False, collection_evidence=evidence
+            )
+        self.assertEqual(found, [])
+        self.assertEqual(scroll.call_count, scraper.STOP_STALLED_ROUNDS - 1)
+        self.assertTrue(evidence["feed_stalled"])
+        self.assertFalse(evidence["full_coverage_verified"])
+        diagnose.assert_called_once()
+
     def test_stalled_review_feed_is_reported_as_partial(self):
         class OneCardList:
             def count(self):
@@ -290,7 +313,7 @@ class ReviewCrawlerRegressionTests(unittest.TestCase):
             scraper.extract_reviews(
                 Mock(), STORE, [], newest_verified=False, collection_evidence=evidence
             )
-        self.assertEqual(scroll.call_count, scraper.MAX_SCROLL_ROUNDS)
+        self.assertEqual(scroll.call_count, scraper.STOP_STALLED_ROUNDS - 1)
         self.assertFalse(evidence["scroll_target_missing"])
 
     def test_store_scan_does_not_invoke_google_sort(self):
@@ -344,7 +367,7 @@ class ReviewCrawlerRegressionTests(unittest.TestCase):
                 newest_verified=False
             )
         self.assertEqual(result, [])
-        self.assertEqual(scroll.call_count, scraper.MAX_SCROLL_ROUNDS)
+        self.assertEqual(scroll.call_count, scraper.STOP_STALLED_ROUNDS - 1)
 
     def test_unsorted_existing_store_keeps_only_new_review_candidates(self):
         saved = review("Existing full review text that is long enough")

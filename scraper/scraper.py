@@ -1666,7 +1666,7 @@ def extract_reviews(page, store, existing_reviews=None, newest_verified=False, c
         last_card_count = card_count
         last_processed_count = len(processed_keys)
 
-        if feed_stalled_count >= STOP_STALLED_ROUNDS and checked_count > 0:
+        if feed_stalled_count >= STOP_STALLED_ROUNDS:
             feed_stalled = True
             diagnose_review_access(page)
             if collection_evidence is not None:
