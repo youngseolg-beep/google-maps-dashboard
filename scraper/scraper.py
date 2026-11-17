@@ -257,6 +257,7 @@ def open_reviews_panel(page):
         ("button reviews", lambda: page.get_by_role("button", name=re.compile(r"Reviews|리뷰|Recensies|Beoordelingen|Ulasan", re.I)).first),
         ("aria reviews", lambda: page.locator("button[aria-label*='Reviews'], button[aria-label*='reviews'], button[aria-label*='리뷰'], button[aria-label*='Recensies'], button[aria-label*='recensies'], button[aria-label*='Beoordelingen'], button[aria-label*='beoordelingen'], button[aria-label*='Ulasan'], button[aria-label*='ulasan']").first),
         ("jsaction moreReviews", lambda: page.locator("button[jsaction*='pane.rating.moreReviews']").first),
+        ("reviews link", lambda: page.locator("a[href*='!9m1!1b1'], a[href*='reviews']").first),
         ("text reviews", lambda: page.locator("text=/Reviews|리뷰|Recensies|Beoordelingen|Ulasan/i").first),
     ]
 
@@ -274,8 +275,13 @@ def open_reviews_panel(page):
                 feed_count = page.locator("div[role='feed']").filter(
                     has=page.locator(".jftiEf")
                 ).count()
-                if feed_count:
-                    print("✅ 클릭 후 리뷰 피드 감지")
+                # Some Maps layouts omit role=feed, so an explicit reviews
+                # tab with selected state is an independent panel signal.
+                selected_reviews_tab = page.get_by_role(
+                    "tab", name=re.compile(r"Reviews|리뷰|Recensies|Beoordelingen|Ulasan", re.I)
+                ).locator("[aria-selected='true']").count() > 0
+                if feed_count or selected_reviews_tab:
+                    print("✅ 클릭 후 전체 리뷰 패널 진입 신호 감지")
                     return True
                 print("⚠️ 클릭 후 리뷰 피드 미확인; 다음 후보 확인")
         except Exception as e:
@@ -1716,8 +1722,11 @@ def scrape_store(page, store, existing_reviews=None, collection_evidence=None):
         review_feed_present = page.locator("div[role='feed']").filter(
             has=page.locator(".jftiEf")
         ).count() > 0
-        if not review_feed_present:
-            open_reviews_panel(page)
+        panel_opened = review_feed_present or open_reviews_panel(page)
+        if not panel_opened:
+            print("⚠️ 전체 리뷰 패널 진입 미확인: 상세 화면의 리뷰 카드만 관측될 수 있습니다.")
+            if collection_evidence is not None:
+                collection_evidence["review_panel_unverified"] = True
 
         print("⏳ Google Maps 리뷰 패널 렌더링 대기 중...")
         page.wait_for_timeout(4000)
@@ -1755,11 +1764,13 @@ def scrape_store(page, store, existing_reviews=None, collection_evidence=None):
                     "crawled_at": now_kst().strftime("%Y-%m-%d %H:%M:%S"),
                     "reviews": reviews,
                     "collection_issue": (
-                        "review_scroll_unavailable_partial"
-                        if scan_evidence.get("scroll_target_missing")
-                        else ("review_feed_stalled_partial"
-                              if scan_evidence.get("feed_stalled")
-                              else "completeness_unverified")
+                        "review_panel_unverified_partial"
+                        if scan_evidence.get("review_panel_unverified")
+                        else ("review_scroll_unavailable_partial"
+                              if scan_evidence.get("scroll_target_missing")
+                              else ("review_feed_stalled_partial"
+                                    if scan_evidence.get("feed_stalled")
+                                    else "completeness_unverified"))
                     ),
                 }
 

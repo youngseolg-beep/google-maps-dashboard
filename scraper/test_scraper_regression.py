@@ -334,6 +334,28 @@ class ReviewCrawlerRegressionTests(unittest.TestCase):
         self.assertEqual(scroll.call_count, scraper.STOP_STALLED_ROUNDS - 1)
         self.assertFalse(evidence["scroll_target_missing"])
 
+    def test_unopened_reviews_panel_is_recorded_as_partial(self):
+        page = Mock()
+        page.locator.return_value.filter.return_value.count.return_value = 0
+        existing = review("Existing full review text that is long enough")
+        evidence = {}
+        with (
+            patch("builtins.print"),
+            patch.object(scraper, "build_url_candidates", return_value=["https://maps.google.com/example"]),
+            patch.object(scraper, "click_cookie_buttons"),
+            patch.object(scraper, "is_valid_google_maps_place_page", return_value=True),
+            patch.object(scraper, "open_reviews_panel", return_value=False),
+            patch.object(scraper, "wait_for_reviews", return_value=True),
+            patch.object(scraper, "extract_reviews", return_value=[]),
+        ):
+            result = scraper.scrape_store(
+                page, {**STORE, "url": "https://maps.google.com/example"},
+                [existing], collection_evidence=evidence
+            )
+        self.assertTrue(result["ok"])
+        self.assertTrue(evidence["review_panel_unverified"])
+        self.assertEqual(result["collection_issue"], "review_panel_unverified_partial")
+
     def test_store_scan_does_not_invoke_google_sort(self):
         page = Mock()
         page.locator.return_value.filter.return_value.count.return_value = 1
