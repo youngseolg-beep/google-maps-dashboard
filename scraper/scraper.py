@@ -1104,10 +1104,13 @@ def scroll_reviews(page):
         try:
             target.hover(timeout=2000)
         except Exception as exc:
-            # The review pane may be covered or outside the viewport; keep
-            # targeting the review-card ancestor rather than a generic pane.
-            print(f"SCROLL_DIAGNOSTIC hover_failed={type(exc).__name__} fallback=focus")
-            target.focus(timeout=2000)
+            # A covered/virtualized pane can reject both hover and focus.
+            # Scroll the review-card ancestor directly instead of failing
+            # before attempting to load any additional review cards.
+            print(f"SCROLL_DIAGNOSTIC hover_failed={type(exc).__name__} fallback=scroll_by")
+            target.evaluate("(el) => el.scrollBy(0, Math.max(el.clientHeight, 800))")
+            page.wait_for_timeout(900)
+            return True
         page.mouse.wheel(0, 8000)
         page.wait_for_timeout(900)
         page.keyboard.press("PageDown")
