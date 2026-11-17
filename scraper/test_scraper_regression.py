@@ -211,6 +211,24 @@ class ReviewCrawlerRegressionTests(unittest.TestCase):
             self.assertIsNone(scraper.get_scroll_target(page))
         page.locator.return_value.first.evaluate_handle.assert_not_called()
 
+    def test_scroll_target_ignores_visible_non_scrollable_feed(self):
+        page = Mock()
+        ancestor = Mock()
+        page.locator.return_value.count.return_value = 1
+        page.locator.return_value.first.evaluate_handle.return_value.as_element.return_value = ancestor
+        self.assertIs(scraper.get_scroll_target(page), ancestor)
+        page.locator.return_value.is_visible.assert_not_called()
+
+    def test_hover_timeout_uses_review_target_focus_fallback(self):
+        page = Mock()
+        target = Mock()
+        target.hover.side_effect = TimeoutError("not hoverable")
+        with patch.object(scraper, "get_scroll_target", return_value=target), patch("builtins.print"):
+            self.assertTrue(scraper.scroll_reviews(page))
+        target.focus.assert_called_once_with(timeout=2000)
+        page.mouse.wheel.assert_called_once_with(0, 8000)
+        page.keyboard.press.assert_called_once_with("PageDown")
+
     def test_scroll_targets_review_feed_with_legacy_wheel_and_page_down(self):
         page = Mock()
         feed = Mock()

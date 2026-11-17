@@ -1011,45 +1011,28 @@ def get_review_rating(card):
 
 
 def get_scroll_target(page):
-    # Google Maps may render multiple feeds; only the one containing review cards
-    # should be scrolled. Do not accidentally scroll the main place-details pane.
-    candidates = [
-        "div[role='feed']",
-        "div.m6QErb.DxyBCb.kA9KIf.dS8AEf",
-        "div.m6QErb[tabindex='-1']",
-    ]
-    for selector in candidates:
-        try:
-            targets = page.locator(selector)
-            for index in range(min(targets.count(), 12)):
-                target = targets.nth(index)
-                if target.locator(".jftiEf").count() > 0 and target.is_visible():
-                    return target
-        except Exception:
-            continue
-    # Google Maps sometimes omits role="feed". In that case, use only
-    # a visible, genuinely scrollable ancestor of an actual review card.
-    # Do not fall back to a generic place-details pane.
+    """Find a visible, scrollable ancestor of a review card, not the place pane."""
     try:
         cards = page.locator(".jftiEf")
-        if cards.count() > 0:
-            ancestor = cards.first.evaluate_handle("""card => {
-                for (let el = card.parentElement; el; el = el.parentElement) {
-                    const style = getComputedStyle(el);
-                    const rect = el.getBoundingClientRect();
-                    if (['auto', 'scroll'].includes(style.overflowY) &&
-                        el.scrollHeight > el.clientHeight + 30 &&
-                        rect.width > 0 && rect.height > 0) return el;
-                }
-                return null;
-            }""")
-            element = ancestor.as_element()
-            if element is not None:
-                print("SCROLL_TARGET_DIAGNOSTIC fallback=review_card_scrollable_ancestor")
-                return element
+        if cards.count() == 0:
+            return None
+        ancestor = cards.first.evaluate_handle("""card => {
+            for (let el = card.parentElement; el; el = el.parentElement) {
+                const style = getComputedStyle(el);
+                const rect = el.getBoundingClientRect();
+                if (['auto', 'scroll'].includes(style.overflowY) &&
+                    el.scrollHeight > el.clientHeight + 30 &&
+                    rect.width > 0 && rect.height > 0) return el;
+            }
+            return null;
+        }""")
+        element = ancestor.as_element()
+        if element is not None:
+            print("SCROLL_TARGET_DIAGNOSTIC source=review_card_scrollable_ancestor")
+        return element
     except Exception as exc:
-        print(f"SCROLL_TARGET_DIAGNOSTIC fallback_error={type(exc).__name__}")
-    return None
+        print(f"SCROLL_TARGET_DIAGNOSTIC error={type(exc).__name__}")
+        return None
 
 
 def diagnose_review_access(page):
@@ -1105,7 +1088,13 @@ def scroll_reviews(page):
         print("⚠️ 리뷰 카드가 포함된 스크롤 영역을 찾지 못했습니다.")
         return False
     try:
-        target.hover(timeout=2000)
+        try:
+            target.hover(timeout=2000)
+        except Exception as exc:
+            # The review pane may be covered or outside the viewport; keep
+            # targeting the review-card ancestor rather than a generic pane.
+            print(f"SCROLL_DIAGNOSTIC hover_failed={type(exc).__name__} fallback=focus")
+            target.focus(timeout=2000)
         page.mouse.wheel(0, 8000)
         page.wait_for_timeout(900)
         page.keyboard.press("PageDown")
