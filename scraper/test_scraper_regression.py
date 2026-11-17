@@ -334,6 +334,14 @@ class ReviewCrawlerRegressionTests(unittest.TestCase):
         self.assertEqual(scroll.call_count, scraper.STOP_STALLED_ROUNDS - 1)
         self.assertFalse(evidence["scroll_target_missing"])
 
+    def test_selected_reviews_tab_detected_on_tab_itself(self):
+        page = Mock()
+        page.get_by_role.return_value.first.count.return_value = 1
+        page.locator.return_value.filter.return_value.count.side_effect = [0, 0, 1]
+        with patch("builtins.print"):
+            self.assertTrue(scraper.open_reviews_panel(page))
+        page.locator.assert_any_call("[role='tab'][aria-selected='true']")
+
     def test_unopened_reviews_panel_is_recorded_as_partial(self):
         page = Mock()
         page.locator.return_value.filter.return_value.count.return_value = 0

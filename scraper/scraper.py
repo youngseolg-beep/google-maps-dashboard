@@ -279,7 +279,14 @@ def open_reviews_panel(page):
                 # tab with selected state is an independent panel signal.
                 selected_reviews_tab = page.get_by_role(
                     "tab", name=re.compile(r"Reviews|리뷰|Recensies|Beoordelingen|Ulasan", re.I)
-                ).locator("[aria-selected='true']").count() > 0
+                ).filter(has=page.locator("[aria-selected='true']")).count() > 0
+                # aria-selected normally belongs to the tab itself, not a child.
+                if not selected_reviews_tab:
+                    selected_reviews_tab = page.locator(
+                        "[role='tab'][aria-selected='true']"
+                    ).filter(has_text=re.compile(
+                        r"Reviews|리뷰|Recensies|Beoordelingen|Ulasan", re.I
+                    )).count() > 0
                 if feed_count or selected_reviews_tab:
                     print("✅ 클릭 후 전체 리뷰 패널 진입 신호 감지")
                     return True
