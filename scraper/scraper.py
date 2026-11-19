@@ -261,6 +261,7 @@ def open_reviews_panel(page):
         ("text reviews", lambda: page.locator("text=/Reviews|리뷰|Recensies|Beoordelingen|Ulasan/i").first),
     ]
 
+    selected_tab_only = False
     for name, get_locator in click_targets:
         try:
             locator = get_locator()
@@ -287,13 +288,20 @@ def open_reviews_panel(page):
                     f"review_feed_count={feed_count} selected_reviews_tab={selected_reviews_tab} "
                     f"cards={page.locator('.jftiEf').count()}"
                 )
-                if feed_count or selected_reviews_tab:
-                    print("✅ 클릭 후 전체 리뷰 패널 진입 신호 감지")
+                if feed_count:
+                    print("✅ 리뷰 피드 확인")
                     return True
-                print("⚠️ 클릭 후 리뷰 피드 미확인; 다음 후보 확인")
+                if selected_reviews_tab:
+                    selected_tab_only = True
+                    print("REVIEW_PANEL_DIAGNOSTIC selected_tab_without_feed; checking more entry points")
+                else:
+                    print("⚠️ 클릭 후 리뷰 피드 미확인; 다음 후보 확인")
         except Exception as e:
             print(f"⚠️ 클릭 실패: {name} / {e}")
 
+    if selected_tab_only:
+        print("REVIEW_PANEL_DIAGNOSTIC selected_tab_only_no_feed")
+        return True
     print("⚠️ 리뷰 패널 클릭으로 열기 실패")
     return False
 
