@@ -144,31 +144,55 @@ def run_one(browser, label, url):
         report["states"]["after_more_reviews"] = sample(page, seen)
 
         monitor = True
-        # Reset and wheel in small increments; compare actual unique review
-        # identities, not just visible card count in virtualized layouts.
-        page.evaluate("""() => {
-            const card = document.querySelector('.jftiEf');
-            for (let el = card?.parentElement; el; el = el.parentElement) {
-                if (['auto','scroll'].includes(getComputedStyle(el).overflowY) &&
-                    el.scrollHeight > el.clientHeight + 30) {el.scrollTop = 0; break;}
+        # Target the scrollable review pane itself, not a review card that
+        # moves off-screen after the first wheel event.
+        pane_handle = page.locator(".jftiEf").first.evaluate_handle("""card => {
+            for (let el = card.parentElement; el; el = el.parentElement) {
+                const css = getComputedStyle(el);
+                const box = el.getBoundingClientRect();
+                if (box.width > 0 && box.height > 0 &&
+                    ['auto', 'scroll'].includes(css.overflowY) &&
+                    el.scrollHeight > el.clientHeight + 30) return el;
             }
-        }""")
-        page.wait_for_timeout(600)
-        report["states"]["scroll_top"] = sample(page, seen)
-        for i in range(6):
-            try:
-                box = page.locator(".jftiEf").first.bounding_box(timeout=2000)
-                if box:
-                    page.mouse.move(
-                        max(1, min(1350, box["x"] + min(box["width"] / 2, 100))),
-                        max(1, min(900, box["y"] + 60)),
-                    )
-                page.mouse.wheel(0, 700)
-                page.wait_for_timeout(1300)
-                report["states"]["wheel_" + str(i + 1)] = sample(page, seen)
-            except Exception as exc:
-                report["actions"].append("wheel_" + type(exc).__name__)
-                break
+            return null;
+        }""") if page.locator(".jftiEf").count() else None
+        pane = pane_handle.as_element() if pane_handle is not None else None
+        if pane is None:
+            report["actions"].append("no_scrollable_review_pane")
+        else:
+            pane.evaluate("(el) => {el.scrollTop = 0}")
+            page.wait_for_timeout(700)
+            report["states"]["scroll_top"] = sample(page, seen)
+            report["wheel_scroll_changes"] = 0
+            report["js_scroll_fallbacks"] = 0
+            for i in range(9):
+                try:
+                    before = pane.evaluate("(el) => el.scrollTop")
+                    box = pane.bounding_box()
+                    if not box:
+                        report["actions"].append("pane_bounding_box_missing")
+                        break
+                    # Stay inside the same pane as it scrolls.
+                    x = box["x"] + box["width"] / 2
+                    y = box["y"] + box["height"] / 2
+                    page.mouse.move(x, y)
+                    page.mouse.wheel(0, 650)
+                    page.wait_for_timeout(1300)
+                    after = pane.evaluate("(el) => el.scrollTop")
+                    if after > before:
+                        report["wheel_scroll_changes"] += 1
+                    else:
+                        at_bottom = pane.evaluate(
+                            "(el) => el.scrollTop >= el.scrollHeight - el.clientHeight - 2"
+                        )
+                        if not at_bottom:
+                            pane.evaluate("(el) => {el.scrollTop += 650}")
+                            report["js_scroll_fallbacks"] += 1
+                            page.wait_for_timeout(1300)
+                    report["states"]["wheel_" + str(i + 1)] = sample(page, seen)
+                except Exception as exc:
+                    report["actions"].append("wheel_" + type(exc).__name__)
+                    break
         report["max_unique"] = len(seen)
         report["max_visible"] = max(
             (v["visible_cards"] for v in report["states"].values()), default=0
