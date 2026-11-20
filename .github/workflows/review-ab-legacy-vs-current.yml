@@ -1,0 +1,46 @@
+name: review-ab-legacy-vs-current
+
+on:
+  push:
+    branches: [test/review-collection-without-sort]
+    paths:
+      - "scraper/review_ab_compare.py"
+      - ".github/workflows/review-ab-legacy-vs-current.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  read-only-ab:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Prepare fixed-version scripts
+        run: |
+          git show 9e4f685d3edf331aabfb0af9c15a49ac8859cf90:scraper/scraper.py > /tmp/legacy_scraper.py
+          git show "$GITHUB_SHA:scraper/scraper.py" > /tmp/current_scraper.py
+          python -m py_compile /tmp/legacy_scraper.py /tmp/current_scraper.py scraper/review_ab_compare.py
+      - name: Install Chromium and scraper dependencies
+        run: |
+          pip install -r scraper/requirements.txt
+          python -m playwright install --with-deps chromium
+      - name: Run identical one-store browser comparison (no DB)
+        env:
+          SUPABASE_URL: ""
+          SUPABASE_SERVICE_ROLE_KEY: ""
+        run: |
+          python scraper/review_ab_compare.py --legacy /tmp/legacy_scraper.py --current /tmp/current_scraper.py
+      - name: Upload aggregate-only report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: review-ab-aggregate
+          path: review-ab-result.json
+          if-no-files-found: ignore
