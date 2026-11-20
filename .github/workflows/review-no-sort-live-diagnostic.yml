@@ -1,0 +1,32 @@
+name: review-no-sort-live-diagnostic
+
+on:
+  push:
+    branches:
+      - test/review-collection-without-sort
+    paths:
+      - ".github/workflows/review-no-sort-live-diagnostic.yml"
+      - "scraper/scraper.py"
+      - "scraper/no_sort_smoke_probe.py"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  one-store-read-only:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Compile crawler and diagnostic before installing Chromium
+        run: python -m py_compile scraper/scraper.py scraper/no_sort_smoke_probe.py
+      - name: Install browser dependencies
+        run: |
+          pip install -r scraper/requirements.txt
+          python -m playwright install --with-deps chromium
+      - name: One-store card identity diagnostic (no database secrets)
+        run: python scraper/no_sort_smoke_probe.py

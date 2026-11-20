@@ -1,0 +1,42 @@
+name: review-headed-vs-headless
+
+on:
+  push:
+    branches:
+      - test/review-collection-without-sort
+    paths:
+      - ".github/workflows/review-headed-vs-headless.yml"
+      - "scraper/review_entry_matrix_probe.py"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  headed-read-only:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Prepare browser and read-only diagnostic
+        run: |
+          python -m py_compile scraper/review_entry_matrix_probe.py
+          pip install -r scraper/requirements.txt
+          python -m playwright install --with-deps chromium
+      - name: Test identical store in headed Chromium with virtual display
+        env:
+          SUPABASE_URL: ""
+          SUPABASE_SERVICE_ROLE_KEY: ""
+        run: |
+          command -v xvfb-run
+          xvfb-run -a python scraper/review_entry_matrix_probe.py --headed --only-current
+      - name: Upload aggregate-only diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: review-headed-aggregate
+          path: review-entry-matrix-headed.json
+          if-no-files-found: ignore
