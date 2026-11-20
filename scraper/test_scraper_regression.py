@@ -223,12 +223,12 @@ class ReviewCrawlerRegressionTests(unittest.TestCase):
         page = Mock()
         target = Mock()
         target.hover.side_effect = TimeoutError("not hoverable")
+        target.bounding_box.return_value = {"x": 10, "y": 20, "width": 100, "height": 80}
         with patch.object(scraper, "get_scroll_target", return_value=target), patch("builtins.print"):
             self.assertTrue(scraper.scroll_reviews(page))
-        page.mouse.move.assert_called_once_with(500, 500)
+        page.mouse.move.assert_called_once_with(60, 60)
         page.mouse.wheel.assert_called_once_with(0, 8000)
         page.keyboard.press.assert_called_once_with("PageDown")
-
 
     def test_scroll_targets_review_feed_with_legacy_wheel_and_page_down(self):
         page = Mock()
@@ -242,10 +242,10 @@ class ReviewCrawlerRegressionTests(unittest.TestCase):
 
     def test_scroll_without_review_feed_uses_original_mouse_fallback(self):
         page = Mock()
-        with patch.object(scraper, "get_scroll_target", return_value=None):
-            self.assertTrue(scraper.scroll_reviews(page))
-        page.mouse.move.assert_called_once_with(500, 500)
-        page.mouse.wheel.assert_called_once_with(0, 8000)
+        with patch.object(scraper, "get_scroll_target", return_value=None), patch("builtins.print"):
+            self.assertFalse(scraper.scroll_reviews(page))
+        page.mouse.wheel.assert_not_called()
+        page.keyboard.press.assert_not_called()
 
     def test_failed_scroll_records_partial_evidence_and_stops_retrying(self):
         class EmptyCards:
@@ -405,12 +405,10 @@ class ReviewCrawlerRegressionTests(unittest.TestCase):
 
     def test_original_scroll_falls_back_when_pane_missing(self):
         page = Mock()
-        with patch.object(scraper, "get_scroll_target", return_value=None):
-            self.assertTrue(scraper.scroll_reviews(page))
-        page.mouse.move.assert_called_once_with(500, 500)
-        page.mouse.wheel.assert_called_once_with(0, 8000)
-        page.keyboard.press.assert_called_once_with("PageDown")
-
+        with patch.object(scraper, "get_scroll_target", return_value=None), patch("builtins.print"):
+            self.assertFalse(scraper.scroll_reviews(page))
+        page.mouse.wheel.assert_not_called()
+        page.keyboard.press.assert_not_called()
 
     def test_unverified_sort_falls_back_to_bounded_scan(self):
         class EmptyCards:

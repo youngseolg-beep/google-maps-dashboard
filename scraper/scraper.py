@@ -1032,19 +1032,28 @@ def get_review_rating(card):
 
 
 def get_scroll_target(page):
-    """Original Google Maps review-pane selector order."""
-    for selector in (
-        "div[role='feed']",
-        "div.m6QErb.DxyBCb.kA9KIf.dS8AEf",
-        "div.m6QErb[tabindex='-1']",
-    ):
-        try:
-            target = page.locator(selector).first
-            if target.count() > 0:
-                return target
-        except Exception:
-            pass
-    return None
+    """Choose a visible, scrollable ancestor of an actual review card."""
+    try:
+        cards = page.locator(".jftiEf")
+        if cards.count() == 0:
+            return None
+        handle = cards.first.evaluate_handle("""card => {
+            for (let el = card.parentElement; el; el = el.parentElement) {
+                const style = getComputedStyle(el);
+                const r = el.getBoundingClientRect();
+                if (r.width > 0 && r.height > 0 &&
+                    ['auto', 'scroll'].includes(style.overflowY) &&
+                    el.scrollHeight > el.clientHeight + 30) return el;
+            }
+            return null;
+        }""")
+        target = handle.as_element()
+        if target is not None:
+            print("SCROLL_TARGET_DIAGNOSTIC source=review_card_ancestor")
+        return target
+    except Exception as exc:
+        print(f"SCROLL_TARGET_DIAGNOSTIC error={type(exc).__name__}")
+        return None
 
 
 def diagnose_review_access(page):
@@ -1090,22 +1099,25 @@ def diagnose_review_access(page):
 
 
 def scroll_reviews(page):
-    """Restore the original mouse fallback, wheel and PageDown sequence."""
+    """Keep original wheel/PageDown, targeting the review card's scroll pane."""
     target = get_scroll_target(page)
+    if target is None:
+        print("SCROLL_DIAGNOSTIC missing_review_scroll_target")
+        return False
     try:
-        if target:
+        try:
             target.hover(timeout=2000)
-        else:
-            page.mouse.move(500, 500)
-    except Exception:
-        page.mouse.move(500, 500)
-
-    try:
+        except Exception as exc:
+            print(f"SCROLL_DIAGNOSTIC hover_failed={type(exc).__name__} fallback=target_center")
+            box = target.bounding_box()
+            if not box or box["width"] <= 0 or box["height"] <= 0:
+                return False
+            page.mouse.move(box["x"] + box["width"] / 2, box["y"] + box["height"] / 2)
         page.mouse.wheel(0, 8000)
         page.wait_for_timeout(900)
         page.keyboard.press("PageDown")
         page.wait_for_timeout(1400)
-        print("SCROLL_DIAGNOSTIC method=original_wheel_pagedown")
+        print("SCROLL_DIAGNOSTIC method=targeted_wheel_pagedown")
         return True
     except Exception as exc:
         print(f"SCROLL_DIAGNOSTIC error={type(exc).__name__}")
