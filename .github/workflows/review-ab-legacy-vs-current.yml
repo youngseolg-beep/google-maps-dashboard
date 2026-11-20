@@ -4,6 +4,8 @@ on:
   push:
     branches: [test/review-collection-without-sort]
     paths:
+      - "scraper/scraper.py"
+      - "scraper/test_scraper_regression.py"
       - "scraper/review_ab_compare.py"
       - ".github/workflows/review-ab-legacy-vs-current.yml"
   workflow_dispatch:

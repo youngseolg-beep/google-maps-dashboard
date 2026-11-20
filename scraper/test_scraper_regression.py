@@ -335,13 +335,41 @@ class ReviewCrawlerRegressionTests(unittest.TestCase):
         self.assertEqual(scroll.call_count, scraper.STOP_STALLED_ROUNDS - 1)
         self.assertFalse(evidence["scroll_target_missing"])
 
-    def test_selected_reviews_tab_detected_on_tab_itself(self):
+    def test_selected_reviews_tab_without_feed_is_partial(self):
         page = Mock()
+        page.url = "https://www.google.com/maps/place/test"
         page.get_by_role.return_value.first.count.return_value = 1
         page.locator.return_value.filter.return_value.count.side_effect = [0, 1]
+        page.locator.return_value.count.return_value = 5
+        with patch("builtins.print"):
+            self.assertFalse(scraper.open_reviews_panel(page))
+        page.locator.assert_any_call("[role='tab'][aria-selected='true']")
+        page.get_by_role.return_value.first.click.assert_called_once()
+        self.assertFalse(any(
+            "a[href" in str(item.args[0]) for item in page.locator.call_args_list
+        ))
+
+    def test_reviews_panel_aborts_if_click_leaves_maps(self):
+        page = Mock()
+        page.url = "https://www.google.com/maps/place/test"
+        page.get_by_role.return_value.first.count.return_value = 1
+
+        def navigate(*args, **kwargs):
+            page.url = "https://www.google.com/search?q=unrelated"
+
+        page.get_by_role.return_value.first.click.side_effect = navigate
+        with patch("builtins.print"):
+            self.assertFalse(scraper.open_reviews_panel(page))
+        page.locator.assert_not_called()
+
+    def test_reviews_feed_confirms_full_panel_without_link_fallback(self):
+        page = Mock()
+        page.url = "https://www.google.com/maps/place/test"
+        page.get_by_role.return_value.first.count.return_value = 1
+        page.locator.return_value.filter.return_value.count.return_value = 1
         with patch("builtins.print"):
             self.assertTrue(scraper.open_reviews_panel(page))
-        page.locator.assert_any_call("[role='tab'][aria-selected='true']")
+        page.get_by_role.return_value.first.click.assert_called_once()
 
     def test_unselected_reviews_tab_does_not_confirm_panel(self):
         page = Mock()

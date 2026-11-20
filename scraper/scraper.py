@@ -250,59 +250,77 @@ def is_valid_google_maps_place_page(page):
 
 
 def open_reviews_panel(page):
+    """Activate reviews without navigating away from the current Maps place.
+
+    The selected Reviews tab is not proof of a complete review feed: the
+    place page can display only five preview cards with that tab selected.
+    """
     print("🔘 리뷰 패널 열기 시도 중...")
 
+    # Do not click generic "reviews" text or hrefs. The A/B run on 2026-11-20
+    # demonstrated that a review link can leave Google Maps entirely.
     click_targets = [
-        ("tab reviews", lambda: page.get_by_role("tab", name=re.compile(r"Reviews|리뷰|Recensies|Beoordelingen|Ulasan", re.I)).first),
-        ("button reviews", lambda: page.get_by_role("button", name=re.compile(r"Reviews|리뷰|Recensies|Beoordelingen|Ulasan", re.I)).first),
-        ("aria reviews", lambda: page.locator("button[aria-label*='Reviews'], button[aria-label*='reviews'], button[aria-label*='리뷰'], button[aria-label*='Recensies'], button[aria-label*='recensies'], button[aria-label*='Beoordelingen'], button[aria-label*='beoordelingen'], button[aria-label*='Ulasan'], button[aria-label*='ulasan']").first),
-        ("jsaction moreReviews", lambda: page.locator("button[jsaction*='pane.rating.moreReviews']").first),
-        ("reviews link", lambda: page.locator("a[href*='!9m1!1b1'], a[href*='reviews']").first),
-        ("text reviews", lambda: page.locator("text=/Reviews|리뷰|Recensies|Beoordelingen|Ulasan/i").first),
+        ("tab reviews", lambda: page.get_by_role("tab", name=re.compile(
+            r"Reviews|리뷰|Recensies|Beoordelingen|Ulasan", re.I)).first),
+        ("jsaction moreReviews", lambda: page.locator(
+            "button[jsaction*='pane.rating.moreReviews']").first),
+        ("button reviews", lambda: page.get_by_role("button", name=re.compile(
+            r"Reviews|리뷰|Recensies|Beoordelingen|Ulasan", re.I)).first),
+        ("aria reviews", lambda: page.locator(
+            "button[aria-label*='Reviews'], button[aria-label*='reviews'], "
+            "button[aria-label*='리뷰'], button[aria-label*='Recensies'], "
+            "button[aria-label*='recensies'], button[aria-label*='Beoordelingen'], "
+            "button[aria-label*='beoordelingen'], button[aria-label*='Ulasan'], "
+            "button[aria-label*='ulasan']").first),
     ]
 
-    selected_tab_only = False
+    initial_url = getattr(page, "url", "")
     for name, get_locator in click_targets:
         try:
             locator = get_locator()
-            if locator.count() > 0:
-                print(f"🔘 클릭 후보 발견: {name}")
-                locator.click(timeout=5000, force=True)
-                page.wait_for_timeout(6000)
-                print(f"✅ 클릭 실행 완료: {name}")
+            if locator.count() == 0:
+                continue
+            print(f"🔘 클릭 후보 발견: {name}")
+            locator.click(timeout=5000, force=True)
+            page.wait_for_timeout(6000)
 
-                # Cards may already exist in the place details pane.
-                # Clicking alone is not proof of a functioning review feed.
-                feed_count = page.locator("div[role='feed']").filter(
-                    has=page.locator(".jftiEf")
-                ).count()
-                # Some Maps layouts omit role=feed, so an explicit reviews
-                # tab with selected state is an independent panel signal.
-                selected_reviews_tab = page.locator(
-                    "[role='tab'][aria-selected='true']"
-                ).filter(has_text=re.compile(
-                    r"Reviews|리뷰|Recensies|Beoordelingen|Ulasan", re.I
-                )).count() > 0
-                print(
-                    f"REVIEW_PANEL_DIAGNOSTIC candidate={name} "
-                    f"review_feed_count={feed_count} selected_reviews_tab={selected_reviews_tab} "
-                    f"cards={page.locator('.jftiEf').count()}"
-                )
-                if feed_count:
-                    print("✅ 리뷰 피드 확인")
+            # Stop immediately if a button navigates away. Never continue
+            # clicking unrelated controls on a non-place page.
+            current_url = getattr(page, "url", "")
+            if (isinstance(initial_url, str) and "/maps/place/" in initial_url and
+                    (not isinstance(current_url, str) or "/maps/place/" not in current_url)):
+                print(f"REVIEW_PANEL_DIAGNOSTIC left_place_page candidate={name}")
+                return False
+
+            feed_count = page.locator("div[role='feed']").filter(
+                has=page.locator(".jftiEf")
+            ).count()
+            selected_tab = page.locator(
+                "[role='tab'][aria-selected='true']"
+            ).filter(has_text=re.compile(
+                r"Reviews|리뷰|Recensies|Beoordelingen|Ulasan", re.I
+            )).count() > 0
+            card_count = page.locator(".jftiEf").count()
+            print(
+                f"REVIEW_PANEL_DIAGNOSTIC candidate={name} "
+                f"review_feed_count={feed_count} selected_reviews_tab={selected_tab} "
+                f"cards={card_count}"
+            )
+            if feed_count:
+                print("✅ 리뷰 피드 확인")
+                return True
+            if selected_tab:
+                if isinstance(card_count, int) and card_count > 5:
+                    print("✅ 리뷰 탭에서 5건 초과 리뷰 카드 확인")
                     return True
-                if selected_reviews_tab:
-                    selected_tab_only = True
-                    print("REVIEW_PANEL_DIAGNOSTIC selected_tab_without_feed; checking more entry points")
-                else:
-                    print("⚠️ 클릭 후 리뷰 피드 미확인; 다음 후보 확인")
-        except Exception as e:
-            print(f"⚠️ 클릭 실패: {name} / {e}")
+                # Don't keep clicking other UI controls once Reviews is
+                # selected: that caused a 5 -> 0 card navigation regression.
+                print("REVIEW_PANEL_DIAGNOSTIC selected_tab_only_no_feed; stop_without_navigation")
+                return False
+        except Exception as exc:
+            print(f"⚠️ 리뷰 패널 클릭 실패: {name} / {type(exc).__name__}")
 
-    if selected_tab_only:
-        print("REVIEW_PANEL_DIAGNOSTIC selected_tab_only_no_feed")
-        return True
-    print("⚠️ 리뷰 패널 클릭으로 열기 실패")
+    print("REVIEW_PANEL_DIAGNOSTIC full_review_feed_unverified")
     return False
 
 
@@ -1040,8 +1058,8 @@ def get_scroll_target(page):
         handle = cards.first.evaluate_handle("""card => {
             for (let el = card.parentElement; el; el = el.parentElement) {
                 const style = getComputedStyle(el);
-                const r = el.getBoundingClientRect();
-                if (r.width > 0 && r.height > 0 &&
+                const rect = el.getBoundingClientRect();
+                if (rect.width > 0 && rect.height > 0 &&
                     ['auto', 'scroll'].includes(style.overflowY) &&
                     el.scrollHeight > el.clientHeight + 30) return el;
             }
