@@ -185,11 +185,16 @@ def run_one(browser, label, url):
 
 
 def main():
+    import argparse
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--headed", action="store_true")
+    parser.add_argument("--only-current", action="store_true")
+    args = parser.parse_args()
     if os.environ.get("SUPABASE_URL") or os.environ.get("SUPABASE_SERVICE_ROLE_KEY"):
         raise SystemExit("Refusing to run with Supabase credentials")
     with sync_playwright() as playwright:
         browser = playwright.chromium.launch(
-            headless=True,
+            headless=not args.headed,
             args=[
                 "--disable-blink-features=AutomationControlled",
                 "--disable-dev-shm-usage",
@@ -199,16 +204,19 @@ def main():
             ],
         )
         try:
-            reports = [run_one(browser, label, url) for label, url in VARIANTS]
+            variants = VARIANTS[:1] if args.only_current else VARIANTS
+            reports = [run_one(browser, label, url) for label, url in variants]
         finally:
             browser.close()
     result = {
         "store": "Saemaeul Central Eastville",
         "database_writes": False,
+        "browser_mode": "headed" if args.headed else "headless",
         "variants": reports,
         "any_over_five": any(r.get("max_unique", 0) > 5 for r in reports),
     }
-    Path("review-entry-matrix.json").write_text(
+    result_file = "review-entry-matrix-headed.json" if args.headed else "review-entry-matrix.json"
+    Path(result_file).write_text(
         json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8"
     )
     print("REVIEW_ENTRY_MATRIX_RESULT: " + json.dumps(result, ensure_ascii=False))
