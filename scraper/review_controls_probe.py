@@ -31,6 +31,7 @@ CONTEXT = {
 SAFE_ACTIONS = {
     "review_tab", "review_count_entry", "all_reviews_action",
     "more_reviews_action", "review_link_internal",
+    "review_action_button", "other_review_labeled_control",
 }
 MAX_CLICKS = 7
 
@@ -66,6 +67,7 @@ def classify_controls(page):
             if (!hit) return;
             let category;
             if (card) category = 'review_card_action';
+            else if (role === 'radio') category = 'review_rating_filter';
             else if (isWrite.test(label)) category = 'write_review';
             else if (isSort.test(label)) category = 'sort_filter';
             else if (tag === 'a') category = /^https?:\\/\\//i.test(href) &&
@@ -75,6 +77,7 @@ def classify_controls(page):
             else if (role === 'tab') category = 'review_tab';
             else if (isAll.test(label)) category = 'all_reviews_action';
             else if (hasCount.test(label)) category = 'review_count_entry';
+            else if (/review/i.test(action)) category = 'review_action_button';
             else category = 'other_review_labeled_control';
             out.push({
                 index, category, tag, role,
