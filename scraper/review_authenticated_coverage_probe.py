@@ -51,6 +51,44 @@ def scroll_values(pane):
     })""")
 
 
+
+def final_dom_audit(page):
+    """Review-card identity audit: counts only, never author/text/IDs."""
+    return page.evaluate("""() => {
+        const cards = [...document.querySelectorAll('.jftiEf')];
+        const candidates = cards.map(c => ({
+            reviewId: c.getAttribute('data-review-id'),
+            nestedId: c.querySelector('[data-review-id]')?.getAttribute('data-review-id') || null,
+            hasRating: !!c.querySelector('[aria-label*="star"], [aria-label*="Star"], .kvMYJc'),
+            hasAuthor: !!c.querySelector('.d4r55, .TSUbDb')
+        }));
+        const ids = candidates.map(c => c.reviewId || c.nestedId).filter(Boolean);
+        const rx = /reviews?|리뷰|recensies|beoordelingen|ulasan|評論|ความคิดเห็น|đánh giá/i;
+        const possible = [];
+        for (const el of document.querySelectorAll('[aria-label], [role="tab"], button')) {
+            if (el.closest('.jftiEf, [role="radio"]')) continue;
+            const rect = el.getBoundingClientRect();
+            if (!(rect.width > 0 && rect.height > 0)) continue;
+            const content = [el.getAttribute('aria-label') || '', (el.innerText || '').slice(0, 150)];
+            for (const label of content) {
+                if (label.length > 160 || !rx.test(label)) continue;
+                const m = label.match(/(?:reviews?|리뷰|評論|recensies|beoordelingen)\\s*\\(?\\s*(\\d[\\d,]*)|(?:\\d[\\d,]*)\\s*(?:reviews?|리뷰|評論|recensies|beoordelingen)/i);
+                if (!m) continue;
+                const n = Number((m[1] || (label.match(/\\d[\\d,]*/) || [''])[0]).replace(/,/g,''));
+                if (Number.isSafeInteger(n) && n >= 6 && n <= 1000000) possible.push(n);
+            }
+        }
+        return {
+            review_cards: cards.length,
+            explicit_id_cards: ids.length,
+            explicit_unique_ids: new Set(ids).size,
+            explicit_id_duplicate_count: ids.length - new Set(ids).size,
+            cards_with_rating_indicator: candidates.filter(c => c.hasRating).length,
+            cards_with_author_element: candidates.filter(c => c.hasAuthor).length,
+            ui_count_candidates: [...new Set(possible)].sort((a,b)=>a-b).slice(0,20)
+        };
+    }""")
+
 def main():
     if os.environ.get("SUPABASE_URL") or os.environ.get("SUPABASE_SERVICE_ROLE_KEY"):
         raise SystemExit("READ_ONLY_PROBE_REFUSES_DATABASE_SECRETS")
@@ -222,6 +260,10 @@ def main():
                                 output["status"] = "MAX_SCROLL_ROUNDS_REACHED"
                 finally:
                     output["max_unique"] = len(seen)
+                    try:
+                        output["final_dom_audit"] = final_dom_audit(page)
+                    except Exception:
+                        output["final_dom_audit"] = {"status": "AUDIT_UNAVAILABLE"}
                     page.remove_listener("response", network)
         except PlaywrightError:
             # Playwright errors can contain URLs, cookie values or account data.
@@ -261,6 +303,7 @@ def write_result(data):
                              if s.get("ui_total") is not None}),
         "network": data["network"],
         "full_coverage_verified": data["full_coverage_verified"],
+        "final_dom_audit": data.get("final_dom_audit"),
     }
     print("AUTHENTICATED_COVERAGE_VERDICT: "+json.dumps(compact))
     summary = os.environ.get("GITHUB_STEP_SUMMARY")
