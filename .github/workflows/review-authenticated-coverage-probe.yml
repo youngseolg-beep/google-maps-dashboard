@@ -1,0 +1,41 @@
+name: review-authenticated-coverage-probe
+
+on:
+  push:
+    branches: [test/review-collection-without-sort]
+    paths:
+      - "scraper/review_authenticated_coverage_probe.py"
+      - ".github/workflows/review-authenticated-coverage-probe.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  single-store-authenticated-coverage:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Compile isolated authenticated review coverage test
+        run: python -m py_compile scraper/review_authenticated_coverage_probe.py
+      - name: Install Chromium
+        run: |
+          pip install -r scraper/requirements.txt
+          python -m playwright install --with-deps chromium
+      - name: Inspect full list scroll under restored dedicated Google login
+        env:
+          GOOGLE_MAPS_STORAGE_STATE_B64: ${{ secrets.GOOGLE_MAPS_STORAGE_STATE_B64 }}
+          SUPABASE_URL: ""
+          SUPABASE_SERVICE_ROLE_KEY: ""
+        run: python scraper/review_authenticated_coverage_probe.py
+      - name: Upload aggregate-only report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: review-authenticated-coverage-aggregate
+          path: review-authenticated-coverage-result.json
+          if-no-files-found: ignore
