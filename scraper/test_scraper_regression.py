@@ -781,6 +781,47 @@ class ReviewPersistenceRegressionTests(unittest.TestCase):
         self.assertEqual(request.call_args.kwargs["body"], rows)
         self.assertIs(failure.exception, error)
 
+    def test_auth_state_omitted_preserves_anonymous_browser_context(self):
+        self.assertIsNone(scraper.load_dedicated_google_auth_state(raw=""))
+        browser = Mock()
+        scraper.new_crawler_context(browser, auth_state=None)
+        self.assertNotIn("storage_state", browser.new_context.call_args.kwargs)
+
+    def test_auth_state_filters_expired_and_non_google_cookies_without_logging(self):
+        import base64
+        state = {"cookies": [
+            {"name": "SESSION", "value": "secret", "domain": ".google.com", "path": "/", "expires": 1999999999, "sameSite": "Lax", "partitionKey": "https://example.com"},
+            {"name": "EXPIRED", "value": "x", "domain": ".google.com", "path": "/", "expires": 100},
+            {"name": "UNRELATED", "value": "y", "domain": "example.com", "path": "/"},
+        ], "origins": [{"origin": "https://example.com", "localStorage": []}]}
+        raw = base64.b64encode(json.dumps(state).encode("utf-8")).decode("ascii")
+        restored = scraper.load_dedicated_google_auth_state(raw=raw, now_seconds=1000)
+        self.assertEqual(len(restored["cookies"]), 1)
+        self.assertEqual(restored["cookies"][0]["name"], "SESSION")
+        self.assertNotIn("partitionKey", restored["cookies"][0])
+        self.assertEqual(restored["origins"], [])
+        browser = Mock()
+        scraper.new_crawler_context(browser, auth_state=restored)
+        self.assertEqual(browser.new_context.call_args.kwargs["storage_state"], restored)
+
+    def test_invalid_auth_state_fails_closed_without_secret_leak(self):
+        invalid = "sensitive-but-not-base64"
+        with self.assertRaises(RuntimeError) as error:
+            scraper.load_dedicated_google_auth_state(raw=invalid)
+        self.assertNotIn(invalid, str(error.exception))
+        browser = Mock()
+        browser.new_context.side_effect = RuntimeError("secret-cookie-value")
+        with self.assertRaises(RuntimeError) as error:
+            scraper.new_crawler_context(browser, auth_state={"cookies": []})
+        self.assertNotIn("secret-cookie-value", str(error.exception))
+
+    def test_auth_account_ui_required_before_crawling_any_stores(self):
+        page = Mock()
+        page.evaluate.return_value = False
+        self.assertFalse(scraper.verify_dedicated_google_login(page))
+        page.evaluate.return_value = True
+        self.assertTrue(scraper.verify_dedicated_google_login(page))
+
 
 if __name__ == "__main__":
     unittest.main()

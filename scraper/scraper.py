@@ -1,4 +1,5 @@
 import os
+import base64
 import json
 import re
 import hashlib
@@ -41,6 +42,89 @@ RECENT_ONLY_MIN_SCROLL_ROUNDS = 2
 MIN_EXPANSION_TEXT_LENGTH = 24
 
 KST = ZoneInfo("Asia/Seoul")
+
+
+
+def load_dedicated_google_auth_state(raw=None, now_seconds=None):
+    """Restore only valid Google cookies; fail closed without exposing values.
+
+    Cookies are the same dedicated account state verified by the read-only
+    167-card probe. This opt-in state never becomes part of DB or logs.
+    """
+    if raw is None:
+        raw = os.environ.get("GOOGLE_MAPS_STORAGE_STATE_B64", "")
+    if not raw or not raw.strip():
+        return None
+    try:
+        state = json.loads(base64.b64decode(raw.strip(), validate=True))
+        if not isinstance(state, dict) or not isinstance(state.get("cookies"), list):
+            raise ValueError("invalid state structure")
+        now = time.time() if now_seconds is None else now_seconds
+        clean = []
+        for item in state["cookies"]:
+            if not isinstance(item, dict):
+                continue
+            domain = item.get("domain", "")
+            if not isinstance(domain, str):
+                continue
+            root = domain.lstrip(".").lower()
+            if root != "google.com" and not root.endswith(".google.com"):
+                continue
+            name, value = item.get("name"), item.get("value")
+            path, expires = item.get("path", "/"), item.get("expires", -1)
+            same_site = item.get("sameSite")
+            if (not isinstance(name, str) or not name
+                    or not isinstance(value, str)
+                    or not isinstance(path, str) or not path.startswith("/")
+                    or isinstance(expires, bool) or not isinstance(expires, (int, float))
+                    or (expires > 0 and expires <= now)
+                    or same_site not in (None, "Strict", "Lax", "None")):
+                continue
+            cookie = {
+                "name": name, "value": value, "domain": domain, "path": path,
+                "secure": bool(item.get("secure", False)),
+                "httpOnly": bool(item.get("httpOnly", False)),
+            }
+            if expires >= 0:
+                cookie["expires"] = expires
+            if same_site is not None:
+                cookie["sameSite"] = same_site
+            clean.append(cookie)
+        if not clean:
+            raise ValueError("no valid Google cookies")
+        return {"cookies": clean, "origins": []}
+    except Exception:
+        # Never expose parser/Playwright exceptions, cookie names or values.
+        raise RuntimeError("전용 Google 인증 상태가 유효하지 않습니다. 인증 Secret을 점검하세요.") from None
+
+
+def new_crawler_context(browser, auth_state=None):
+    options = {
+        "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
+        "locale": "en-US",
+        "timezone_id": "Asia/Seoul",
+        "viewport": {"width": 1440, "height": 1000},
+    }
+    if auth_state is not None:
+        options["storage_state"] = auth_state
+    try:
+        return browser.new_context(**options)
+    except Exception:
+        if auth_state is not None:
+            raise RuntimeError("전용 Google 인증 쿠키를 브라우저에 적용하지 못했습니다.") from None
+        raise
+
+
+def verify_dedicated_google_login(page):
+    """Read-only account UI indicator, not a formal Google API login proof."""
+    try:
+        return bool(page.evaluate("""() => !!document.querySelector(
+            "\"a[aria-label^='Google Account'], button[aria-label^='Google Account'], "
+            "\"a[aria-label^='Google 계정'], button[aria-label^='Google 계정'], "
+            "\"a[href*='SignOutOptions'], a[href*='AccountChooser']\""
+        )"""))
+    except Exception:
+        return False
 
 
 def now_kst():
@@ -2230,6 +2314,8 @@ def scrape():
         run_repair_only()
         return
 
+    # Validate optional dedicated auth state before any database operations.
+    auth_state = load_dedicated_google_auth_state()
     started_at = now_kst()
     all_new_reviews = []
     crawl_results = []
@@ -2258,12 +2344,7 @@ def scrape():
                 ],
             )
             try:
-                context = browser.new_context(
-                    user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
-                    locale="en-US",
-                    timezone_id="Asia/Seoul",
-                    viewport={"width": 1440, "height": 1000},
-                )
+                context = new_crawler_context(browser, auth_state=auth_state)
                 context.add_init_script(
                     """
                     Object.defineProperty(navigator, 'webdriver', {
@@ -2273,6 +2354,13 @@ def scrape():
                 )
                 page = context.new_page()
                 page.set_default_timeout(45000)
+                if auth_state is not None:
+                    page.goto("https://www.google.com/maps",
+                              wait_until="domcontentloaded", timeout=45000)
+                    page.wait_for_timeout(2500)
+                    if not verify_dedicated_google_login(page):
+                        raise RuntimeError("전용 Google 인증 세션을 확인하지 못했습니다. 리뷰 저장을 중단합니다.")
+                    print("✅ 전용 Google 계정 로그인 UI 확인")
 
                 for store, status_row in zip(stores, store_rows):
                     result = scrape_store_with_reporting(page, store, existing_reviews, status_row)
