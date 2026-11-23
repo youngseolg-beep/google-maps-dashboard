@@ -1,0 +1,41 @@
+name: review-authenticated-depth-verification
+
+on:
+  push:
+    branches: [test/review-collection-without-sort]
+    paths:
+      - "scraper/review_authenticated_depth_probe.py"
+      - ".github/workflows/review-authenticated-depth-verification.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  read-only-auth-verification:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Compile authentication and review-depth probe
+        run: python -m py_compile scraper/review_authenticated_depth_probe.py
+      - name: Install Chromium
+        run: |
+          pip install -r scraper/requirements.txt
+          python -m playwright install --with-deps chromium
+      - name: Compare dedicated authenticated state with anonymous session
+        env:
+          GOOGLE_MAPS_STORAGE_STATE_B64: ${{ secrets.GOOGLE_MAPS_STORAGE_STATE_B64 }}
+          SUPABASE_URL: ""
+          SUPABASE_SERVICE_ROLE_KEY: ""
+        run: python scraper/review_authenticated_depth_probe.py
+      - name: Upload non-sensitive verification report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: review-authenticated-depth-aggregate
+          path: review-authenticated-depth-result.json
+          if-no-files-found: ignore
