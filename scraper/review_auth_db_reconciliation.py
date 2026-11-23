@@ -216,6 +216,7 @@ def main():
                                 result = production.scrape_store(
                                     page, target, existing_reviews=[],
                                     collection_evidence=evidence,
+                                    force_english_ui=True,
                                 )
                             candidates = result.get("reviews", [])
                             row = {
