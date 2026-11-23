@@ -126,3 +126,21 @@ Important:
 - No Supabase insert, update, deletion, backfill or schema change occurred.
 - Next code gate: classify historical stores with zero usable cards as
   `PARTIAL`; then validate Thailand review-panel entry before enabling writes.
+
+
+
+## Follow-up acceptance-gate correction (2026-11-23)
+
+- The read-only reconciler must **not** report a successful coverage verdict
+  simply because a place page loaded or its candidate-count arithmetic balanced.
+- Historical stores with `existing_db_rows > 0` and zero observed reviews are
+  explicitly blocked as `historical_store_zero_live_reviews`.
+- Any unverified total feed coverage, source-ID missing/duplicates, unmatched
+  reconciliation accounting, missing signed-in Maps UI, or unconfirmed place
+  context also blocks `PASS`.
+- The diagnostic status `PASS` can be reached only after independent, positive
+  coverage evidence. This remains a read-only signal and is **not** authorization
+  to insert reviews. `database_writes_approved` always remains `false`.
+- Only aggregated blocker codes are emitted. Raw review IDs, text, authors,
+  cookies, and authentication state remain outside logs/artifacts.
+- This change does not modify `main`, Supabase schema, or any saved review.

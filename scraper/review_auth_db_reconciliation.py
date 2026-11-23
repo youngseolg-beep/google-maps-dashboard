@@ -16,7 +16,9 @@ from urllib.request import Request, urlopen
 from playwright.sync_api import sync_playwright
 import scraper as production
 from review_multistore_probe import store_urls
-from review_identity_metrics import source_identity_counts, script_counts
+from review_identity_metrics import (
+    source_identity_counts, script_counts, reconciliation_verdict,
+)
 
 REPORT = Path("review-auth-db-reconciliation-aggregate.json")
 STORE_NAMES = {
@@ -325,11 +327,12 @@ def main():
                         outcome["stores"].append(row)
                         print("READ_ONLY_STORE_RECONCILIATION: " + json.dumps(row, ensure_ascii=False))
                     outcome["phase"] = "complete"
-                    outcome["status"] = (
-                        "PASS" if all(x.get("extraction_status") == "SCANNED"
-                            and x.get("matching_or_potential_total") == x.get("live_candidates")
-                            for x in outcome["stores"]) else "PARTIAL"
-                    )
+                    gate = reconciliation_verdict(outcome["stores"], set(STORE_NAMES))
+                    outcome.update(gate)
+                    # A successful read-only scan must never be confused with
+                    # complete Maps feed coverage or permission to append.
+                    for row in outcome["stores"]:
+                        row["audit_blockers"] = gate["store_gate_reasons"].get(row["country"], [])
                 finally:
                     context.close()
             finally:
@@ -349,6 +352,8 @@ def finish(outcome, fail=False):
         with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as f:
             f.write("## Authenticated Maps vs existing Supabase reviews (GET-only)\n\n")
             f.write("Result: **" + outcome["status"] + "**. No database changes.\n\n")
+            f.write("PASS requires independently verified full feed coverage. ")
+            f.write("A partial scan is NOT approval to append reviews.\n\n")
             f.write("| Store | Existing DB | Observed | Exact hash | Normalized | Text variants | Potential new | Coverage |\n")
             f.write("|---|---:|---:|---:|---:|---:|---:|---|\n")
             for x in outcome["stores"]:
@@ -360,6 +365,10 @@ def finish(outcome, fail=False):
                         + " | " + str(x.get("potential_new_candidates", 0))
                         + " | NOT VERIFIED |\n")
             f.write("\nPotential new is a candidate count only, not approved for insertion.\n")
+            for country, reasons in outcome.get("store_gate_reasons", {}).items():
+                if reasons:
+                    f.write("- " + country + " blockers: " + ", ".join(reasons) + "\n")
+
     if fail:
         sys.exit(2)
 
