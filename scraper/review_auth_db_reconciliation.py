@@ -28,12 +28,21 @@ MAX_RECORDS_PER_STORE = 5000
 
 def safe_maps_identity(value):
     """Compare the Maps place ID when present, otherwise a stable URL path."""
-    if not isinstance(value, str) or "/maps/" not in value:
+    if not isinstance(value, str) or not value.startswith("https://"):
+        return None
+    parts = urlsplit(value)
+    host = (parts.hostname or "").lower()
+    if host == "maps.app.goo.gl":
+        # Short links are case-sensitive. DB and repository must match exactly.
+        return "short:" + parts.path.rstrip("/")
+    if host not in {"google.com", "www.google.com", "maps.google.com"}:
+        return None
+    if not parts.path.startswith("/maps/"):
         return None
     cid = re.search(r"0x[0-9a-f]+:0x[0-9a-f]+", value, re.I)
     if cid:
         return "cid:" + cid.group(0).lower()
-    return "path:" + urlsplit(value).path.lower().rstrip("/")
+    return "path:" + parts.path.lower().rstrip("/")
 
 
 def read_only_get(table, params, *, base, key):
