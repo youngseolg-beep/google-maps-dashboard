@@ -899,6 +899,37 @@ class ReviewPersistenceRegressionTests(unittest.TestCase):
         self.assertGreaterEqual(evidence["repeat_dom_cards_skipped"], 2)
         self.assertEqual(evidence["observed_review_count"], 2)
 
+    def test_force_maps_english_url_uses_google_place_only(self):
+        page = Mock()
+        page.url = "https://www.google.com/maps/place/sample?entry=ttu&hl=ko"
+        def navigate(url, **kwargs):
+            page.url = url
+        page.goto.side_effect = navigate
+        with patch("builtins.print"):
+            self.assertTrue(scraper.force_google_maps_english_ui(page))
+        next_url = page.goto.call_args.args[0]
+        self.assertIn("hl=en", next_url)
+        self.assertIn("gl=us", next_url)
+        self.assertNotIn("hl=ko", next_url)
+        self.assertIn("entry=ttu", next_url)
+
+    def test_force_maps_english_rejects_short_and_account_pages_without_navigation(self):
+        for url in ("https://maps.app.goo.gl/abc123",
+                    "https://accounts.google.com/signin",
+                    "https://untrusted.example/maps/place/x"):
+            page = Mock()
+            page.url = url
+            self.assertFalse(scraper.force_google_maps_english_ui(page))
+            page.goto.assert_not_called()
+
+    def test_force_maps_english_failure_is_sanitized(self):
+        page = Mock()
+        page.url = "https://www.google.com/maps/place/test"
+        page.goto.side_effect = RuntimeError("private-account-data")
+        with self.assertRaises(RuntimeError) as raised:
+            scraper.force_google_maps_english_ui(page)
+        self.assertNotIn("private-account-data", str(raised.exception))
+
 
 if __name__ == "__main__":
     unittest.main()

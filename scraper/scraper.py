@@ -6,7 +6,7 @@ import hashlib
 import time
 from pathlib import Path
 from urllib.error import HTTPError, URLError
-from urllib.parse import urlencode
+from urllib.parse import urlencode, urlsplit, urlunsplit
 from urllib.request import Request, urlopen
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
@@ -397,6 +397,45 @@ def review_pane_progress(page):
     except Exception:
         pass
     return None
+
+
+
+def force_google_maps_english_ui(page):
+    """Keep dedicated Google login while requesting an English Maps view.
+
+    This is explicitly opt-in during authenticated scraping. The user's
+    account settings and stored review data are never changed.
+    """
+    try:
+        current = urlsplit(str(getattr(page, "url", "")))
+        host = (current.hostname or "").lower()
+        if (current.scheme != "https"
+                or host not in {"google.com", "www.google.com", "maps.google.com"}
+                or not current.path.startswith("/maps/")):
+            return False
+        params = [
+            part for part in current.query.split("&")
+            if part and not part.lower().startswith(("hl=", "gl="))
+        ]
+        params += ["hl=en", "gl=us"]
+        new_url = urlunsplit((
+            current.scheme, current.netloc, current.path,
+            "&".join(params), current.fragment
+        ))
+        if new_url != page.url:
+            page.goto(new_url, wait_until="domcontentloaded", timeout=45000)
+            page.wait_for_timeout(2000)
+        # Verify that the request remained on Google Maps, not an account
+        # prompt or search page. Do not assume English text equivalence.
+        final_url = urlsplit(str(getattr(page, "url", "")))
+        return (final_url.scheme == "https"
+                and (final_url.hostname or "").lower() in {
+                    "google.com", "www.google.com", "maps.google.com"
+                }
+                and final_url.path.startswith("/maps/"))
+    except Exception:
+        # Browser/page exceptions may include URLs or account details.
+        raise RuntimeError("Google Maps 영어 표시 설정에 실패했습니다.") from None
 
 
 def open_reviews_panel(page):
@@ -1899,7 +1938,7 @@ def extract_reviews(page, store, existing_reviews=None, newest_verified=False, c
     return collected
 
 
-def scrape_store(page, store, existing_reviews=None, collection_evidence=None):
+def scrape_store(page, store, existing_reviews=None, collection_evidence=None, force_english_ui=False):
     print(f"\n==============================")
     print(f"🏪 매장 크롤링 시작: {store['store_name']}")
     print(f"👤 담당 SV: {store['sv']} / 국가: {store['country']}")
@@ -1917,6 +1956,12 @@ def scrape_store(page, store, existing_reviews=None, collection_evidence=None):
             print(f"⚠️ 페이지 로딩 중 오류. 계속 진행: {e}")
 
         page.wait_for_timeout(5000)
+        if force_english_ui:
+            if not force_google_maps_english_ui(page):
+                raise RuntimeError(
+                    "전용 계정의 Google Maps 영어 표시를 확인하지 못했습니다."
+                )
+            print("✅ Google Maps 영어 표시 URL 적용")
         click_cookie_buttons(page)
 
         print("⏳ Google Maps 기본 페이지 렌더링 대기 중...")
@@ -2158,11 +2203,14 @@ def collection_status_counts(store_rows):
     return counts
 
 
-def scrape_store_with_reporting(page, store, existing_reviews, status_row):
+def scrape_store_with_reporting(page, store, existing_reviews, status_row, *, force_english_ui=False):
     evidence = {"observed_review_count": 0}
     result = None
     try:
-        result = scrape_store(page, store, existing_reviews, collection_evidence=evidence)
+        options = {"collection_evidence": evidence}
+        if force_english_ui:
+            options["force_english_ui"] = True
+        result = scrape_store(page, store, existing_reviews, **options)
         return result
     finally:
         status_row.update(collection_status_row(store, attempted=True, result=result, **evidence))
@@ -2457,7 +2505,10 @@ def scrape():
                     print("✅ 전용 Google 계정 로그인 UI 확인")
 
                 for store, status_row in zip(stores, store_rows):
-                    result = scrape_store_with_reporting(page, store, existing_reviews, status_row)
+                    result = scrape_store_with_reporting(
+                        page, store, existing_reviews, status_row,
+                        force_english_ui=(auth_state is not None),
+                    )
                     crawl_results.append(result)
                     all_new_reviews.extend(result["reviews"])
                     page.wait_for_timeout(3000)
