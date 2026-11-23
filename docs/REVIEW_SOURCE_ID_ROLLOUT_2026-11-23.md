@@ -89,3 +89,40 @@ this design.
   https://github.com/youngseolg-beep/google-maps-dashboard/commit/c9c0f946c0b3bb874066c686cafe595afc19855b
 - 76 regression tests PASS:
   https://github.com/youngseolg-beep/google-maps-dashboard/actions/runs/45140324667
+
+
+## Follow-up read-only run after safe Maps URL fallback (08:46 UTC)
+
+Workflow: https://github.com/youngseolg-beep/google-maps-dashboard/actions/runs/45140324722
+
+| Store / Country | Candidate reviews | Hashed Google source IDs | Duplicate source hashes | Result |
+|---|---:|---:|---:|---|
+| Dunnan, Taiwan | 208 | 208 | 0 | Scanned; coverage unverified |
+| Seoul St., Mongolia | 96 | 96 | 0 | Scanned; scroll stalled, partial |
+| Central Eastville, Thailand | 0 | N/A | N/A | Place opened but no usable review cards |
+| **Total observed** | **304** | **304** | **0** | **Cannot establish full 3-store coverage** |
+
+Important:
+
+- The job's `PASS` verdict means the read-only comparison completed. Its
+  current success predicate does **not** reject a historically active store
+  with zero observed reviews. This is a **known diagnostic acceptance gap**:
+  no-data runs for stores with saved reviews must be reported as partial until
+  validated; do not use the current PASS status to authorize production.
+- Maps authenticated UI was confirmed. This does not prove the whole feed
+  is available or that every reviewed URL belongs to the expected place without
+  additional per-store identity checks.
+- Taiwan: 4 exact prior hashes and 5 expanded-text variants; remaining 199
+  unmatched review bodies are **not** confirmed new.
+- Mongolia: 5 exact prior hashes; remaining 91 unmatched review bodies are
+  **not** confirmed new. Thirty of the 96 candidates had empty review text
+  (rating-only reviews).
+- Latin script was present in 207/208 Taiwan candidates, 65/96 Mongolia
+  candidates; Hangul appeared in 24/208 and 9/96 respectively. Some reviews
+  contained both scripts.
+- Only **within-run** hash uniqueness has been verified. Repeating an
+  identical source review across sessions/locale settings and proving the same
+  hash is still an open gate.
+- No Supabase insert, update, deletion, backfill or schema change occurred.
+- Next code gate: classify historical stores with zero usable cards as
+  `PARTIAL`; then validate Thailand review-panel entry before enabling writes.
