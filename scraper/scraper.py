@@ -202,13 +202,35 @@ def review_dates_are_newest_first(relative_dates, minimum_samples=3):
 
 
 def build_url_candidates(url):
+    """Use only same-place Maps URL variants; never invent a /reviews suffix.
+
+    Short links are retried once because redirect resolution can be intermittent.
+    Long Maps place URLs get two reversible, same-place fallbacks. No search
+    or arbitrary place lookup is allowed, preventing review/DB misattribution.
+    """
     base = url.strip()
+    parsed = urlsplit(base)
+    host = (parsed.hostname or "").lower()
+
+    if parsed.scheme != "https":
+        return [base]
+    if host == "maps.app.goo.gl":
+        return [base, base]
+    if host not in {"google.com", "www.google.com", "maps.google.com"}:
+        return [base]
+    if not parsed.path.startswith("/maps/place/"):
+        return [base]
+
     urls = [base]
-
-    reviews_url = base.split("?")[0].rstrip("/") + "/reviews/"
-    if reviews_url not in urls:
-        urls.append(reviews_url)
-
+    paths = [parsed.path.replace("!9m1!1b1", "")]
+    if "/data=" in parsed.path:
+        paths.append(parsed.path.split("/data=", 1)[0])
+    for path in paths:
+        candidate = urlunsplit((
+            parsed.scheme, parsed.netloc, path, parsed.query, parsed.fragment
+        ))
+        if candidate not in urls:
+            urls.append(candidate)
     return urls
 
 
@@ -428,14 +450,24 @@ def force_google_maps_english_ui(page):
         if new_url != page.url:
             page.goto(new_url, wait_until="domcontentloaded", timeout=45000)
             page.wait_for_timeout(2000)
-        # Verify that the request remained on Google Maps, not an account
-        # prompt or search page. Do not assume English text equivalence.
+        # Verify that a Maps *place* was reached. A generic /maps/ page
+        # must not count as a successful review-page language switch.
         final_url = urlsplit(str(getattr(page, "url", "")))
-        return (final_url.scheme == "https"
-                and (final_url.hostname or "").lower() in {
-                    "google.com", "www.google.com", "maps.google.com"
-                }
-                and final_url.path.startswith("/maps/"))
+        valid_google = (
+            final_url.scheme == "https"
+            and (final_url.hostname or "").lower() in {
+                "google.com", "www.google.com", "maps.google.com"
+            }
+        )
+        if not valid_google:
+            return False
+        if final_url.path.startswith("/maps/place/"):
+            return True
+        return bool(
+            final_url.path.startswith("/maps/")
+            and (is_valid_google_maps_place_page(page)
+                 or page.locator(".jftiEf").count() > 0)
+        )
     except Exception:
         # Browser/page exceptions may include URLs or account details.
         raise RuntimeError("Google Maps 영어 표시 설정에 실패했습니다.") from None
@@ -1591,6 +1623,8 @@ def make_review_key(review):
 def hash_google_source_review_id(store_name, source_id):
     """Hashed in-memory source identity; never store or log raw Maps review ID.
 
+    Caller should scope by immutable Supabase store_id when available;
+    display names are a fallback only for disconnected diagnostic fixtures.
     This is intentionally NOT a replacement for the current review_key:
     legacy Supabase rows lack the Google source ID and need reconciliation
     before any new database identity can be safely enabled.
@@ -1859,7 +1893,7 @@ def extract_reviews(page, store, existing_reviews=None, newest_verified=False, c
                     "collected_at": now_kst().strftime("%Y-%m-%d"),
                 }
                 source_hash = hash_google_source_review_id(
-                    store["store_name"], dom_id
+                    str(store.get("id") or store["store_name"]), dom_id
                 )
                 if source_hash:
                     # Metadata only. prepare_review_row intentionally does not
@@ -1986,11 +2020,16 @@ def scrape_store(page, store, existing_reviews=None, collection_evidence=None, f
 
         page.wait_for_timeout(5000)
         if force_english_ui:
-            if not force_google_maps_english_ui(page):
-                raise RuntimeError(
-                    "전용 계정의 Google Maps 영어 표시를 확인하지 못했습니다."
-                )
-            print("✅ Google Maps 영어 표시 URL 적용")
+            try:
+                english_place_ready = force_google_maps_english_ui(page)
+            except RuntimeError:
+                english_place_ready = False
+            if not english_place_ready:
+                print("⚠️ Google Maps 상세 화면 영어 표시 확인 실패: 다음 URL 후보 재시도")
+                if collection_evidence is not None:
+                    collection_evidence["english_place_entry_unverified"] = True
+                continue
+            print("✅ Google Maps 영어 표시 URL 및 장소 진입 확인")
         click_cookie_buttons(page)
 
         print("⏳ Google Maps 기본 페이지 렌더링 대기 중...")

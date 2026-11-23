@@ -282,9 +282,10 @@ def main():
                             store["id"], base=base, key=key
                         )
                         target = {
+                            "id": store["id"],
                             "store_name": db_name, "sv": "READ_ONLY_AUDIT",
                             "country": country, "city": "",
-                            "url": target_urls[country],
+                            "url": store["google_maps_url"],
                         }
                         try:
                             evidence = {}

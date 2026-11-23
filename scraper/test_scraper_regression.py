@@ -899,6 +899,36 @@ class ReviewPersistenceRegressionTests(unittest.TestCase):
         self.assertGreaterEqual(evidence["repeat_dom_cards_skipped"], 2)
         self.assertEqual(evidence["observed_review_count"], 2)
 
+    def test_maps_url_candidates_never_create_invalid_review_suffix(self):
+        short = "https://maps.app.goo.gl/AbCd1234"
+        self.assertEqual(scraper.build_url_candidates(short), [short, short])
+        original = ("https://www.google.com/maps/place/Test+Store/@0,0,15z/"
+                    "data=!4m1!9m1!1b1?entry=ttu")
+        candidates = scraper.build_url_candidates(original)
+        self.assertEqual(candidates[0], original)
+        self.assertTrue(any("/data=" not in u for u in candidates[1:]))
+        self.assertTrue(any("!9m1!1b1" not in u for u in candidates[1:]))
+        self.assertTrue(all("/maps/place/" in u for u in candidates))
+        self.assertTrue(all(not u.endswith("/reviews/") for u in candidates))
+
+    def test_english_maps_rejects_generic_page_after_navigation(self):
+        page = Mock()
+        page.url = "https://www.google.com/maps/@0,0,15z"
+        page.locator.return_value.count.return_value = 0
+        with patch.object(scraper, "is_valid_google_maps_place_page", return_value=False):
+            self.assertFalse(scraper.force_google_maps_english_ui(page))
+
+    def test_hash_uses_immutable_store_scope_to_survive_rename(self):
+        store_id = "949dfe3a-782d-4142-b25d-94c650a1a7d4"
+        raw_review_id = "review-id"
+        original = dict(STORE, id=store_id)
+        renamed = dict(original, store_name="Renamed Store")
+        # The extractor passes the immutable store ID as hash scope.
+        self.assertEqual(
+            scraper.hash_google_source_review_id(str(original["id"]), raw_review_id),
+            scraper.hash_google_source_review_id(str(renamed["id"]), raw_review_id),
+        )
+
     def test_force_maps_english_url_uses_google_place_only(self):
         page = Mock()
         page.url = "https://www.google.com/maps/place/sample?entry=ttu&hl=ko"
