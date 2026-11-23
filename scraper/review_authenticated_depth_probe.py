@@ -9,8 +9,9 @@ import json
 import os
 import re
 import sys
+import time
 from pathlib import Path
-from playwright.sync_api import sync_playwright
+from playwright.sync_api import sync_playwright, Error as PlaywrightError
 from review_entry_matrix_probe import ORIGINAL
 
 REPORT = Path("review-authenticated-depth-result.json")
@@ -124,6 +125,105 @@ def get_pane(page):
     return handle.as_element()
 
 
+
+def normalize_storage_state_for_runner(browser, state):
+    """Strip unsupported cross-version cookie fields, never log values.
+
+    Playwright storage state from an existing Windows Chrome profile may
+    contain cookie attributes which the installed Linux Chromium refuses.
+    Keep Google cookies only, drop expired/malformed entries and unsupported
+    partition metadata for this compatibility test. Do not persist the state.
+    """
+    stats = {
+        "source_google_cookies": 0,
+        "expired_or_malformed_skipped": 0,
+        "partition_metadata_stripped": 0,
+        "incompatible_skipped": 0,
+        "usable_google_cookies": 0,
+    }
+    cleaned = []
+    now = time.time()
+    for item in state.get("cookies", []):
+        if not isinstance(item, dict):
+            continue
+        domain = item.get("domain", "")
+        if not isinstance(domain, str) or not (
+            domain.lstrip(".").lower() == "google.com"
+            or domain.lstrip(".").lower().endswith(".google.com")
+        ):
+            continue
+        stats["source_google_cookies"] += 1
+        name, value = item.get("name"), item.get("value")
+        path = item.get("path", "/")
+        expiry = item.get("expires", -1)
+        if (not isinstance(name, str) or not name
+                or not isinstance(value, str)
+                or not isinstance(path, str) or not path.startswith("/")
+                or isinstance(expiry, bool)
+                or not isinstance(expiry, (int, float))
+                or (expiry > 0 and expiry <= now)):
+            stats["expired_or_malformed_skipped"] += 1
+            continue
+        if item.get("sameSite") not in (None, "Strict", "Lax", "None"):
+            stats["expired_or_malformed_skipped"] += 1
+            continue
+        if "partitionKey" in item:
+            # Retaining partition-key values from a different browser version
+            # can produce Protocol error (Storage.setCookies).
+            stats["partition_metadata_stripped"] += 1
+        cookie = {
+            "name": name, "value": value, "domain": domain, "path": path,
+            "secure": bool(item.get("secure", False)),
+            "httpOnly": bool(item.get("httpOnly", False)),
+        }
+        if expiry >= 0:
+            cookie["expires"] = expiry
+        if item.get("sameSite") is not None:
+            cookie["sameSite"] = item["sameSite"]
+        cleaned.append(cookie)
+
+    def accepted(group):
+        context = None
+        try:
+            context = browser.new_context(
+                storage_state={"cookies": group, "origins": []}
+            )
+            return True
+        except PlaywrightError:
+            return False
+        finally:
+            if context:
+                context.close()
+
+    # A cookie error must not cause a traceback that could reveal its value.
+    # A single invalid cookie can be isolated without printing identities.
+    def find_compatible(group):
+        if not group or accepted(group):
+            return group
+        if len(group) == 1:
+            stats["incompatible_skipped"] += 1
+            return []
+        middle = len(group) // 2
+        return find_compatible(group[:middle]) + find_compatible(group[middle:])
+
+    good = find_compatible(cleaned)
+    if good and not accepted(good):
+        # Rare cross-cookie incompatibilities: keep a known accepted prefix.
+        prefix = []
+        for cookie in good:
+            if accepted(prefix + [cookie]):
+                prefix.append(cookie)
+            else:
+                stats["incompatible_skipped"] += 1
+        good = prefix
+
+    stats["usable_google_cookies"] = len(good)
+    if not good:
+        return None, stats
+    # Google Maps session restoration is generally cookie-based; no local
+    # storage or third-party cookies are written to report/artifact.
+    return {"cookies": good, "origins": []}, stats
+
 def run(browser, name, state):
     options = dict(OPTIONS)
     if state is not None:
@@ -202,8 +302,28 @@ def main():
         with sync_playwright() as p:
             browser=p.chromium.launch(headless=True, args=FLAGS)
             try:
+                compatible, compat_stats = normalize_storage_state_for_runner(
+                    browser, auth_state
+                )
+                result["auth_storage_compatibility"] = compat_stats
                 result["runs"].append(run(browser,"anonymous",None))
-                result["runs"].append(run(browser,"dedicated_login_state",auth_state))
+                if compatible is None:
+                    result["runs"].append({
+                        "arm": "dedicated_login_state", "status": "NO_COMPATIBLE_GOOGLE_COOKIES",
+                        "unique_seen": 0, "states": [], "more_control": "NOT_TESTED"
+                    })
+                else:
+                    try:
+                        result["runs"].append(
+                            run(browser,"dedicated_login_state",compatible)
+                        )
+                    except PlaywrightError:
+                        # Cookie contents must never enter public logs.
+                        result["runs"].append({
+                            "arm": "dedicated_login_state",
+                            "status": "COOKIE_RESTORE_FAILED",
+                            "unique_seen": 0, "states": [], "more_control": "NOT_TESTED"
+                        })
                 result["six_plus_authenticated"] = (
                     result["runs"][1]["status"] == "SIX_PLUS_OBSERVED"
                 )
@@ -213,6 +333,7 @@ def main():
     REPORT.write_text(json.dumps(result,ensure_ascii=False,indent=2),encoding="utf-8")
     summary = {
         "preflight": preflight,
+        "cookie_compatibility": result.get("auth_storage_compatibility", {}),
         "six_plus_authenticated": result["six_plus_authenticated"],
         "runs": [{
             "arm": r["arm"], "status": r["status"],
