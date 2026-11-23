@@ -32,6 +32,9 @@ def main():
         "auth_named_google_cookies": 0,
         "unexpired_auth_named_google_cookies": 0,
         "auth_state_may_be_usable": False,
+        "unexpired_persistent_auth_cookie_count": 0,
+        "session_auth_cookie_count": 0,
+        "min_persistent_auth_ttl_hours": None,
         "cloud_google_login_verified": False,
         "database_writes": False,
     }
@@ -43,6 +46,7 @@ def main():
                 raise ValueError("Invalid storage state")
             summary["state_format_valid"]=True
             now=time.time()
+            auth_expiry_times=[]
             for c in cookies:
                 if not isinstance(c,dict):
                     continue
@@ -62,6 +66,13 @@ def main():
                     summary["auth_named_google_cookies"] += 1
                     if future:
                         summary["unexpired_auth_named_google_cookies"] += 1
+                        if isinstance(exp,(float,int)) and exp > now:
+                            summary["unexpired_persistent_auth_cookie_count"] += 1
+                            auth_expiry_times.append(exp)
+                        elif isinstance(exp,(float,int)) and exp < 0:
+                            summary["session_auth_cookie_count"] += 1
+            if auth_expiry_times:
+                summary["min_persistent_auth_ttl_hours"] = round((min(auth_expiry_times)-now)/3600,1)
             summary["auth_state_may_be_usable"] = (
                 summary["unexpired_auth_named_google_cookies"] > 0
             )
