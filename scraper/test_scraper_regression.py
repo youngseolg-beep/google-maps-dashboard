@@ -861,6 +861,44 @@ class ReviewPersistenceRegressionTests(unittest.TestCase):
         self.assertEqual(len(rows), 1)
         self.assertEqual(wheel.call_count, 5)
 
+    def test_cached_google_review_id_skips_repeat_parsing_without_skipping_new_ids(self):
+        class CardCollection:
+            def __init__(self, cards): self.cards = cards
+            def count(self): return len(self.cards)
+            def nth(self, index): return self.cards[index]
+        first, second = Mock(), Mock()
+        first.get_attribute.return_value = "same-review-id"
+        second.get_attribute.return_value = "new-review-id"
+        # Rounds 1/2 show the same single card; round 3 introduces a new ID.
+        collections = [CardCollection([first]), CardCollection([first]),
+                       CardCollection([first, second]), CardCollection([first, second])]
+        evidence = {}
+        with (
+            patch("builtins.print"),
+            patch.object(scraper, "MAX_SCROLL_ROUNDS", 4),
+            patch.object(scraper, "click_more_buttons"),
+            patch.object(scraper, "click_original_review_buttons"),
+            patch.object(scraper, "get_review_cards", side_effect=[
+                (cards, ".jftiEf") for cards in collections
+            ]),
+            patch.object(scraper, "get_review_text", return_value="A good restaurant and service"),
+            patch.object(scraper, "get_review_date", return_value="2 weeks ago"),
+            patch.object(scraper, "get_review_rating", return_value=4),
+            patch.object(scraper, "get_review_author", side_effect=lambda card:
+                         "Author One" if card is first else "Author Two"),
+            patch.object(scraper, "expand_review_text") as expand,
+            patch.object(scraper, "scroll_reviews", return_value=True),
+            patch.object(scraper, "review_pane_progress", side_effect=[
+                (0, 10000), (1200, 10000), (2400, 10000), (3600, 10000)
+            ]),
+        ):
+            found = scraper.extract_reviews(Mock(), STORE, [],
+                                            newest_verified=False, collection_evidence=evidence)
+        self.assertEqual(len(found), 2)
+        self.assertEqual(expand.call_count, 2)
+        self.assertGreaterEqual(evidence["repeat_dom_cards_skipped"], 2)
+        self.assertEqual(evidence["observed_review_count"], 2)
+
 
 if __name__ == "__main__":
     unittest.main()

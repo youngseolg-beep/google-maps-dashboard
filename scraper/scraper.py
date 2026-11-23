@@ -1689,6 +1689,10 @@ def feed_grew(previous_card_count, card_count, previous_processed_count, process
 def extract_reviews(page, store, existing_reviews=None, newest_verified=False, collection_evidence=None):
     collected = []
     processed_keys = set()
+    # Google Maps keeps already-seen cards in the DOM while more cards load.
+    # Avoid repeatedly expanding/parsing the same immutable review ID.
+    processed_dom_ids = set()
+    skipped_repeat_dom_cards = 0
     feed_stalled_count = 0
     feed_stalled = False
     scroll_target_missing = False
@@ -1755,6 +1759,10 @@ def extract_reviews(page, store, existing_reviews=None, newest_verified=False, c
         for i in range(card_count):
             try:
                 card = cards.nth(i)
+                dom_id = card.get_attribute("data-review-id")
+                if dom_id and dom_id in processed_dom_ids:
+                    skipped_repeat_dom_cards += 1
+                    continue
                 expand_review_text(card, page)
 
                 text = get_review_text(card)
@@ -1799,6 +1807,10 @@ def extract_reviews(page, store, existing_reviews=None, newest_verified=False, c
                 if not key:
                     continue
 
+                # Mark only after successfully extracting fields; failed
+                # extraction can be retried in a later scroll round.
+                if dom_id:
+                    processed_dom_ids.add(dom_id)
                 if key in processed_keys:
                     continue
 
@@ -1883,6 +1895,7 @@ def extract_reviews(page, store, existing_reviews=None, newest_verified=False, c
         collection_evidence["feed_stalled"] = feed_stalled
         collection_evidence["scroll_target_missing"] = scroll_target_missing
         collection_evidence["full_coverage_verified"] = False
+        collection_evidence["repeat_dom_cards_skipped"] = skipped_repeat_dom_cards
     return collected
 
 
