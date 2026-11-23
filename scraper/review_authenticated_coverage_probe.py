@@ -21,9 +21,9 @@ from review_entry_matrix_probe import ORIGINAL
 from review_multistore_probe import raw_snapshot, parse_count_candidates
 
 OUT = Path("review-authenticated-coverage-result.json")
-MAX_ROUNDS = 85
-STALL_LIMIT = 10
-SCROLL_PIXELS = 750
+MAX_ROUNDS = 150
+STALL_LIMIT = 5
+SCROLL_PIXELS = 1200
 
 
 def sample(page, known):
@@ -144,6 +144,7 @@ def main():
                             })
                             monitor["enabled"] = True
                             idle_rounds = 0
+                            bottom_stall_checks = 0
                             max_total = after.get("ui_total")
                             for i in range(1, MAX_ROUNDS + 1):
                                 prev_count = len(seen)
@@ -170,7 +171,7 @@ def main():
                                     current = scroll_values(pane)
                                 snap = sample(page, seen)
                                 output["scroll_rounds"] = i
-                                if i <= 3 or i % 5 == 0 or len(seen) > prev_count:
+                                if i <= 3 or i % 10 == 0 or len(seen) > prev_count:
                                     output["steps"].append({
                                         "stage": "scroll", "round": i, **snap,
                                         "scroll_top": current["top"],
@@ -186,9 +187,36 @@ def main():
                                 if max_total and len(seen) >= max_total:
                                     output["status"] = "UI_COUNT_REACHED"
                                     break
+                                # A batch of 10 cards may occupy thousands
+                                # of pixels. Not seeing new cards while the
+                                # viewport still moves is *not* a stall.
+                                # Wait for async loading only at the real
+                                # bottom of the currently loaded list.
                                 at_bottom = current["top"] >= current["range"] - 4
-                                if (at_bottom and idle_rounds >= 5) or idle_rounds >= STALL_LIMIT:
-                                    output["status"] = "STALLED_AT_BOTTOM" if at_bottom else "STALLED_WITH_SCROLLABLE_PANE"
+                                if at_bottom and idle_rounds >= STALL_LIMIT:
+                                    page.wait_for_timeout(2200)
+                                    after_wait = sample(page, seen)
+                                    newer_scroll = scroll_values(pane)
+                                    output["steps"].append({
+                                        "stage": "bottom_wait", "round": i,
+                                        **after_wait,
+                                        "scroll_top": newer_scroll["top"],
+                                        "scroll_range": newer_scroll["range"],
+                                    })
+                                    output["max_unique"] = len(seen)
+                                    if (len(seen) > prev_count
+                                            or newer_scroll["range"] > current["range"]):
+                                        bottom_stall_checks = 0
+                                        idle_rounds = 0
+                                    else:
+                                        bottom_stall_checks += 1
+                                    if bottom_stall_checks >= 2:
+                                        output["status"] = "STALLED_AT_BOTTOM"
+                                        break
+                                elif current["top"] > prev_scroll["top"]:
+                                    bottom_stall_checks = 0
+                                elif idle_rounds >= 12:
+                                    output["status"] = "SCROLL_POSITION_NOT_ADVANCING"
                                     break
                             else:
                                 output["status"] = "MAX_SCROLL_ROUNDS_REACHED"
