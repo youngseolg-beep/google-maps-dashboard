@@ -194,10 +194,47 @@ def run_store(browser, name, country, url):
         state = snapshot(page, known)
         result["snapshots"].append({"phase": "initial", **state})
 
-        # A short URL can resolve to an unmapped page; this is not 0 reviews.
-        if state["page_kind"] != "place" or not state["has_visible_place_heading"]:
+        # When the Reviews tab is selected, Google Maps may hide the heading.
+        # In that layout the combination of a place URL, selected review tab
+        # and actual cards is a valid place signal. Do not mislabel as invalid.
+        valid_place = state["page_kind"] == "place" and (
+            state["has_visible_place_heading"] or
+            (state["review_tab_present"] and state["visible_cards"] > 0)
+        )
+        if not valid_place:
             result["status"] = "PLACE_NOT_VERIFIED"
             return result
+
+        # An already-selected Reviews tab can be a limited five-card screen.
+        # Compare a deliberate Overview -> Reviews transition once, rather
+        # than repeatedly clicking the already-selected tab or unknown links.
+        if state["review_tab_selected"]:
+            overview = page.get_by_role("tab", name=re.compile(
+                r"overview|개요|總覽|总览|ภาพรวม|тойм", re.I
+            ))
+            if overview.count():
+                try:
+                    overview.first.click(timeout=5000)
+                    page.wait_for_timeout(2200)
+                    result["snapshots"].append({
+                        "phase": "overview_switch", **snapshot(page, known)
+                    })
+                    review_tab = page.get_by_role("tab", name=re.compile(
+                        r"reviews?|리뷰|recensies|beoordelingen|ulasan", re.I
+                    ))
+                    if review_tab.count():
+                        review_tab.first.click(timeout=5000)
+                        page.wait_for_timeout(2400)
+                        state = snapshot(page, known)
+                        result["snapshots"].append({
+                            "phase": "reviews_reopened", **state
+                        })
+                        result["overview_review_toggle_verified"] = True
+                except Exception as exc:
+                    result["overview_toggle_error_type"] = type(exc).__name__
+            else:
+                result["overview_review_toggle_verified"] = False
+                result["overview_tab_unavailable"] = True
 
         if state["review_tab_present"] and not state["review_tab_selected"]:
             try:
