@@ -144,7 +144,7 @@ def main():
     base = os.getenv("SUPABASE_URL", "")
     key = os.getenv("SUPABASE_SERVICE_ROLE_KEY", "")
     outcome = {
-        "status": "NOT_STARTED", "database_writes": False,
+        "status": "NOT_STARTED", "phase": "initial", "database_writes": False,
         "review_contents_persisted": False, "complete_coverage_verified": False,
         "stores": [],
     }
@@ -153,14 +153,17 @@ def main():
         finish(outcome, fail=True)
         return
     try:
+        outcome["phase"] = "load_repo_maps_urls"
         target_urls = {
             country: url for _, country, url in store_urls()
             if country in STORE_NAMES
         }
+        outcome["phase"] = "get_stores"
         all_db_stores = read_only_get("stores", {
             "select": "id,store_name,country,google_maps_url,is_active",
             "limit": "1000",
         }, base=base, key=key)
+        outcome["phase"] = "verify_store_mapping"
         selected = {}
         for country, name in STORE_NAMES.items():
             rows = [
@@ -177,9 +180,11 @@ def main():
                 raise ValueError("STORE_GOOGLE_MAPS_IDENTITY_MISMATCH")
             selected[country] = rows[0]
         # Restrict to one known Google account, with in-memory authentication.
+        outcome["phase"] = "load_dedicated_google_auth"
         auth = production.load_dedicated_google_auth_state()
         if auth is None:
             raise RuntimeError("AUTH_SECRET_MISSING")
+        outcome["phase"] = "launch_playwright"
         with sync_playwright() as p:
             browser = p.chromium.launch(headless=True, args=[
                 "--disable-blink-features=AutomationControlled",
@@ -187,6 +192,7 @@ def main():
                 "--disable-setuid-sandbox", "--lang=en-US,en",
             ])
             try:
+                outcome["phase"] = "apply_auth_cookie_context"
                 context = production.new_crawler_context(browser, auth_state=auth)
                 try:
                     context.add_init_script(
@@ -194,12 +200,14 @@ def main():
                     )
                     page = context.new_page()
                     page.set_default_timeout(45000)
+                    outcome["phase"] = "open_maps_auth_ui"
                     page.goto("https://www.google.com/maps",
                               wait_until="domcontentloaded", timeout=45000)
                     page.wait_for_timeout(2500)
                     if not production.verify_dedicated_google_login(page):
                         raise RuntimeError("GOOGLE_AUTH_SESSION_NOT_VISIBLE")
                     for country, db_name in STORE_NAMES.items():
+                        outcome["phase"] = "read_saved_reviews_" + country.lower()
                         store = selected[country]
                         existing = load_existing_store_reviews(
                             store["id"], base=base, key=key
@@ -211,6 +219,7 @@ def main():
                         }
                         try:
                             evidence = {}
+                            outcome["phase"] = "read_maps_reviews_" + country.lower()
                             with contextlib.redirect_stdout(io.StringIO()), \
                                  contextlib.redirect_stderr(io.StringIO()):
                                 result = production.scrape_store(
@@ -218,6 +227,7 @@ def main():
                                     collection_evidence=evidence,
                                     force_english_ui=True,
                                 )
+                            outcome["phase"] = "compare_saved_keys_" + country.lower()
                             candidates = result.get("reviews", [])
                             row = {
                                 "store": db_name, "country": country,
@@ -239,6 +249,7 @@ def main():
                             }
                         outcome["stores"].append(row)
                         print("READ_ONLY_STORE_RECONCILIATION: " + json.dumps(row, ensure_ascii=False))
+                    outcome["phase"] = "complete"
                     outcome["status"] = (
                         "PASS" if all(x.get("extraction_status") == "SCANNED"
                             and x.get("matching_or_potential_total") == x.get("live_candidates")
