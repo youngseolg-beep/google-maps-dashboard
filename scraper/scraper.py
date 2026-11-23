@@ -117,15 +117,17 @@ def new_crawler_context(browser, auth_state=None):
 
 def verify_dedicated_google_login(page):
     """Read-only account UI indicator, not a formal Google API login proof."""
+    selector = (
+        "a[aria-label^='Google Account'], button[aria-label^='Google Account'], "
+        "a[aria-label^='Google 계정'], button[aria-label^='Google 계정'], "
+        "a[href*='SignOutOptions'], a[href*='AccountChooser']"
+    )
     try:
-        return bool(page.evaluate("""() => !!document.querySelector(
-            "\"a[aria-label^='Google Account'], button[aria-label^='Google Account'], "
-            "\"a[aria-label^='Google 계정'], button[aria-label^='Google 계정'], "
-            "\"a[href*='SignOutOptions'], a[href*='AccountChooser']\""
-        )"""))
+        return bool(page.evaluate(
+            "(selector) => !!document.querySelector(selector)", selector
+        ))
     except Exception:
         return False
-
 
 def now_kst():
     return datetime.now(KST)
