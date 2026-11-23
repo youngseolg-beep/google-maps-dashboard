@@ -19,6 +19,7 @@ from review_authenticated_depth_probe import (
 )
 from review_entry_matrix_probe import ORIGINAL
 from review_multistore_probe import raw_snapshot, parse_count_candidates
+import scraper as production
 
 OUT = Path("review-authenticated-coverage-result.json")
 MAX_ROUNDS = 150
@@ -88,6 +89,87 @@ def final_dom_audit(page):
             ui_count_candidates: [...new Set(possible)].sort((a,b)=>a-b).slice(0,20)
         };
     }""")
+
+
+def parser_audit(page):
+    """Evaluate production selectors on observed cards without logging data."""
+    cards = page.locator(".jftiEf")
+    stats = {
+        "observed_cards": cards.count(),
+        "explicit_review_ids": 0,
+        "author_parsed": 0,
+        "author_fallback_anonymous": 0,
+        "date_parsed": 0,
+        "date_fallback_unknown": 0,
+        "rating_label_present": 0,
+        "rating_label_missing_default_five": 0,
+        "rating_label_unrecognized": 0,
+        "rating_valid": 0,
+        "rating_distribution": {str(n): 0 for n in range(1, 6)},
+        "text_present": 0,
+        "text_empty": 0,
+        "production_review_key_unique": 0,
+        "production_review_key_collisions": 0,
+        "collision_groups_with_distinct_review_ids": 0,
+        "extraction_exceptions": 0,
+    }
+    # Transient keys and review IDs only in runner memory.
+    keys_to_ids = {}
+    for i in range(cards.count()):
+        try:
+            card = cards.nth(i)
+            rid = card.get_attribute("data-review-id")
+            if rid:
+                stats["explicit_review_ids"] += 1
+            author = production.get_review_author(card)
+            date = production.get_review_date(card)
+            rating = production.get_review_rating(card)
+            body = production.get_review_text(card)
+            if author != "Anonymous":
+                stats["author_parsed"] += 1
+            else:
+                stats["author_fallback_anonymous"] += 1
+            if date != "Unknown":
+                stats["date_parsed"] += 1
+            else:
+                stats["date_fallback_unknown"] += 1
+            label = production.safe_attr(card.locator(
+                "span[aria-label*='star'], span[aria-label*='Star'], "
+                "span[aria-label*='stars'], span[aria-label*='Stars'], "
+                "span[aria-label*='별'], span[aria-label*='ster'], "
+                "span[aria-label*='Ster'], span[aria-label*='bintang'], "
+                "span[aria-label*='Bintang']"
+            ), "aria-label", "")
+            if label:
+                stats["rating_label_present"] += 1
+                if not __import__("re").search(r"[1-5]", label):
+                    stats["rating_label_unrecognized"] += 1
+            else:
+                # The production parser returns 5 for a missing label.
+                stats["rating_label_missing_default_five"] += 1
+            if isinstance(rating, int) and 1 <= rating <= 5:
+                stats["rating_valid"] += 1
+                stats["rating_distribution"][str(rating)] += 1
+            if body:
+                stats["text_present"] += 1
+            else:
+                stats["text_empty"] += 1
+            key = production.make_review_key({
+                "store_name": "Saemaeul Central Eastville",
+                "author": author, "rating": rating,
+                "date": date, "text": body,
+            })
+            keys_to_ids.setdefault(key, set()).add(rid or ("position:"+str(i)))
+        except Exception:
+            stats["extraction_exceptions"] += 1
+    stats["production_review_key_unique"] = len(keys_to_ids)
+    stats["production_review_key_collisions"] = max(
+        0, cards.count() - stats["extraction_exceptions"] - len(keys_to_ids)
+    )
+    stats["collision_groups_with_distinct_review_ids"] = sum(
+        len(v) > 1 for v in keys_to_ids.values()
+    )
+    return stats
 
 def main():
     if os.environ.get("SUPABASE_URL") or os.environ.get("SUPABASE_SERVICE_ROLE_KEY"):
@@ -264,6 +346,11 @@ def main():
                         output["final_dom_audit"] = final_dom_audit(page)
                     except Exception:
                         output["final_dom_audit"] = {"status": "AUDIT_UNAVAILABLE"}
+                    if output.get("final_dom_audit", {}).get("review_cards", 0) >= 6:
+                        try:
+                            output["production_parser_audit"] = parser_audit(page)
+                        except Exception:
+                            output["production_parser_audit"] = {"status": "AUDIT_UNAVAILABLE"}
                     page.remove_listener("response", network)
         except PlaywrightError:
             # Playwright errors can contain URLs, cookie values or account data.
@@ -304,6 +391,7 @@ def write_result(data):
         "network": data["network"],
         "full_coverage_verified": data["full_coverage_verified"],
         "final_dom_audit": data.get("final_dom_audit"),
+        "production_parser_audit": data.get("production_parser_audit"),
     }
     print("AUTHENTICATED_COVERAGE_VERDICT: "+json.dumps(compact))
     summary = os.environ.get("GITHUB_STEP_SUMMARY")
