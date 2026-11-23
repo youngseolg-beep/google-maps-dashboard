@@ -28,8 +28,14 @@ def main():
             if answer.upper() != "YES":
                 print("NOT_EXPORTED: login not confirmed")
                 return
-            if not context.browser or not context.browser.is_connected():
-                raise SystemExit("BROWSER_DISCONNECTED: browser exited before state export; keep the opened window running")
+            # Persistent contexts do not expose a Browser object via
+            # context.browser; that being None is normal, not disconnection.
+            # Check the active page instead.
+            try:
+                if page.is_closed():
+                    raise SystemExit("BROWSER_DISCONNECTED: Google Maps page closed before state export")
+            except PlaywrightError as exc:
+                raise SystemExit("BROWSER_DISCONNECTED: Google Maps page unavailable before state export") from exc
             try:
                 state = context.storage_state()
             except PlaywrightError as exc:
