@@ -987,6 +987,38 @@ class ReviewPersistenceRegressionTests(unittest.TestCase):
         self.assertEqual(len(rows), 1)
         self.assertEqual(rows[0]["author"], "Reviewer B")
 
+    def test_expired_google_auth_prevents_any_db_run_or_review_insert(self):
+        from unittest.mock import MagicMock
+        playwright = MagicMock()
+        browser = playwright.return_value.__enter__.return_value.chromium.launch.return_value
+        page = MagicMock()
+        context = MagicMock()
+        context.new_page.return_value = page
+        store = dict(STORE, url="https://www.google.com/maps/place/example", id="store-id")
+        with (
+            patch.object(scraper, "REVIEW_APPEND_MODE", "append"),
+            patch.object(scraper, "load_dedicated_google_auth_state", return_value={"cookies":[{"name":"dummy"}]}),
+            patch.object(scraper, "load_stores_from_supabase", return_value=[store]),
+            patch.object(scraper, "select_target_stores", return_value=[store]),
+            patch.object(scraper, "load_store_id_map", return_value={store["store_name"].casefold():"store-id"}),
+            patch.object(scraper, "validate_store_configuration"),
+            patch.object(scraper, "load_existing_reviews", return_value=[]),
+            patch.object(scraper, "save_migrated_existing_reviews"),
+            patch.object(scraper, "sync_playwright", return_value=playwright.return_value),
+            patch.object(scraper, "new_crawler_context", return_value=context),
+            patch.object(scraper, "verify_dedicated_google_login", return_value=False),
+            patch.object(scraper, "create_crawl_run") as create_run,
+            patch.object(scraper, "finish_crawl_run") as finish_run,
+            patch.object(scraper, "upsert_review_batch") as insert,
+            patch.object(scraper, "report_collection_status"),
+            patch("builtins.print"),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "전용 Google 인증 세션"):
+                scraper.scrape()
+        create_run.assert_not_called()
+        finish_run.assert_not_called()
+        insert.assert_not_called()
+
 
 if __name__ == "__main__":
     unittest.main()

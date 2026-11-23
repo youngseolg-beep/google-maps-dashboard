@@ -2549,9 +2549,7 @@ def scrape():
     execution = "FAILED"
 
     try:
-        if not dry_run:
-            crawl_run_id = create_crawl_run(len(stores))
-        else:
+        if dry_run:
             print("🧪 DRY_RUN: crawl_runs 및 reviews DB 쓰기를 모두 생략합니다.")
         with sync_playwright() as p:
             browser = p.chromium.launch(
@@ -2582,6 +2580,11 @@ def scrape():
                     if not verify_dedicated_google_login(page):
                         raise RuntimeError("전용 Google 인증 세션을 확인하지 못했습니다. 리뷰 저장을 중단합니다.")
                     print("✅ 전용 Google 계정 로그인 UI 확인")
+
+                # No DB mutation is allowed until the dedicated Google session
+                # is confirmed. Authentication loss must not leave a fake run.
+                if not dry_run:
+                    crawl_run_id = create_crawl_run(len(stores))
 
                 for store, status_row in zip(stores, store_rows):
                     result = scrape_store_with_reporting(
