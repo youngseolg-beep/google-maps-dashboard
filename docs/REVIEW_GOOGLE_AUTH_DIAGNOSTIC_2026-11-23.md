@@ -50,3 +50,24 @@
 - [첫 18건 테스트](https://github.com/youngseolg-beep/google-maps-dashboard/actions/runs/45098890899)
 - [167건 확보 테스트](https://github.com/youngseolg-beep/google-maps-dashboard/actions/runs/45099155930)
 - [167개 ID·평점·작성자 검증](https://github.com/youngseolg-beep/google-maps-dashboard/actions/runs/45099556771)
+
+## 기존 크롤러 인증 통합 및 실제 추출 검증 (2026-11-23)
+
+- 전용 인증 state 로더, 안전한 Google 쿠키 필터링, 브라우저 컨텍스트 적용 및 Google 계정 UI 검증 코드를 `scraper/scraper.py`에 test 브랜치 한정 추가.
+- `open_all_reviews_control()`로 명시적 전체 리뷰 진입을 우선하고, `review_pane_progress()`로 스크롤이 진행 중일 때의 거짓 스톨 판정을 방지. 기존 8000px wheel 입력은 회귀 테스트 호환성을 위해 유지.
+- `review-no-sort-unit-tests` 최신 실행: **59 tests PASS**, `3e0221e8`.
+- 기존 운영 파서로 Google Maps DOM 167건을 검증: 작성자 167/167, 날짜 167/167, 평점 167/167, 본문 166/167, 리뷰 저장 키 충돌 0.
+- 실제 생산 크롤러 함수 `scrape_store()`에 전용 인증을 적용한 **읽기 전용 단일 매장 테스트 PASS**: Central Eastville 167 리뷰 추출, unique keys 167, key collisions 0, text present 166, missing date 0, valid ratings 167.
+- 해당 테스트는 GitHub Actions에서 Supabase 환경변수를 비우고 실행했으며, `database_writes=false`, `review_data_persisted=false`.
+- 결과 `collection_issue=review_feed_stalled_partial`, `read_only_completeness_verified=false`는 정합성 오류가 아니라 전체 리뷰 표시 총수에 대한 독립적 대사가 아직 없기 때문. `SCANNED`와 `VERIFIED`를 혼동하지 말 것.
+- 운영 `main` 및 Supabase 실제 데이터는 이 브랜치 작업 중 수정하지 않음.
+
+### 검증 실행
+- [파서 필드 167개 감사](https://github.com/youngseolg-beep/google-maps-dashboard/actions/runs/45100250778)
+- [59개 단위·회귀 테스트 통과](https://github.com/youngseolg-beep/google-maps-dashboard/actions/runs/45100823993)
+- [실제 scrape_store 인증/수집 읽기 전용 PASS](https://github.com/youngseolg-beep/google-maps-dashboard/actions/runs/45100926520)
+
+### 다음 완료 조건
+1. 여러 국가(태국/대만/몽골)의 서로 다른 매장에서 동일한 인증 및 실제 크롤러의 리뷰 수집 확인.
+2. 동일 시점 Google Maps 총 리뷰 수 대사. 불가하면 전체 수집 완전성 `PARTIAL`로 유지.
+3. 기존 Supabase 리뷰와 신규 후보 키 대사(먼저 읽기 전용), 저장 전 백업/런칭 QA. 운영 반영은 명시적 승인 후 진행.
