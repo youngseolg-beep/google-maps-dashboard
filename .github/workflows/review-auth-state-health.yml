@@ -1,0 +1,33 @@
+name: review-auth-state-health
+
+on:
+  push:
+    branches: [test/review-collection-without-sort]
+    paths:
+      - "scraper/review_auth_state_health.py"
+      - ".github/workflows/review-auth-state-health.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  secret-health-only:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Inspect auth state expiry and structure without a browser
+        env:
+          GOOGLE_MAPS_STORAGE_STATE_B64: ${{ secrets.GOOGLE_MAPS_STORAGE_STATE_B64 }}
+        run: python scraper/review_auth_state_health.py
+      - name: Upload aggregate non-sensitive status only
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: review-auth-state-health
+          path: review-auth-state-health.json
+          if-no-files-found: ignore
