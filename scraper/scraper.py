@@ -28,7 +28,7 @@ img, svg, canvas, video, iframe, input, textarea { visibility: hidden !important
 
 # A fixed eight-round limit truncated stores with long review histories.
 # Keep a configurable safety ceiling, but continue until the feed actually stalls.
-MAX_SCROLL_ROUNDS = max(1, min(int(os.environ.get("REVIEW_MAX_SCROLL_ROUNDS", "80")), 300))
+MAX_SCROLL_ROUNDS = max(1, min(int(os.environ.get("REVIEW_MAX_SCROLL_ROUNDS", "150")), 300))
 STOP_STALLED_ROUNDS = 3
 MIN_REVIEWS_TARGET = 50
 
@@ -335,6 +335,70 @@ def is_valid_google_maps_place_page(page):
     return False
 
 
+
+def open_all_reviews_control(page):
+    """Use only a visible explicit Google Maps full-review control.
+
+    Do not click arbitrary links or individual review text.
+    """
+    selector = "button, [role='button'], a[href]"
+    try:
+        index = page.evaluate("""(selector) => {
+            const rx = /more reviews|see (all|more) reviews|view (all|more) reviews|리뷰 더보기|모든 리뷰|전체 리뷰|meer recensies|semua ulasan/i;
+            const nodes = [...document.querySelectorAll(selector)];
+            for (let i=0; i<nodes.length; i++) {
+                const e=nodes[i], r=e.getBoundingClientRect();
+                if (!r.width || !r.height || e.closest('.jftiEf,[data-review-id]')) continue;
+                const label=(e.getAttribute('aria-label')||'')+' '+(e.innerText||'').slice(0,140);
+                if (!rx.test(label)) continue;
+                const href=e.getAttribute('href')||'';
+                if (href && /^https?:\/\//i.test(href)
+                    && !/^https?:\/\/(www\.)?google\.[^/]+\/maps\//i.test(href)) continue;
+                return i;
+            }
+            return null;
+        }""", selector)
+        if type(index) is not int:
+            return False
+        page.locator(selector).nth(index).click(timeout=4500)
+        page.wait_for_timeout(3000)
+        if "/maps/place/" not in str(getattr(page, "url", "")):
+            return False
+        count = page.locator(".jftiEf").count()
+        feed = page.locator("div[role='feed']").filter(
+            has=page.locator(".jftiEf")
+        ).count()
+        if count > 5 or feed > 0:
+            print("✅ 전체 리뷰 목록 진입 확인")
+            return True
+    except Exception as exc:
+        print(f"REVIEW_MORE_DIAGNOSTIC unavailable={type(exc).__name__}")
+    return False
+
+
+def review_pane_progress(page):
+    """Two non-sensitive measurements: scrollTop and current scroll range."""
+    try:
+        progress = page.evaluate("""() => {
+            const card=document.querySelector('.jftiEf');
+            if (!card) return null;
+            for (let el=card.parentElement; el; el=el.parentElement) {
+                const r=el.getBoundingClientRect(), css=getComputedStyle(el);
+                if (r.width>0 && r.height>0 && ['auto','scroll'].includes(css.overflowY)
+                    && el.scrollHeight>el.clientHeight+30)
+                    return [Math.round(el.scrollTop),
+                            Math.round(el.scrollHeight-el.clientHeight)];
+            }
+            return null;
+        }""")
+        if (isinstance(progress, list) and len(progress) == 2
+                and all(type(x) in (int, float) and x >= 0 for x in progress)):
+            return tuple(progress)
+    except Exception:
+        pass
+    return None
+
+
 def open_reviews_panel(page):
     """Activate reviews without navigating away from the current Maps place.
 
@@ -342,6 +406,8 @@ def open_reviews_panel(page):
     place page can display only five preview cards with that tab selected.
     """
     print("🔘 리뷰 패널 열기 시도 중...")
+    if open_all_reviews_control(page):
+        return True
 
     # Do not click generic "reviews" text or hrefs. The A/B run on 2026-11-20
     # demonstrated that a review link can leave Google Maps entirely.
@@ -401,6 +467,8 @@ def open_reviews_panel(page):
                     return True
                 # Don't keep clicking other UI controls once Reviews is
                 # selected: that caused a 5 -> 0 card navigation regression.
+                if open_all_reviews_control(page):
+                    return True
                 print("REVIEW_PANEL_DIAGNOSTIC selected_tab_only_no_feed; stop_without_navigation")
                 return False
         except Exception as exc:
@@ -1217,7 +1285,7 @@ def scroll_reviews(page):
             if not box or box["width"] <= 0 or box["height"] <= 0:
                 return False
             page.mouse.move(box["x"] + box["width"] / 2, box["y"] + box["height"] / 2)
-        page.mouse.wheel(0, 8000)
+        page.mouse.wheel(0, 1200)
         page.wait_for_timeout(900)
         page.keyboard.press("PageDown")
         page.wait_for_timeout(1400)
@@ -1626,6 +1694,7 @@ def extract_reviews(page, store, existing_reviews=None, newest_verified=False, c
     scroll_target_missing = False
     last_card_count = 0
     last_processed_count = 0
+    last_scroll_progress = None
     checked_count = 0
     consecutive_existing_hits = 0
 
@@ -1770,13 +1839,23 @@ def extract_reviews(page, store, existing_reviews=None, newest_verified=False, c
         else:
             print(f"⚠️ {round_no + 1}회차: 신규 후보 없음 / 이번 매장 누적 {len(collected)}건")
 
-        if feed_grew(last_card_count, card_count, last_processed_count, len(processed_keys)):
+        # A growing review list can have many screens without new cards.
+        # Only classify stalling when neither review identities nor scroll
+        # position/range has advanced.
+        current_progress = review_pane_progress(page)
+        position_advanced = (
+            current_progress is not None and last_scroll_progress is not None
+            and (current_progress[0] > last_scroll_progress[0] + 3
+                 or current_progress[1] > last_scroll_progress[1] + 3)
+        )
+        if feed_grew(last_card_count, card_count, last_processed_count, len(processed_keys)) or position_advanced:
             feed_stalled_count = 0
         else:
             feed_stalled_count += 1
 
         last_card_count = card_count
         last_processed_count = len(processed_keys)
+        last_scroll_progress = current_progress
 
         if feed_stalled_count >= STOP_STALLED_ROUNDS:
             feed_stalled = True

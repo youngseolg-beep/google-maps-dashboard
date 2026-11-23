@@ -822,6 +822,45 @@ class ReviewPersistenceRegressionTests(unittest.TestCase):
         page.evaluate.return_value = True
         self.assertTrue(scraper.verify_dedicated_google_login(page))
 
+    def test_explicit_full_reviews_control_is_used_without_generic_links(self):
+        page = Mock()
+        page.url = "https://www.google.com/maps/place/example"
+        page.evaluate.return_value = 0
+        page.locator.return_value.count.return_value = 7
+        self.assertTrue(scraper.open_all_reviews_control(page))
+        page.locator.return_value.nth.assert_called_once_with(0)
+        page.locator.return_value.nth.return_value.click.assert_called_once()
+
+    def test_review_more_control_ignores_untyped_mock_or_missing_control(self):
+        page = Mock()
+        page.evaluate.return_value = None
+        self.assertFalse(scraper.open_all_reviews_control(page))
+        page.locator.assert_not_called()
+
+    def test_scroll_progress_defers_stall_while_pane_moves(self):
+        class OneCardList:
+            def count(self): return 1
+            def nth(self, index): return Mock()
+        with (
+            patch("builtins.print"),
+            patch.object(scraper, "click_more_buttons"),
+            patch.object(scraper, "click_original_review_buttons"),
+            patch.object(scraper, "get_review_cards", return_value=(OneCardList(), ".jftiEf")),
+            patch.object(scraper, "expand_review_text"),
+            patch.object(scraper, "get_review_text", return_value="Review body for a scrolling regression"),
+            patch.object(scraper, "get_review_date", return_value="2 weeks ago"),
+            patch.object(scraper, "get_review_author", return_value="Tester"),
+            patch.object(scraper, "get_review_rating", return_value=4),
+            patch.object(scraper, "review_pane_progress", side_effect=[
+                (0, 8000), (1200, 8000), (2400, 8000), (3600, 8000), (4800, 8000)
+            ]),
+            patch.object(scraper, "scroll_reviews", return_value=True) as wheel,
+            patch.object(scraper, "MAX_SCROLL_ROUNDS", 5),
+        ):
+            rows = scraper.extract_reviews(Mock(), STORE, [], newest_verified=False)
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(wheel.call_count, 5)
+
 
 if __name__ == "__main__":
     unittest.main()
