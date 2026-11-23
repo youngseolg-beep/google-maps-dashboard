@@ -71,3 +71,22 @@
 1. 여러 국가(태국/대만/몽골)의 서로 다른 매장에서 동일한 인증 및 실제 크롤러의 리뷰 수집 확인.
 2. 동일 시점 Google Maps 총 리뷰 수 대사. 불가하면 전체 수집 완전성 `PARTIAL`로 유지.
 3. 기존 Supabase 리뷰와 신규 후보 키 대사(먼저 읽기 전용), 저장 전 백업/런칭 QA. 운영 반영은 명시적 승인 후 진행.
+
+
+## Supabase 기존 리뷰 기준선 및 읽기 전용 키 대사 (2026-11-23)
+
+실제 Supabase 프로젝트: `sv-review-master` (프로젝트를 임의로 변경하거나 다른 DB를 조회하지 말 것).
+수집 비교의 기준은 `stores.id`/`reviews.store_id`, 매장 표기는 DB의 `stores.store_name`을 정식 명칭으로 사용한다.
+
+| 국가 | DB 매장명 | 현재 저장 행 | 빈 본문 | 누락 평점/상대 날짜 |
+|---|---|---:|---:|---:|
+| 태국 | Saemaeul Central Eastville | 111 | 2 | 0 / 0 |
+| 대만 | Bornga Dunnan Store | 849 | 114 | 0 / 0 |
+| 몽골 | Saemaeul Seoul St. | 54 | 6 | 0 / 0 |
+
+- 3개 매장 저장 1,014건의 review_key는 모두 SHA-256 문자열 형식이며, 작성자 + 본문 공백/대소문자 정규화 기준 중복 후보 0건이다(정규화 알고리즘의 Python/SQL 미세 차이는 있을 수 있음).
+- 대만의 테스트 별칭 `Bornga Dunhua South`와 DB 정식 명칭 `Bornga Dunnan Store`는 동일한 Google Maps URL이다. 수집/키 생성은 DB 정식 명칭으로 하여 잘못된 신규 판정을 방지한다.
+- 몽골 매장 URL은 `maps.app.goo.gl` 단축 URL. DB와 테스트 URL이 정확히 일치하는 경우에 한해 같은 지도 링크로 취급한다. 태국은 Maps place CID로 동일성을 확인한다.
+- 기존 DB 행 수와 일회성 브라우저 관측 수의 차이는 신규 리뷰 건수와 다르다. 개별 저장 review_key의 일치·정규화 일치·확장 본문 변형 일치·신규 후보를 나누어 대사해야 한다.
+- `review_auth_db_reconciliation.py`는 Supabase REST GET만 호출하도록 별도 구현. DB 값을 브라우저 수집값과 메모리에서 비교하고 로그/아티팩트에는 개수만 남긴다.
+- 이 단계에서는 **INSERT / UPDATE / DELETE / RPC / Supabase migration / 운영 배포 금지**. 총수 대사가 완료되지 않았으면 coverage를 VERIFIED로 표기하지 않는다.
