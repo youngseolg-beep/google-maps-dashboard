@@ -81,6 +81,52 @@ def load_existing_store_reviews(store_id, *, base, key):
     return rows
 
 
+def coarse_page_diagnostics(page):
+    """Only browser-state booleans and counts; no URLs, text, identities, or cookies."""
+    state = {
+        "page_category": "unknown",
+        "locale_requested": False,
+        "visible_review_cards": 0,
+        "review_feed_present": False,
+        "place_heading_present": False,
+        "signed_in_maps_ui": False,
+    }
+    try:
+        parsed = urlsplit(str(page.url))
+        host = (parsed.hostname or "").lower()
+        path = parsed.path.lower()
+        if host == "maps.app.goo.gl":
+            state["page_category"] = "shortlink"
+        elif host in {"google.com", "www.google.com", "maps.google.com"}:
+            if path.startswith("/maps/place/"):
+                state["page_category"] = "maps_place"
+            elif path.startswith("/maps/search"):
+                state["page_category"] = "maps_search"
+            elif path.startswith("/maps"):
+                state["page_category"] = "maps_other"
+            else:
+                state["page_category"] = "google_other"
+        elif host.endswith(".google.com"):
+            state["page_category"] = "google_other"
+        else:
+            state["page_category"] = "other"
+        params = parsed.query.lower().split("&")
+        state["locale_requested"] = "hl=en" in params and "gl=us" in params
+    except Exception:
+        pass
+    for name, func in (
+        ("visible_review_cards", lambda: page.locator(".jftiEf").count()),
+        ("review_feed_present", lambda: page.locator("div[role='feed']").count() > 0),
+        ("place_heading_present", lambda: page.locator("h1.DUwDvf").count() > 0),
+        ("signed_in_maps_ui", lambda: production.verify_dedicated_google_login(page)),
+    ):
+        try:
+            state[name] = func()
+        except Exception:
+            pass
+    return state
+
+
 def compare_candidates(candidates, saved, store_name):
     """Compare only memory-local review data. No raw values in result."""
     saved_hashes = {x.get("review_key") for x in saved if x.get("review_key")}
@@ -103,6 +149,11 @@ def compare_candidates(candidates, saved, store_name):
         "empty_text_candidates": 0,
         "candidate_key_duplicates": 0,
         "saved_noncanonical_review_keys": 0,
+        "existing_author_overlap": 0,
+        "existing_author_rating_overlap": 0,
+        "safe_append_ready": 0,
+        "safe_append_held": 0,
+        "safe_append_held_reasons": {},
     }
     counts["saved_noncanonical_review_keys"] = sum(
         bool(row.get("review_key")) and
@@ -112,6 +163,18 @@ def compare_candidates(candidates, saved, store_name):
             "text": row.get("text") or row.get("review_text") or "",
         }) for row in saved
     )
+    historical_authors = {
+        production.normalize_spaces(x.get("author", "")).casefold()
+        for x in normalized_saved
+    }
+    historical_author_ratings = {
+        (production.normalize_spaces(x.get("author", "")).casefold(), x.get("rating"))
+        for x in normalized_saved
+    }
+    append_plan = production.plan_safe_review_append(normalized_saved, candidates)
+    counts["safe_append_ready"] = len(append_plan["ready"])
+    counts["safe_append_held"] = len(append_plan["held"])
+    counts["safe_append_held_reasons"] = append_plan["held_reasons"]
     processed = set()
     for item in candidates:
         key = production.make_review_key(item)
@@ -119,6 +182,11 @@ def compare_candidates(candidates, saved, store_name):
             counts["candidate_key_duplicates"] += 1
             continue
         processed.add(key)
+        author = production.normalize_spaces(item.get("author", "")).casefold()
+        if author in historical_authors:
+            counts["existing_author_overlap"] += 1
+        if (author, item.get("rating")) in historical_author_ratings:
+            counts["existing_author_rating_overlap"] += 1
         if not (item.get("text") or "").strip():
             counts["empty_text_candidates"] += 1
         digest = production.canonical_review_hash(item)
@@ -237,6 +305,7 @@ def main():
                                 "observed_review_count": evidence.get("observed_review_count", 0),
                                 "collection_issue": result.get("collection_issue"),
                                 "completeness_verified": False,
+                                "browser_state": coarse_page_diagnostics(page),
                                 **compare_candidates(candidates, existing, db_name),
                             }
                         except Exception as exc:
@@ -246,6 +315,7 @@ def main():
                                 "exception_type": type(exc).__name__,
                                 "existing_db_rows": len(existing),
                                 "completeness_verified": False,
+                                "browser_state": coarse_page_diagnostics(page),
                             }
                         outcome["stores"].append(row)
                         print("READ_ONLY_STORE_RECONCILIATION: " + json.dumps(row, ensure_ascii=False))
