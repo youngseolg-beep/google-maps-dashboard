@@ -16,6 +16,7 @@ from urllib.request import Request, urlopen
 from playwright.sync_api import sync_playwright
 import scraper as production
 from review_multistore_probe import store_urls
+from review_identity_metrics import source_identity_counts, script_counts
 
 REPORT = Path("review-auth-db-reconciliation-aggregate.json")
 STORE_NAMES = {
@@ -306,6 +307,9 @@ def main():
                                 "collection_issue": result.get("collection_issue"),
                                 "completeness_verified": False,
                                 "browser_state": coarse_page_diagnostics(page),
+                                "source_id_metrics": source_identity_counts(candidates),
+                                "live_body_script_metrics": script_counts(candidates),
+                                "saved_body_script_metrics": script_counts(existing),
                                 **compare_candidates(candidates, existing, db_name),
                             }
                         except Exception as exc:

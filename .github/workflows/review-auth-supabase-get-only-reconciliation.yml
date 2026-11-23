@@ -20,8 +20,10 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-      - name: Compile isolated read-only reconciliation
-        run: python -m py_compile scraper/scraper.py scraper/review_auth_db_reconciliation.py
+      - name: Compile and test isolated read-only reconciliation
+        run: |
+          python -m py_compile scraper/scraper.py scraper/review_auth_db_reconciliation.py scraper/review_identity_metrics.py
+          python -m unittest discover -s scraper -p 'test_review_identity_metrics.py' -v
       - name: Install Chromium
         run: |
           pip install -r scraper/requirements.txt
@@ -31,7 +33,7 @@ jobs:
           GOOGLE_MAPS_STORAGE_STATE_B64: ${{ secrets.GOOGLE_MAPS_STORAGE_STATE_B64 }}
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
-          REVIEW_MAX_SCROLL_ROUNDS: "18"
+          REVIEW_MAX_SCROLL_ROUNDS: "10"
         run: python scraper/review_auth_db_reconciliation.py
       - name: Upload aggregate-only report
         if: always()
