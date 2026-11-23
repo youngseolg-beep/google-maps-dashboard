@@ -1,0 +1,39 @@
+name: review-google-session-acceptance
+
+on:
+  push:
+    branches: [test/review-collection-without-sort]
+    paths:
+      - "scraper/review_google_session_acceptance.py"
+      - ".github/workflows/review-google-session-acceptance.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  google-session-read-only:
+    runs-on: ubuntu-latest
+    timeout-minutes: 9
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install browser
+        run: |
+          pip install -r scraper/requirements.txt
+          python -m playwright install --with-deps chromium
+      - name: Compare anonymous and existing dedicated session in Google Account
+        env:
+          GOOGLE_MAPS_STORAGE_STATE_B64: ${{ secrets.GOOGLE_MAPS_STORAGE_STATE_B64 }}
+          SUPABASE_URL: ""
+          SUPABASE_SERVICE_ROLE_KEY: ""
+        run: python scraper/review_google_session_acceptance.py
+      - name: Upload aggregate signals without account data
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: review-google-session-acceptance
+          path: review-auth-acceptance-result.json
+          if-no-files-found: ignore
