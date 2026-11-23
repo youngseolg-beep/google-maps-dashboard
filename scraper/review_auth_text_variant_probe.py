@@ -11,6 +11,7 @@ import os
 import re
 import sys
 from pathlib import Path
+from urllib.parse import urlsplit, urlunsplit
 
 from playwright.sync_api import sync_playwright
 import scraper as production
@@ -94,6 +95,21 @@ def summarize(sample, saved, store_name):
                 counts[label + "_text"] += 1
     return counts
 
+
+
+def append_english_language_to_maps_url(value):
+    """Only Google Maps place destinations; never account/security URLs."""
+    u = urlsplit(value)
+    if u.scheme != "https" or (u.hostname or "").lower() not in {
+        "google.com", "www.google.com", "maps.google.com"
+    } or not u.path.startswith("/maps/"):
+        raise ValueError("NOT_A_GOOGLE_MAPS_URL")
+    query = "&".join(
+        part for part in u.query.split("&")
+        if part and not part.lower().startswith(("hl=", "gl="))
+    )
+    query += ("&" if query else "") + "hl=en&gl=us"
+    return urlunsplit((u.scheme,u.netloc,u.path,query,u.fragment))
 
 def run():
     base = os.getenv("SUPABASE_URL", "")
@@ -183,6 +199,21 @@ def run():
                                 r.get("text") or r.get("review_text") or ""
                             )[name] for r in rows)
                                        for name in ("latin","han","thai","cyrillic","hangul")}
+                            # A signed-in Google account can override
+                            # Playwright locale and present Korean-translated
+                            # text. Request an English Maps UI without changing
+                            # Google account settings.
+                            en_url = append_english_language_to_maps_url(page.url)
+                            page.goto(en_url, wait_until="domcontentloaded", timeout=45000)
+                            page.wait_for_timeout(5200)
+                            with contextlib.redirect_stdout(io.StringIO()), \
+                                 contextlib.redirect_stderr(io.StringIO()):
+                                en_opened = production.open_all_reviews_control(page)
+                                if not en_opened:
+                                    en_opened = production.open_reviews_panel(page)
+                            page.wait_for_timeout(1500)
+                            english = sample_reviews(page)
+                            overlap_en = set(before) & set(english)
                             row.update({
                                 "status": "SAMPLED",
                                 "full_review_action_confirmed": bool(opened),
@@ -191,6 +222,14 @@ def run():
                                 "text_changed_after_original": changed,
                                 "before": summarize(before, rows, name),
                                 "after": summarize(after, rows, name),
+                                "forced_english": summarize(english, rows, name),
+                                "forced_english_reviews_opened": bool(en_opened),
+                                "same_ids_before_and_forced_en": len(overlap_en),
+                                "text_changed_after_forced_en": sum(
+                                    before[rid]["text"] != english[rid]["text"]
+                                    for rid in overlap_en
+                                ),
+                                "account_ui_after_en": production.verify_dedicated_google_login(page),
                                 "db_language_counts": db_lang,
                             })
                         except Exception as exc:
