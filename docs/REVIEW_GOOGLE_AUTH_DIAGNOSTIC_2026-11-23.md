@@ -27,3 +27,26 @@
 - [전용 인증 상태 적용 후 리뷰 깊이 비교](https://github.com/youngseolg-beep/google-maps-dashboard/actions/runs/45093592382)
 - [Google 쿠키 유효기간 검사](https://github.com/youngseolg-beep/google-maps-dashboard/actions/runs/45093872702)
 - [Google 계정 서버 세션 수용 여부 검사](https://github.com/youngseolg-beep/google-maps-dashboard/actions/runs/45093992501)
+
+
+## 인증 상태 기반 전체 리뷰 스크롤 검증 (추가: 2026-11-23)
+
+### 수행 및 확인
+- GitHub Actions 인증 비교: 익명 5건, 전용 계정 적용 8건 관측 PASS.
+- 첫 전체 목록 스크롤: 18건 관측. 목록 끝에 도달하기 전에 10회 신규 없음 조건으로 종료한 오류 확인.
+- 조기 종료 조건 수정 후: 91회 스크롤, 최종 리뷰 카드 167개, 실제 목록 하단 도달 후 추가 로딩 중단.
+- 검증 재실행 최종 DOM 감사: 리뷰 카드 167개, 명시적 data-review-id 167개, 중복 ID 0개, 작성자 표시 요소 167개, 평점 표시 요소 167개.
+- Google 관련 Fetch/XHR 응답 174건; HTTP 4xx/5xx 0건.
+- 앞선 비로그인 교차 매장 검사에서 화면 총수 162를 읽었지만, 인증 세션의 최신 총수는 현재 신뢰성 있게 추출하지 못함. 시점이 다른 표시 수와 관찰 카드 수의 차이를 신규 리뷰 증가로 단정하지 말 것.
+- 이 결과는 브라우저에서 167개 구분 가능한 리뷰 카드 확인을 뜻하며, DB 신규 건수나 실제 저장 성공을 의미하지 않음.
+- 인증 정보/리뷰 내용/작성자/ID는 결과 로그와 artifact에 저장하지 않음.
+
+### 완료 게이트
+1. 같은 시점 Google Maps 총 리뷰 수와 관측 고유 ID 수를 대사.
+2. 기존 리뷰 DB와 중복 여부 및 날짜·평점·본문 파싱을 읽기 전용 검증.
+3. 검증 후 별도 승인 없이 운영 main 또는 Supabase 저장을 활성화하지 않음.
+
+### 실행 기록
+- [첫 18건 테스트](https://github.com/youngseolg-beep/google-maps-dashboard/actions/runs/45098890899)
+- [167건 확보 테스트](https://github.com/youngseolg-beep/google-maps-dashboard/actions/runs/45099155930)
+- [167개 ID·평점·작성자 검증](https://github.com/youngseolg-beep/google-maps-dashboard/actions/runs/45099556771)
