@@ -1285,7 +1285,7 @@ def scroll_reviews(page):
             if not box or box["width"] <= 0 or box["height"] <= 0:
                 return False
             page.mouse.move(box["x"] + box["width"] / 2, box["y"] + box["height"] / 2)
-        page.mouse.wheel(0, 1200)
+        page.mouse.wheel(0, 8000)
         page.wait_for_timeout(900)
         page.keyboard.press("PageDown")
         page.wait_for_timeout(1400)
