@@ -930,6 +930,63 @@ class ReviewPersistenceRegressionTests(unittest.TestCase):
             scraper.force_google_maps_english_ui(page)
         self.assertNotIn("private-account-data", str(raised.exception))
 
+    def test_unknown_rating_never_becomes_fake_five_stars(self):
+        self.assertEqual(scraper.parse_rating(""), 0)
+        self.assertEqual(scraper.parse_rating("Rating unavailable"), 0)
+        self.assertEqual(scraper.parse_rating("4 stars"), 4)
+
+    def test_append_plan_holds_same_author_when_translation_changes_text(self):
+        existing = review("Great meals and service", author="Existing User")
+        translated = review("훌륭한 음식과 서비스", author="Existing User")
+        fresh = review("Very nice dinner", author="Completely New User")
+        plan = scraper.plan_safe_review_append([existing], [translated, fresh])
+        self.assertEqual([r["author"] for r in plan["ready"]], ["Completely New User"])
+        self.assertEqual(len(plan["held"]), 1)
+        self.assertEqual(plan["held_reasons"]["prior_author_collision"], 1)
+
+    def test_append_plan_does_not_cross_contaminate_authors_between_stores(self):
+        existing = review("Great meals", author="Shared User")
+        another_store = review("Another restaurant", author="Shared User", store_name="Another Store")
+        plan = scraper.plan_safe_review_append([existing], [another_store])
+        self.assertEqual(len(plan["ready"]), 1)
+        self.assertEqual(plan["held"], [])
+
+    def test_append_plan_blocks_unknown_author_date_and_rating(self):
+        candidates = [
+            review("Great food", author="Anonymous"),
+            review("Other experience", author="Reviewer B", rating=0),
+            review("Helpful staff", author="Reviewer C", date="Unknown"),
+        ]
+        plan = scraper.plan_safe_review_append([], candidates)
+        self.assertEqual(len(plan["held"]), 3)
+        self.assertEqual(len(plan["ready"]), 0)
+
+    def test_dry_run_generates_plan_but_never_writes_reviews(self):
+        new = review("Fresh feedback", author="New Person")
+        with (
+            patch.object(scraper, "load_store_id_map", return_value={STORE["store_name"].casefold(): "s1"}),
+            patch.object(scraper, "upsert_review_batch") as write,
+            patch("builtins.print") as output,
+        ):
+            scraper.save_reviews([new], None, [], dry_run=True, conservative_dedupe=True)
+        write.assert_not_called()
+        self.assertTrue(any("REVIEW_APPEND_PLAN" in str(x) for x in output.call_args_list))
+
+    def test_safe_append_only_submits_review_not_on_hold(self):
+        old = review("Previously saved", author="Reviewer A")
+        translated = review("이전 방문", author="Reviewer A")
+        new = review("First time here", author="Reviewer B")
+        with (
+            patch.object(scraper, "load_store_id_map", return_value={STORE["store_name"].casefold(): "s1"}),
+            patch.object(scraper, "upsert_review_batch") as write,
+            patch("builtins.print"),
+        ):
+            scraper.save_reviews([translated, new], 11, [old], conservative_dedupe=True)
+        write.assert_called_once()
+        rows = write.call_args.args[0]
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["author"], "Reviewer B")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -15,6 +15,8 @@ from playwright.sync_api import sync_playwright
 SUPABASE_URL = os.environ.get("SUPABASE_URL", "").rstrip("/")
 SUPABASE_SERVICE_ROLE_KEY = os.environ.get("SUPABASE_SERVICE_ROLE_KEY", "")
 REVIEW_INSERT_PREFERENCE = "resolution=ignore-duplicates,return=minimal"
+# Test-branch safety: no Supabase write unless explicitly enabled for a vetted rollout.
+REVIEW_APPEND_MODE = os.environ.get("REVIEW_APPEND_MODE", "dry_run").strip().lower()
 STATUS_ONLY = os.environ.get("STATUS_ONLY", "").strip().lower() in {"1", "true", "yes", "on"}
 REPAIR_ONLY = os.environ.get("REPAIR_ONLY", "").strip().lower() in {"1", "true", "yes", "on"}
 TARGET_STORE = os.environ.get("TARGET_STORE", "").strip()
@@ -234,11 +236,12 @@ def safe_attr(locator, attr, default=""):
 
 
 def parse_rating(label):
+    # Never assign a 5-star rating merely because Maps omitted the label.
+    # Unrecognized ratings are excluded by append-only validation.
     if not label:
-        return 5
-
+        return 0
     match = re.search(r"([1-5])", label)
-    return int(match.group(1)) if match else 5
+    return int(match.group(1)) if match else 0
 
 
 def click_cookie_buttons(page):
@@ -2120,20 +2123,88 @@ def get_new_reviews_to_insert(existing_reviews, new_reviews):
     return unique_new_reviews, rows_to_insert
 
 
-def save_reviews(new_reviews, crawl_run_id, existing_reviews=None):
+
+def plan_safe_review_append(existing_reviews, new_reviews):
+    """Classify new candidates without editing any historical row.
+
+    A legacy review has no Google review ID. Translations can change its text
+    hash, so when the same named author exists in the same store we cannot
+    confidently call a different text a *new* review. Hold it for review or
+    future stable-ID reconciliation; retry on subsequent runs.
+
+    Returns only aggregate reasons in diagnostics; raw held reviews remain in
+    this process's memory and are never written to a quarantine table.
+    """
+    unique, unmatched = get_new_reviews_to_insert(existing_reviews, new_reviews)
+    authors_by_store = set()
+    for old in existing_reviews:
+        store = normalize_spaces(old.get("store_name", "")).casefold()
+        author = normalize_spaces(old.get("author", "")).casefold()
+        if store and author:
+            authors_by_store.add((store, author))
+
+    ready, held = [], []
+    reasons = {
+        "prior_author_collision": 0,
+        "missing_or_generic_author": 0,
+        "unverified_rating_or_date": 0,
+    }
+    for review in unmatched:
+        store = normalize_spaces(review.get("store_name", "")).casefold()
+        author = normalize_spaces(review.get("author", "")).casefold()
+        rating = review.get("rating")
+        relative_date = normalize_spaces(review.get("date", ""))
+        if not store or not author or author in ("anonymous", "unknown"):
+            reasons["missing_or_generic_author"] += 1
+            held.append(review)
+        elif type(rating) not in (int, float) or not 1 <= rating <= 5 or not relative_date or relative_date.casefold() == "unknown":
+            reasons["unverified_rating_or_date"] += 1
+            held.append(review)
+        elif (store, author) in authors_by_store:
+            reasons["prior_author_collision"] += 1
+            held.append(review)
+        else:
+            ready.append(review)
+
+    return {
+        "unique_candidates": unique,
+        "already_matched": len(unique) - len(unmatched),
+        "ready": ready,
+        "held": held,
+        "held_reasons": reasons,
+    }
+
+def save_reviews(new_reviews, crawl_run_id, existing_reviews=None, *, dry_run=False, conservative_dedupe=False):
     existing_reviews = existing_reviews if existing_reviews is not None else load_existing_reviews()
     existing_keys = {make_review_key(r) for r in existing_reviews if make_review_key(r)}
     unique_new_reviews, rows_to_insert = get_new_reviews_to_insert(existing_reviews, new_reviews)
     expansion_variant_count = len(unique_new_reviews) - len(rows_to_insert) - sum(
         1 for review in unique_new_reviews if make_review_key(review) in existing_keys
     )
+    held_count = 0
+    held_reasons = {}
+    if conservative_dedupe:
+        safety = plan_safe_review_append(existing_reviews, new_reviews)
+        rows_to_insert = safety["ready"]
+        held_count = len(safety["held"])
+        held_reasons = safety["held_reasons"]
 
     store_id_map = load_store_id_map()
     rows = [prepare_review_row(review, store_id_map, crawl_run_id) for review in rows_to_insert]
-    if rows:
+    if rows and not dry_run:
         upsert_review_batch(rows)
 
-    print("\n✨ Supabase 리뷰 삽입 요청 완료")
+    print("REVIEW_APPEND_PLAN " + json.dumps({
+        "mode": "DRY_RUN" if dry_run else "APPEND_ONLY",
+        "observed_candidates": len(new_reviews),
+        "unique_candidates": len(unique_new_reviews),
+        "matched_existing": len(unique_new_reviews) - len(rows_to_insert) - held_count,
+        "ready_to_append": len(rows),
+        "held_for_duplicate_risk": held_count,
+        "held_reasons": held_reasons,
+        "database_writes": (not dry_run and bool(rows)),
+    }, ensure_ascii=False))
+    print("\n✨ Supabase 리뷰 누적 계획 완료" if dry_run else "\n✨ Supabase 리뷰 누적 삽입 요청 완료")
     print(f"   - crawl_run_id: {crawl_run_id}")
     print(f"   - 기존 리뷰: {len(existing_reviews)}건")
     print(f"   - 이번 수집 후보: {len(new_reviews)}건")
@@ -2456,8 +2527,13 @@ def scrape():
         run_repair_only()
         return
 
-    # Validate optional dedicated auth state before any database operations.
+    # Validate mode and dedicated auth before any database operations.
+    if REVIEW_APPEND_MODE not in ("dry_run", "append"):
+        raise RuntimeError("REVIEW_APPEND_MODE는 dry_run 또는 append만 허용합니다.")
     auth_state = load_dedicated_google_auth_state()
+    if REVIEW_APPEND_MODE == "append" and auth_state is None:
+        raise RuntimeError("로그인 인증이 없는 상태에서 리뷰 자동 누적 저장을 실행하지 않습니다.")
+    dry_run = REVIEW_APPEND_MODE == "dry_run"
     started_at = now_kst()
     all_new_reviews = []
     crawl_results = []
@@ -2473,7 +2549,10 @@ def scrape():
     execution = "FAILED"
 
     try:
-        crawl_run_id = create_crawl_run(len(stores))
+        if not dry_run:
+            crawl_run_id = create_crawl_run(len(stores))
+        else:
+            print("🧪 DRY_RUN: crawl_runs 및 reviews DB 쓰기를 모두 생략합니다.")
         with sync_playwright() as p:
             browser = p.chromium.launch(
                 headless=True,
@@ -2514,18 +2593,22 @@ def scrape():
                     page.wait_for_timeout(3000)
 
                 if all_new_reviews or existing_reviews:
-                    save_reviews(all_new_reviews, crawl_run_id, existing_reviews)
+                    save_reviews(
+                        all_new_reviews, crawl_run_id, existing_reviews,
+                        dry_run=dry_run, conservative_dedupe=True,
+                    )
                 else:
-                    print("❌ 저장할 기존/신규 리뷰가 없습니다.")
+                    print("❌ 관측된 기존/신규 리뷰가 없습니다.")
 
-                finish_crawl_run(crawl_run_id, store_rows, started_at)
-                crawl_run_finished = True
+                if not dry_run:
+                    finish_crawl_run(crawl_run_id, store_rows, started_at)
+                    crawl_run_finished = True
 
                 if all_crawl_results_failed(crawl_results):
                     raise RuntimeError("모든 대상 매장 수집이 실패했습니다. GitHub Actions를 실패로 처리합니다.")
             finally:
                 browser.close()
-        execution = "COMPLETED"
+        execution = "DRY_RUN_COMPLETED" if dry_run else "COMPLETED"
     except Exception as error:
         print(f"🔥 치명적 오류: {error}")
         if crawl_run_id is not None and not crawl_run_finished:
