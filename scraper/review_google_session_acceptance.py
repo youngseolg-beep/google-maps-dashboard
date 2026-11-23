@@ -10,6 +10,7 @@ import json
 import os
 from pathlib import Path
 from playwright.sync_api import sync_playwright
+import scraper as production
 
 DEST=Path("review-auth-acceptance-result.json")
 URL="https://myaccount.google.com/"
@@ -57,15 +58,17 @@ def inspect(page):
 
 def run(browser,name,state):
     opts={"locale":"en-US","viewport":{"width":1365,"height":900}}
-    if state is not None:
-        opts["storage_state"]=state
-    ctx=browser.new_context(**opts)
+    ctx=production.new_crawler_context(browser, auth_state=state) if state else browser.new_context(**opts)
     result={"arm":name,"status":"STARTED"}
     try:
         page=ctx.new_page()
         page.goto(URL,wait_until="domcontentloaded",timeout=45000)
         page.wait_for_timeout(4200)
         result["signals"]=inspect(page)
+        page.goto("https://www.google.com/maps",
+                  wait_until="domcontentloaded",timeout=45000)
+        page.wait_for_timeout(2200)
+        result["maps_account_ui"]=production.verify_dedicated_google_login(page)
         result["status"]="COMPLETE"
     except Exception as exc:
         result["status"]="ERROR"
@@ -79,6 +82,13 @@ def main():
     if os.getenv("SUPABASE_URL") or os.getenv("SUPABASE_SERVICE_ROLE_KEY"):
         raise SystemExit("READ_ONLY_PROBE_REFUSES_DB_CREDENTIALS")
     state,status=safe_state()
+    # Normalize cross-version Chrome cookie attributes before using Chromium.
+    if state is not None:
+        try:
+            state=production.load_dedicated_google_auth_state()
+        except Exception:
+            state=None
+            status="STORAGE_STATE_NORMALIZATION_FAILED"
     result={"preflight":status,"database_writes":False,
             "account_data_saved":False,"runs":[]}
     if state is not None:
