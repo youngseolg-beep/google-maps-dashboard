@@ -27,7 +27,7 @@ jobs:
         run: |
           pip install -r scraper/requirements.txt
           python -m playwright install --with-deps chromium
-      - name: Compare existing browser settings with native Chromium and Chrome
+      - name: Compare individual UA webdriver and automation settings in matched Chromium runs
         env:
           SUPABASE_URL: ""
           SUPABASE_SERVICE_ROLE_KEY: ""

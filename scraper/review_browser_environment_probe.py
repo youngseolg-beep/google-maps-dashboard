@@ -27,10 +27,17 @@ BASE_ARGS = [
     "--no-sandbox", "--disable-setuid-sandbox", "--lang=en-US,en",
 ]
 NATIVE_ARGS = ["--no-sandbox", "--disable-dev-shm-usage"]
+# Compare matched variations on the *same* Chromium binary first.
+# A change in Google Maps rendering then has one controlled input.
+# Chrome Stable cases are cross-binary checks, not direct local-Chrome reproductions.
 CASES = (
-    ("existing_settings", None, BASE_ARGS, True),
-    ("native_chromium", None, NATIVE_ARGS, False),
-    ("native_chrome_stable", "chrome", NATIVE_ARGS, False),
+    ("legacy_full", None, BASE_ARGS, True, True),
+    ("legacy_without_fake_ua", None, BASE_ARGS, False, True),
+    ("legacy_without_webdriver_override", None, BASE_ARGS, True, False),
+    ("old_ua_only", None, NATIVE_ARGS, True, False),
+    ("native_chromium", None, NATIVE_ARGS, False, False),
+    ("chrome_stable_legacy_full", "chrome", BASE_ARGS, True, True),
+    ("native_chrome_stable", "chrome", NATIVE_ARGS, False, False),
 )
 
 
@@ -40,10 +47,18 @@ def sample(page, unique):
         const tab = [...document.querySelectorAll('[role="tab"]')].find(el =>
             /reviews|리뷰|recensies|beoordelingen|ulasan/i.test(
                 (el.getAttribute('aria-label') || '') + ' ' + (el.innerText || '')));
-        const dialogVisible = [...document.querySelectorAll('[role="dialog"]')].some(el => {
+        const dialogs = [...document.querySelectorAll('[role="dialog"]')].filter(el => {
             const r = el.getBoundingClientRect();
             return r.width > 0 && r.height > 0;
         });
+        const body = (document.body?.innerText || '').slice(0, 12000).toLowerCase();
+        const dialogText = dialogs.map(el => (el.innerText || '').slice(0, 1800)).join(' ').toLowerCase();
+        const signals = {
+            sign_in: /sign in|log in|로그인/.test(dialogText),
+            cookies_consent: /accept all|reject all|cookies|쿠키|동의/.test(dialogText),
+            challenge: /unusual traffic|verify you are human|captcha|비정상적인 트래픽/.test(body),
+            unsupported_browser: /browser (is )?not supported|unsupported browser/.test(body)
+        };
         const scrollable = [];
         for (let el = cards[0]?.parentElement, i = 0; el && i < 15; el = el.parentElement, i++) {
             const cs = getComputedStyle(el);
@@ -63,7 +78,13 @@ def sample(page, unique):
             visible_cards: cards.length,
             review_feed_count: [...document.querySelectorAll('[role="feed"]')]
                 .filter(el => el.querySelector('.jftiEf')).length,
-            visible_dialog_present: dialogVisible,
+            visible_dialog_present: dialogs.length > 0,
+            dialog_signals: signals,
+            webdriver_visible: navigator.webdriver === true,
+            navigator_platform: navigator.platform,
+            client_hint_platform: navigator.userAgentData?.platform || null,
+            navigator_language: navigator.language,
+            cookie_enabled: navigator.cookieEnabled,
             scroll_pane: scrollable[0] || null,
             browser_major_version: (/Chrome\/(\d+)/.exec(navigator.userAgent) || [])[1] || null,
             ephemeral_ids: cards.map(c => c.getAttribute('data-review-id') ||
@@ -91,13 +112,16 @@ def scroll_pane(page):
     return handle.as_element()
 
 
-def run_case(playwright, name, channel, flags, existing):
+def run_case(playwright, name, channel, flags, fake_ua, webdriver_override):
     out = {
         "name": name, "status": "STARTED", "snapshots": [],
         "scroll_rounds": 0, "wheel_movement_rounds": 0,
         "xhr_fetch_during_scroll": 0, "database_writes": False,
-        "spoofed_user_agent": existing,
-        "webdriver_init_override": existing,
+        "spoofed_user_agent": fake_ua,
+        "webdriver_init_override": webdriver_override,
+        "automation_controlled_disabled": "--disable-blink-features=AutomationControlled" in flags,
+        "browser_channel": channel or "playwright_chromium",
+        "headless": True,
     }
     browser = None
     context = None
@@ -108,14 +132,15 @@ def run_case(playwright, name, channel, flags, existing):
         if channel:
             options["channel"] = channel
         browser = playwright.chromium.launch(**options)
+        out["actual_browser_major"] = browser.version.split(".")[0]
         ctx_settings = {
             "locale": "en-US", "timezone_id": "Asia/Seoul",
             "viewport": {"width": 1440, "height": 1000},
         }
-        if existing:
+        if fake_ua:
             ctx_settings["user_agent"] = USER_AGENT_OLD
         context = browser.new_context(**ctx_settings)
-        if existing:
+        if webdriver_override:
             context.add_init_script(
                 "Object.defineProperty(navigator, 'webdriver', {get: () => undefined});"
             )
@@ -134,7 +159,8 @@ def run_case(playwright, name, channel, flags, existing):
                 pass
 
         page.on("response", network)
-        page.goto(ORIGINAL, wait_until="domcontentloaded", timeout=45000)
+        navigation = page.goto(ORIGINAL, wait_until="domcontentloaded", timeout=45000)
+        out["initial_navigation_status"] = navigation.status if navigation else None
         page.wait_for_timeout(6500)
         before = sample(page, seen)
         out["snapshots"].append({"stage": "initial", **before})
@@ -209,6 +235,8 @@ def main():
         results = [run_case(p, *case) for case in CASES]
     report = {
         "store": "Saemaeul Central Eastville", "user_normal_chrome_six_plus": True,
+        "user_browser_details_not_measured": True,
+        "same_runner_comparison": True,
         "database_writes": False,
         "experiments": results,
         "any_six_plus_in_actions": any(r["unique_reviews_seen"] >= 6 for r in results),
@@ -221,7 +249,13 @@ def main():
             "scroll_rounds": r["scroll_rounds"],
             "movement_rounds": r["wheel_movement_rounds"],
             "fetch_xhr": r["xhr_fetch_during_scroll"],
-            "browser_major": (r.get("snapshots", [{}])[0].get("browser_major_version")),
+            "ua_major": (r.get("snapshots", [{}])[0].get("browser_major_version")),
+            "actual_major": r.get("actual_browser_major"),
+            "navigator_platform": (r.get("snapshots", [{}])[0].get("navigator_platform")),
+            "client_hint_platform": (r.get("snapshots", [{}])[0].get("client_hint_platform")),
+            "webdriver": (r.get("snapshots", [{}])[0].get("webdriver_visible")),
+            "page_kind": (r.get("snapshots", [{}])[0].get("page_kind")),
+            "challenge_signals": (r.get("snapshots", [{}])[0].get("dialog_signals")),
             "initial_cards": (r.get("snapshots", [{}])[0].get("visible_cards")),
         } for r in results
     ]
@@ -233,14 +267,14 @@ def main():
                 "## Browser environment comparison (read-only)\n\n"
                 "User's normal Chrome: >5 reviews reported; "
                 "not independently reproduced by this CI job.\n\n"
-                "| Mode | Browser major | Initial cards | Unique observed | Movement rounds | Fetch/XHR | Result |\n"
-                "|---|---:|---:|---:|---:|---:|---|\n"
+                "| Mode | Actual browser | Advertised UA | Platform | Initial cards | Unique observed | Result |\n"
+                "|---|---:|---:|---|---:|---:|---|\n"
             )
             for x in compact:
                 f.write(
-                    f"| {x['name']} | {x['browser_major'] or 'N/A'} | "
-                    f"{x['initial_cards'] or 0} | {x['unique']} | "
-                    f"{x['movement_rounds']} | {x['fetch_xhr']} | {x['status']} |\n"
+                    f"| {x['name']} | {x['actual_major'] or 'N/A'} | "
+                    f"{x['ua_major'] or 'N/A'} | {x['navigator_platform'] or 'N/A'} | "
+                    f"{x['initial_cards'] or 0} | {x['unique']} | {x['status']} |\n"
                 )
             f.write("\nNo database access. More than 5 unique cards does not establish full coverage.\n")
 
