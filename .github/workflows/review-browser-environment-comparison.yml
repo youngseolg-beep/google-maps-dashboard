@@ -1,0 +1,41 @@
+name: review-browser-environment-comparison
+
+on:
+  push:
+    branches: [test/review-collection-without-sort]
+    paths:
+      - "scraper/review_browser_environment_probe.py"
+      - ".github/workflows/review-browser-environment-comparison.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  browser-environment-read-only:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Compile read-only browser comparison
+        run: |
+          python -m py_compile scraper/review_browser_environment_probe.py
+      - name: Install browser dependency
+        run: |
+          pip install -r scraper/requirements.txt
+          python -m playwright install --with-deps chromium
+      - name: Compare existing browser settings with native Chromium and Chrome
+        env:
+          SUPABASE_URL: ""
+          SUPABASE_SERVICE_ROLE_KEY: ""
+        run: python scraper/review_browser_environment_probe.py
+      - name: Upload aggregate results only
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: review-browser-environment-results
+          path: review-browser-environment.json
+          if-no-files-found: ignore
