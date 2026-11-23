@@ -28,7 +28,7 @@ Keep new Google Maps reviews accumulating in Supabase without truncating old rev
 - Initial key reconciliation found only 6/521 exact matches, with strong evidence of locale-driven translated-text differences. **515 mismatches are not proven new reviews**.
 - Authenticated English-display experiments changed Korean-translated text to English in same review IDs; however end-to-end English reconciliation still needs a successful re-run.
 - Latest append-only + dry-run + fail-closed unit/regression suite: **70 PASS**.
-- GitHub Actions restored auth on 2026-11-23 around 06:47 UTC: stored cookie structure valid, auth-named cookies unexpired, but Google account redirected to signin and Google Maps account UI was absent. Therefore Google cloud login is **not currently verified**.
+- At 06:47 UTC, the original Google cloud session did not verify. The user then re-exported the local dedicated Chrome profile and updated the GitHub Actions secret. On the 07:55–08:02 UTC read-only rerun, Maps login passed. The subsequent three-store read-only run at 08:04–08:12 UTC verified Maps account UI across all three stores. Do not reuse the earlier failed-auth conclusion after secret rotation.
 - Production `main` branch and existing Supabase review rows are unchanged by this development work.
 
 ## Remaining verification gates before enabling append
@@ -45,3 +45,38 @@ Keep new Google Maps reviews accumulating in Supabase without truncating old rev
 - The current `review_key` is based on store + author + displayed text, so it is not a language-independent review identity. Conservative author overlap helps reduce false inserts but may also hold legitimate second reviews by the same author.
 - Do not implement or claim 100% coverage based on a stalled Google Maps list without independently verifying the Maps total.
 - Repeated actions on branches can consume GitHub Actions minutes; keep verification targeted.
+
+
+## Reverified 3-country read-only baseline (2026-11-23 08:12 UTC)
+
+Workflow: https://github.com/youngseolg-beep/google-maps-dashboard/actions/runs/45135653572
+
+| Store / Country | Scanned | Exact hash | Expanded-text variant | Remaining unmatched candidates | Existing author overlap | Held by conservative append | Initially ready (still NOT approved for DB writes) |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| Central Eastville, Thailand | 81 | 1 | 7 | 73 | 47 | 39 | 34 |
+| Dunnan, Taiwan | 298 | 6 | 5 | 287 | 105 | 94 | 193 |
+| Seoul St., Mongolia | 96 | 5 | 0 | 91 | 38 | 33 | 58 |
+| **Total** | **475** | **12** | **12** | **451** | **190** | **166** | **285** |
+
+- This workflow completed the *read-only audit*, not full Maps feed coverage or verified identification of 451 new reviews.
+- Thailand scan encountered unavailable scrolling, Mongolia feed stalled; Taiwan completeness is still unverified.
+- Although 285 unmatched candidates passed the temporary author-overlap filter, they are **not verified unique source reviews** and **not approved for database insertion**.
+- Browser after-scanning URL query did not retain `hl=en&gl=us`; the URL flag alone cannot demonstrate English review-body language. Further content-script distribution validation is still necessary.
+- Production main and existing Supabase reviews unchanged. No writes, no account identifiers or raw review content persisted in audit output.
+
+## Stable-source-ID preparatory change
+
+Test branch commit `f24f9624583009a58ee81788a9c9c7059b24b083`:
+- Captures Maps card `data-review-id` **as a SHA-256 value scoped to normalized store name** in in-memory `google_source_id_hash` when a source ID is present.
+- Does not retain raw Google source ID as a field in the emitted candidate.
+- Does not change legacy `review_key` or Supabase table schema.
+- `prepare_review_row()` intentionally omits the new in-memory field, so it will **not** be persisted with current schema.
+- Regression suite **73 PASS** at https://github.com/youngseolg-beep/google-maps-dashboard/actions/runs/45136946221.
+- A future schema version and source-identity reconciliation are required before enabling review-ID-based persistence. A newly observed author alone is not definitive proof of a genuinely new source review.
+
+## Immediate next gates
+
+1. Verify ID availability/uniqueness in a read-only live capture and content-language distribution by store; no raw IDs or review text in logs.
+2. Design and test a backward-compatible nullable stable-ID column/unique key on an isolated DB; preserve all existing review keys and IDs.
+3. Develop an auditable crosswalk from legacy rows to source IDs based only on unambiguous matches; keep unresolved author/name/translated-text variations held.
+4. Validate full feed navigation, completeness uncertainty, and safe one-store dry run before authorizing any write.
