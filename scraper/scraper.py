@@ -1588,6 +1588,21 @@ def make_review_key(review):
 
 
 
+def hash_google_source_review_id(store_name, source_id):
+    """Hashed in-memory source identity; never store or log raw Maps review ID.
+
+    This is intentionally NOT a replacement for the current review_key:
+    legacy Supabase rows lack the Google source ID and need reconciliation
+    before any new database identity can be safely enabled.
+    """
+    store = normalize_spaces(store_name).casefold()
+    if (not store or not isinstance(source_id, str)
+            or not source_id.strip() or len(source_id) > 2048):
+        return None
+    payload = "google-maps-review-id-v1\n" + store + "\n" + source_id.strip()
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
 def canonical_review_hash(review):
     return hashlib.sha256(make_review_key(review).encode("utf-8")).hexdigest()
 
@@ -1843,6 +1858,17 @@ def extract_reviews(page, store, existing_reviews=None, newest_verified=False, c
                     "review_date_source": "estimated",
                     "collected_at": now_kst().strftime("%Y-%m-%d"),
                 }
+                source_hash = hash_google_source_review_id(
+                    store["store_name"], dom_id
+                )
+                if source_hash:
+                    # Metadata only. prepare_review_row intentionally does not
+                    # send it to the current Supabase reviews schema.
+                    review["google_source_id_hash"] = source_hash
+                    if collection_evidence is not None:
+                        collection_evidence["hashed_source_ids_observed"] = (
+                            collection_evidence.get("hashed_source_ids_observed", 0) + 1
+                        )
 
                 key = make_review_key(review)
 

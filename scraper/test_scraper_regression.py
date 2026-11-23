@@ -1019,6 +1019,32 @@ class ReviewPersistenceRegressionTests(unittest.TestCase):
         finish_run.assert_not_called()
         insert.assert_not_called()
 
+    def test_google_source_identity_hash_stable_and_scoped(self):
+        first = scraper.hash_google_source_review_id("Bornga Dunnan Store", "google-review-id")
+        repeated = scraper.hash_google_source_review_id(" bornga  dunnan store ", "google-review-id")
+        other_store = scraper.hash_google_source_review_id("Saemaeul Seoul St.", "google-review-id")
+        self.assertEqual(first, repeated)
+        self.assertEqual(len(first), 64)
+        self.assertNotEqual(first, other_store)
+        self.assertNotIn("google-review-id", first)
+
+    def test_google_source_identity_hash_rejects_invalid_values(self):
+        self.assertIsNone(scraper.hash_google_source_review_id("Store", ""))
+        self.assertIsNone(scraper.hash_google_source_review_id("Store", None))
+        self.assertIsNone(scraper.hash_google_source_review_id("", "id"))
+        self.assertIsNone(scraper.hash_google_source_review_id("Store", "x" * 2049))
+
+    def test_source_identity_metadata_does_not_change_legacy_review_key(self):
+        standard = review("Good restaurant")
+        tagged = dict(standard, google_source_id_hash="a" * 64)
+        self.assertEqual(scraper.canonical_review_hash(standard), scraper.canonical_review_hash(tagged))
+        row = scraper.prepare_review_row(
+            tagged, {STORE["store_name"].casefold(): "store-id"}, None
+        )
+        self.assertNotIn("google_source_id_hash", row)
+        self.assertNotIn("google-review-id", str(row))
+
+
 
 if __name__ == "__main__":
     unittest.main()
