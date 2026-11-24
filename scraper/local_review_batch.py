@@ -5,6 +5,7 @@ review-content persistence. Explicitly configured active-store discovery uses
 the existing GET-only audit client. An access restriction stops the batch.
 """
 import argparse
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -21,6 +22,7 @@ import local_review_profile_probe as probe
 SAMPLE_STATUS = {
     "fields": "FIELD_SAMPLE_VERIFIED",
     "adapter": "LOCAL_ADAPTER_SAMPLE_PASSED",
+    "body": "BODY_SAMPLE_CONTROLS_VERIFIED",
     "db": "LOCAL_DB_SAMPLE_COMPARED",
     "count": "EXPECTED_COUNT_MATCHED",
     "count-db": "LOCAL_COUNT_DB_COMPARED",
@@ -74,20 +76,33 @@ def build_registered_plan(rows):
     """Hold short links and duplicate canonical place mappings for review."""
     pairs = [canonical_place(row.get("google_maps_url")) for row in rows]
     frequencies = Counter(pair for pair in pairs if pair)
+    names = Counter(str(row.get("store_name") or "").strip().casefold() for row in rows)
     tasks = []
     for i, (row, pair) in enumerate(zip(rows, pairs), 1):
         name = str(row.get("store_name") or "").strip()
         country = str(row.get("country") or "").strip()
         reason = None
-        if not name or not country:
+        try:
+            store_id = str(UUID(str(row.get("id"))))
+        except (ValueError, TypeError, AttributeError):
+            store_id = None
+        if not name or not country or not store_id:
             reason = "STORE_METADATA_MISSING"
         elif not pair:
-            reason = "CANONICAL_PLACE_ID_NOT_VERIFIED"
+            raw_url = row.get("google_maps_url")
+            try:
+                is_short = isinstance(raw_url, str) and urlsplit(raw_url).hostname == "maps.app.goo.gl"
+            except ValueError:
+                is_short = False
+            reason = "SHORT_LINK_REQUIRES_VERIFIED_CANONICAL_URL" if is_short else "CANONICAL_PLACE_ID_NOT_VERIFIED"
         elif frequencies[pair] > 1:
             reason = "DUPLICATE_PLACE_MAPPING"
-        tasks.append(dict(key="registered_" + str(i), name=name or "Unnamed store",
+        elif names[name.casefold()] > 1:
+            reason = "LEGACY_STORE_NAME_COLLISION"
+        key = "registered_" + (hashlib.sha256(store_id.encode()).hexdigest()[:24] if store_id else "invalid_" + str(i))
+        tasks.append(dict(key=key, name=name or "Unnamed store",
                           country=country, url=row.get("google_maps_url"),
-                          pair=pair, hold_reason=reason))
+                          pair=pair, store_id=store_id, hold_reason=reason))
     return tasks
 
 
@@ -207,6 +222,7 @@ def run_batch(tasks, launch, mode, persist):
                            count_gap=result.get("count_gap"),
                            field_audit=result.get("field_audit"),
                            integration_sample=result.get("integration_sample"),
+                           body_sample=result.get("body_sample"),
                            db_sample=result.get("db_sample"))
                 if restriction or result.get("status") == "ACCESS_RESTRICTED_STOPPED":
                     row["outcome"] = "FAILED"
@@ -234,11 +250,14 @@ def live_launcher(profile, count_round_limit=240, count_second_limit=600):
     def launch(task, mode):
         key = task["key"]
         # Preserve original verified configurations for the known two stores.
-        # Registered entries are only used for field/adapter sampling.
+        # Registered entries support bounded field, body, adapter and DB samples.
         original = probe.STORE_CONFIG.get(key)
         if original is None:
             probe.STORE_CONFIG[key] = {"name": task["name"], "url": task["url"],
-                                       "tokens": (task["pair"],)}
+                                       "tokens": (task["pair"],),
+                                       "registered_store": {"id": task["store_id"],
+                                                            "name": task["name"],
+                                                            "country": task["country"]}}
         try:
             with sync_playwright() as p:
                 context = p.chromium.launch_persistent_context(
@@ -249,6 +268,7 @@ def live_launcher(profile, count_round_limit=240, count_second_limit=600):
                     result = probe.run_once(
                         context, store_key=key, field_sample=mode == "fields",
                         adapter_sample=mode == "adapter", db_sample=mode == "db",
+                        body_sample=mode == "body",
                         expected_total=task.get("expected_total") if mode in {"count", "count-db"} else None,
                         scroll_mode="adaptive" if mode in {"count", "count-db"} else "baseline",
                         audit_fields=mode in {"count", "count-db"},
@@ -284,9 +304,11 @@ def self_test():
         {"store_name": "C", "country": "T", "google_maps_url": "https://maps.app.goo.gl/x"},
         {"store_name": "D", "country": "T", "google_maps_url": probe.STORE_CONFIG["taiwan"]["url"]},
     ]
+    for i, row in enumerate(rows, 1):
+        row["id"] = str(UUID(int=i))
     tasks = build_registered_plan(rows)
     assert tasks[0]["hold_reason"] == tasks[1]["hold_reason"] == "DUPLICATE_PLACE_MAPPING"
-    assert tasks[2]["hold_reason"] == "CANONICAL_PLACE_ID_NOT_VERIFIED"
+    assert tasks[2]["hold_reason"] == "SHORT_LINK_REQUIRES_VERIFIED_CANONICAL_URL"
     assert tasks[3]["hold_reason"] is None
     assert classify({"status": "FIELD_SAMPLE_VERIFIED"}, "fields") == "SAMPLE_PASSED"
     assert classify({"status": "PROBE_ERROR", "observed_unique": 8}, "fields") == "PARTIAL_SAMPLE"
@@ -317,7 +339,9 @@ def self_test():
     assert summarize([{"outcome":"COUNT_MATCHED"}], 1, "count")["status"] == "ALL_EXPECTED_COUNTS_MATCHED"
     assert classify({"status": "LOCAL_COUNT_DB_COMPARED"}, "count-db") == "COUNT_DB_COMPARED"
     assert summarize([{"outcome":"COUNT_DB_COMPARED"}], 1, "count-db")["status"] == "ALL_COUNT_DB_COMPARED"
-    print("BATCH_SELF_TEST_PASS: 23 checks")
+    assert tasks[3]["key"] == build_registered_plan(list(reversed(rows)))[0]["key"]
+    assert classify({"status": "BODY_SAMPLE_CONTROLS_VERIFIED"}, "body") == "SAMPLE_PASSED"
+    print("BATCH_SELF_TEST_PASS: 25 checks")
 
 
 def main():
@@ -339,8 +363,8 @@ def main():
     if args.self_test:
         self_test()
         return 0
-    if args.scope == "registered" and (args.store or args.mode in {"db", "count", "count-db"}):
-        parser.error("registered scope supports field/adapter samples only")
+    if args.scope == "registered" and (args.store or args.mode in {"count", "count-db"}):
+        parser.error("registered scope supports field/body/adapter/DB samples only")
     try:
         if args.scope == "registered":
             tasks = build_registered_plan(load_active_stores(probe.read_only_db_config()))

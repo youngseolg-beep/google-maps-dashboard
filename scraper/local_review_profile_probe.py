@@ -353,6 +353,24 @@ MORE_LABEL = re.compile(r"^(?:자세히 보기|더보기|더 보기|more|read mo
 ORIGINAL_LABEL = re.compile(r"^(?:원문 보기|원본 보기|See original|Show original|View original)(?:\s*\([^()\r\n]{1,40}\))?$", re.I)
 
 
+def body_fingerprint(card):
+    """Transient exact-text fingerprint of the visible main body.
+
+    Distinguishes same-length changes without reporting review text or hashes.
+    A changed fingerprint is not proof of original language or complete text.
+    """
+    value = card.evaluate(r"""card => {
+        const visible = el => !!el.getClientRects().length;
+        const owner = [...card.querySelectorAll('span,div')].find(el =>
+            !el.children.length && /^(?:업체 대표 응답|소유자 답변|Response from the owner|Owner response)$/i.test((el.innerText || '').trim()));
+        const beforeOwner = el => !el.closest('.CDe7pd') &&
+            (!owner || !!(el.compareDocumentPosition(owner) & Node.DOCUMENT_POSITION_FOLLOWING));
+        const primary = [...card.querySelectorAll('.wiI7pd')].find(el => visible(el) && beforeOwner(el));
+        return primary ? (primary.innerText || '').trim() : null;
+    }""")
+    return hashlib.sha256(value.encode("utf-8")).digest() if value else None
+
+
 def body_measure(card):
     # Measure the main review only, not the owner's reply or extra fields.
     return card.evaluate(r"""card => {
@@ -453,6 +471,9 @@ def audit_body_sample(page, store_key, reviews, limit=10):
                    more_closed_without_growth=0, more_remaining=0,
                    original_candidates=0,
                    original_confirmed=0, original_length_changed=0,
+                   more_text_changed=0, more_same_length_text_changed=0,
+                   original_text_changed=0, original_same_length_text_changed=0,
+                   primary_fingerprint_unavailable=0,
                    body_missing_after=0, identity_mismatch=0,
                    context_lost=False, click_errors=0,
                    excluded_nonreview_more=0, excluded_nonreview_original=0)
@@ -463,6 +484,9 @@ def audit_body_sample(page, store_key, reviews, limit=10):
         card = cards.nth(i)
         identity = card.get_attribute("data-review-id")
         before = body_measure(card)
+        before_fingerprint = body_fingerprint(card)
+        if before_fingerprint is None:
+            metrics["primary_fingerprint_unavailable"] += 1
         before_details = detail_measure(card)
         more, more_count, excluded = body_control(card, MORE_LABEL)
         metrics["excluded_nonreview_more"] += excluded
@@ -488,6 +512,11 @@ def audit_body_sample(page, store_key, reviews, limit=10):
                     if metrics["context_lost"] or metrics["identity_mismatch"]:
                         break
                     after = body_measure(card)
+                    after_fingerprint = body_fingerprint(card)
+                    if before_fingerprint is not None and after_fingerprint is not None and before_fingerprint != after_fingerprint:
+                        metrics["more_text_changed"] += 1
+                        if after == before:
+                            metrics["more_same_length_text_changed"] += 1
                     after_details = detail_measure(card)
                     grew = after > before
                     details_grew = after_details > before_details
@@ -516,6 +545,7 @@ def audit_body_sample(page, store_key, reviews, limit=10):
             if original is not None:
                 try:
                     before_original = body_measure(card)
+                    original_before_fingerprint = body_fingerprint(card)
                     original.click(timeout=2500)
                     page.wait_for_timeout(350)
                     if blocked(page) or not same_place(page.url, store_key) or not selected(reviews):
@@ -525,6 +555,11 @@ def audit_body_sample(page, store_key, reviews, limit=10):
                         metrics["identity_mismatch"] += 1
                         break
                     after_original = body_measure(card)
+                    original_after_fingerprint = body_fingerprint(card)
+                    if original_before_fingerprint is not None and original_after_fingerprint is not None and original_before_fingerprint != original_after_fingerprint:
+                        metrics["original_text_changed"] += 1
+                        if after_original == before_original:
+                            metrics["original_same_length_text_changed"] += 1
                     if after_original != before_original:
                         metrics["original_length_changed"] += 1
                     _, remaining, _ = body_control(card, ORIGINAL_LABEL)
@@ -546,6 +581,7 @@ def audit_body_sample(page, store_key, reviews, limit=10):
     # A resolved control is not proof of full text; unchanged-length cases
     # remain explicitly distinguished from demonstrated body growth.
     metrics["full_text_verified"] = False
+    metrics["original_language_verified"] = False
     return metrics
 
 
@@ -706,11 +742,16 @@ def audit_db_get(config, table, params):
 def verified_db_store(config, store_key):
     names = {"thailand": ("Saemaeul Central Eastville", "Thailand"),
              "taiwan": ("Bornga Dunnan Store", "Taiwan")}
-    name, country = names[store_key]
+    registered = STORE_CONFIG[store_key].get("registered_store")
+    if registered is not None:
+        name, country = registered["name"], registered["country"]
+        filters = {"id": "eq." + registered["id"]}
+    else:
+        name, country = names[store_key]
+        filters = {"store_name": "eq." + name, "country": "eq." + country}
     rows, total = audit_db_get(config, "stores", {
         "select": "id,store_name,country,sv,google_maps_url,is_active",
-        "store_name": "eq." + name, "country": "eq." + country,
-        "is_active": "eq.true", "limit": "2",
+        **filters, "is_active": "eq.true", "limit": "2",
     })
     if total != 1 or len(rows) != 1:
         raise ValueError("AUDIT_STORE_MAPPING_UNVERIFIED")
@@ -721,6 +762,7 @@ def verified_db_store(config, store_key):
     except (TypeError, ValueError):
         raise ValueError("AUDIT_STORE_ID_INVALID") from None
     if (row.get("store_name") != name or row.get("country") != country
+            or (registered is not None and str(row.get("id")) != registered["id"])
             or row.get("is_active") is not True
             or not isinstance(row.get("google_maps_url"), str)
             or not same_place(row["google_maps_url"], store_key)):
