@@ -708,7 +708,7 @@ def verified_db_store(config, store_key):
              "taiwan": ("Bornga Dunnan Store", "Taiwan")}
     name, country = names[store_key]
     rows, total = audit_db_get(config, "stores", {
-        "select": "id,store_name,country,google_maps_url,is_active",
+        "select": "id,store_name,country,sv,google_maps_url,is_active",
         "store_name": "eq." + name, "country": "eq." + country,
         "is_active": "eq.true", "limit": "2",
     })
@@ -758,6 +758,7 @@ def load_visible_history(config, store):
 
 def compare_db_sample(page, store_key, observed_unique):
     import scraper as production
+    from review_append_preflight import preview_append
     config = read_only_db_config()
     store = verified_db_store(config, store_key)
     saved = load_visible_history(config, store)
@@ -766,8 +767,9 @@ def compare_db_sample(page, store_key, observed_unique):
         records, store["store_name"], production.now_kst().date(), production,
         store_id=store["id"]
     )
-    historical = [dict(row, store_name=store["store_name"]) for row in saved]
+    historical = [dict(row, store_name=store["store_name"], text=row.get("text") or "") for row in saved]
     plan = production.plan_safe_review_append(historical, candidates)
+    append_preview = preview_append(store, saved, candidates, production)
     unique = len(plan["unique_candidates"])
     matched = plan["already_matched"]
     ready, held = len(plan["ready"]), len(plan["held"])
@@ -785,6 +787,7 @@ def compare_db_sample(page, store_key, observed_unique):
         "legacy_key_collapses": len(candidates) - unique,
         "matched_existing": matched, "potential_new_unapproved": ready,
         "held_for_review": held, "held_reasons": plan["held_reasons"],
+        "append_preview": append_preview,
         "actual_database_compared": True, "database_writes": False,
         "history_visibility": "CALLER_VISIBLE_ONLY",
         "transactional_snapshot_verified": False,
