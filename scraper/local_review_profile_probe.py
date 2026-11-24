@@ -31,10 +31,10 @@ def same_place(url):
             and p.path.startswith("/maps/place/") and PLACE_TOKEN in p.path.lower())
 
 
-def result_status(count, blocked=False):
+def result_status(count, blocked=False, scroll_verified=False):
     if blocked:
         return "ACCESS_RESTRICTED_STOPPED"
-    if count >= 6:
+    if count >= 6 and scroll_verified:
         return "REVIEW_DEPTH_VERIFIED"
     return "REVIEW_DEPTH_UNVERIFIED"
 
@@ -87,7 +87,8 @@ def run_once(context):
     report = {"status": "NOT_STARTED", "overview_selected": False,
               "reviews_selected": False, "initial_unique": 0,
               "observed_unique": 0, "scroll_rounds": 0,
-              "database_writes": False, "full_coverage_verified": False}
+              "scroll_verified": False, "database_writes": False,
+              "full_coverage_verified": False}
     page = None
     seen = set()
     try:
@@ -151,22 +152,29 @@ def run_once(context):
             if not box:
                 break
             # Use the ordinary visible review list and normal mouse scrolling.
+            before_top = pane.evaluate("(el) => el.scrollTop")
+            before = len(seen)
             page.mouse.move(box["x"] + box["width"]/2, box["y"] + box["height"]/2)
             page.mouse.wheel(0, 900)
             page.wait_for_timeout(1800)
             report["scroll_rounds"] = i
-            before = len(seen)
             report["observed_unique"] = observe(page, seen)
+            after_pane = review_pane(page)
+            after_top = after_pane.evaluate("(el) => el.scrollTop") if after_pane else before_top
+            advanced = after_top > before_top or len(seen) > before
+            report["scroll_verified"] = report["scroll_verified"] or advanced
             if blocked(page):
                 report["status"] = "ACCESS_RESTRICTED_STOPPED"
                 return report
-            if len(seen) >= 6 and i >= 1:
+            if len(seen) >= 6 and report["scroll_verified"]:
                 break
-            idle = idle + 1 if len(seen) == before else 0
+            idle = 0 if advanced else idle + 1
             if idle >= 3:
                 break
 
-        report["status"] = result_status(len(seen), blocked(page))
+        report["status"] = result_status(
+            len(seen), blocked(page), report["scroll_verified"]
+        )
         return report
     except Exception as exc:
         report["status"] = "PROBE_ERROR"
@@ -189,10 +197,11 @@ def self_test():
     assert REVIEW_TAB.fullmatch("Reviews")
     assert not REVIEW_TAB.fullmatch("Write a review")
     assert OVERVIEW_TAB.fullmatch("개요")
-    assert result_status(5) == "REVIEW_DEPTH_UNVERIFIED"
-    assert result_status(6) == "REVIEW_DEPTH_VERIFIED"
-    assert result_status(20, True) == "ACCESS_RESTRICTED_STOPPED"
-    print("SELF_TEST_PASS: 11 checks")
+    assert result_status(5, scroll_verified=True) == "REVIEW_DEPTH_UNVERIFIED"
+    assert result_status(6) == "REVIEW_DEPTH_UNVERIFIED"
+    assert result_status(6, scroll_verified=True) == "REVIEW_DEPTH_VERIFIED"
+    assert result_status(20, True, True) == "ACCESS_RESTRICTED_STOPPED"
+    print("SELF_TEST_PASS: 12 checks")
 
 
 def main():
