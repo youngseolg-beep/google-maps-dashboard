@@ -1,0 +1,41 @@
+name: review-multistore-six-plus-verification
+
+on:
+  push:
+    branches:
+      - test/review-collection-without-sort
+    paths:
+      - "scraper/review_multistore_probe.py"
+      - ".github/workflows/review-multistore-six-plus-verification.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  read-only-three-stores:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Compile read-only cross-store verifier
+        run: python -m py_compile scraper/review_multistore_probe.py
+      - name: Install Chromium and Playwright
+        run: |
+          pip install -r scraper/requirements.txt
+          python -m playwright install --with-deps chromium
+      - name: Check UI review totals and 6-plus unique reviews for three stores
+        env:
+          SUPABASE_URL: ""
+          SUPABASE_SERVICE_ROLE_KEY: ""
+        run: python scraper/review_multistore_probe.py
+      - name: Upload aggregate-only results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: review-multistore-aggregate
+          path: review-multistore-verification.json
+          if-no-files-found: ignore

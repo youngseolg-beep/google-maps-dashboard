@@ -1,0 +1,41 @@
+name: review-control-classification
+
+on:
+  push:
+    branches:
+      - test/review-collection-without-sort
+    paths:
+      - "scraper/review_controls_probe.py"
+      - ".github/workflows/review-control-classification.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  classify-controls:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Compile classification probe
+        run: python -m py_compile scraper/review_controls_probe.py
+      - name: Install Chromium
+        run: |
+          pip install -r scraper/requirements.txt
+          python -m playwright install --with-deps chromium
+      - name: Classify controls and test safe review-entry actions independently
+        env:
+          SUPABASE_URL: ""
+          SUPABASE_SERVICE_ROLE_KEY: ""
+        run: python scraper/review_controls_probe.py
+      - name: Upload non-sensitive control classifications
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: review-control-classification
+          path: review-controls-report.json
+          if-no-files-found: ignore

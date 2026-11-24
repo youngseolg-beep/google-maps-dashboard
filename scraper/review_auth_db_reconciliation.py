@@ -1,0 +1,428 @@
+"""Read-only audit of authenticated Google Maps candidates against existing Supabase reviews.
+
+NO database writes. No review IDs, text, authors, session cookies or credentials
+are persisted or printed. Results contain only aggregate counts per known store.
+"""
+import contextlib
+import io
+import json
+import os
+import re
+import sys
+from pathlib import Path
+from urllib.parse import urlencode, urlsplit
+from urllib.request import Request, urlopen
+
+from playwright.sync_api import sync_playwright
+import scraper as production
+from review_multistore_probe import store_urls
+from review_identity_metrics import (
+    source_identity_counts, script_counts, reconciliation_verdict,
+    should_retry_read_only_store,
+)
+
+REPORT = Path("review-auth-db-reconciliation-aggregate.json")
+STORE_NAMES = {
+    "Thailand": "Saemaeul Central Eastville",
+    "Taiwan": "Bornga Dunnan Store",
+    "Mongolia": "Saemaeul Seoul St.",
+}
+MAX_RECORDS_PER_STORE = 5000
+
+
+def safe_maps_identity(value):
+    """Compare the Maps place ID when present, otherwise a stable URL path."""
+    if not isinstance(value, str) or not value.startswith("https://"):
+        return None
+    parts = urlsplit(value)
+    host = (parts.hostname or "").lower()
+    if host == "maps.app.goo.gl":
+        # Short links are case-sensitive. DB and repository must match exactly.
+        return "short:" + parts.path.rstrip("/")
+    if host not in {"google.com", "www.google.com", "maps.google.com"}:
+        return None
+    if not parts.path.startswith("/maps/"):
+        return None
+    cid = re.search(r"0x[0-9a-f]+:0x[0-9a-f]+", value, re.I)
+    if cid:
+        return "cid:" + cid.group(0).lower()
+    return "path:" + parts.path.lower().rstrip("/")
+
+
+def read_only_get(table, params, *, base, key):
+    """Allowlisted GET only. Never support POST/PATCH/DELETE from audit code."""
+    if table not in {"stores", "reviews"}:
+        raise ValueError("TABLE_NOT_ALLOWED")
+    url = base.rstrip("/") + "/rest/v1/" + table + "?" + urlencode(params, safe=",.*()")
+    request = Request(url, headers={
+        "apikey": key, "Authorization": "Bearer " + key,
+        "Accept": "application/json",
+    }, method="GET")
+    with urlopen(request, timeout=120) as response:
+        result = json.loads(response.read().decode("utf-8"))
+        if not isinstance(result, list):
+            raise ValueError("UNEXPECTED_DATABASE_RESULT")
+        return result
+
+
+def load_existing_store_reviews(store_id, *, base, key):
+    rows = []
+    offset = 0
+    while True:
+        batch = read_only_get("reviews", {
+            "select": "id,store_id,store_name,author,rating,text,review_text,date,review_date,review_key,has_text",
+            "store_id": "eq." + store_id,
+            "order": "id.asc",
+            "limit": "500",
+            "offset": str(offset),
+        }, base=base, key=key)
+        rows.extend(batch)
+        if len(rows) > MAX_RECORDS_PER_STORE:
+            raise RuntimeError("REVIEW_READ_LIMIT_EXCEEDED")
+        if len(batch) < 500:
+            break
+        offset += 500
+    return rows
+
+
+def coarse_page_diagnostics(page):
+    """Only browser-state booleans and counts; no URLs, text, identities, or cookies."""
+    state = {
+        "page_category": "unknown",
+        "locale_requested": False,
+        "visible_review_cards": 0,
+        "review_feed_present": False,
+        "place_heading_present": False,
+        "signed_in_maps_ui": False,
+    }
+    try:
+        parsed = urlsplit(str(page.url))
+        host = (parsed.hostname or "").lower()
+        path = parsed.path.lower()
+        if host == "maps.app.goo.gl":
+            state["page_category"] = "shortlink"
+        elif host in {"google.com", "www.google.com", "maps.google.com"}:
+            if path.startswith("/maps/place/"):
+                state["page_category"] = "maps_place"
+            elif path.startswith("/maps/search"):
+                state["page_category"] = "maps_search"
+            elif path.startswith("/maps"):
+                state["page_category"] = "maps_other"
+            else:
+                state["page_category"] = "google_other"
+        elif host.endswith(".google.com"):
+            state["page_category"] = "google_other"
+        else:
+            state["page_category"] = "other"
+        params = parsed.query.lower().split("&")
+        state["locale_requested"] = "hl=en" in params and "gl=us" in params
+    except Exception:
+        pass
+    for name, func in (
+        ("visible_review_cards", lambda: page.locator(".jftiEf").count()),
+        ("review_feed_present", lambda: page.locator("div[role='feed']").count() > 0),
+        ("place_heading_present", lambda: page.locator("h1.DUwDvf").count() > 0),
+        ("signed_in_maps_ui", lambda: production.verify_dedicated_google_login(page)),
+    ):
+        try:
+            state[name] = func()
+        except Exception:
+            pass
+    return state
+
+
+def compare_candidates(candidates, saved, store_name):
+    """Compare only memory-local review data. No raw values in result."""
+    saved_hashes = {x.get("review_key") for x in saved if x.get("review_key")}
+    normalized_saved = [{
+        "store_name": store_name,
+        "author": x.get("author") or "Anonymous",
+        "rating": x.get("rating"),
+        "date": x.get("date") or "Unknown",
+        "review_date": x.get("review_date") or "",
+        "text": x.get("text") or x.get("review_text") or "",
+    } for x in saved]
+    saved_keys = {production.make_review_key(x) for x in normalized_saved}
+    counts = {
+        "live_candidates": len(candidates),
+        "existing_db_rows": len(saved),
+        "exact_stored_hash_matches": 0,
+        "normalized_existing_matches_only": 0,
+        "expanded_text_variant_matches_only": 0,
+        "potential_new_candidates": 0,
+        "empty_text_candidates": 0,
+        "candidate_key_duplicates": 0,
+        "saved_noncanonical_review_keys": 0,
+        "existing_author_overlap": 0,
+        "existing_author_rating_overlap": 0,
+        "safe_append_ready": 0,
+        "safe_append_held": 0,
+        "safe_append_held_reasons": {},
+    }
+    counts["saved_noncanonical_review_keys"] = sum(
+        bool(row.get("review_key")) and
+        row["review_key"] != production.canonical_review_hash({
+            "store_name": store_name,
+            "author": row.get("author") or "Anonymous",
+            "text": row.get("text") or row.get("review_text") or "",
+        }) for row in saved
+    )
+    historical_authors = {
+        production.normalize_spaces(x.get("author", "")).casefold()
+        for x in normalized_saved
+    }
+    historical_author_ratings = {
+        (production.normalize_spaces(x.get("author", "")).casefold(), x.get("rating"))
+        for x in normalized_saved
+    }
+    append_plan = production.plan_safe_review_append(normalized_saved, candidates)
+    counts["safe_append_ready"] = len(append_plan["ready"])
+    counts["safe_append_held"] = len(append_plan["held"])
+    counts["safe_append_held_reasons"] = append_plan["held_reasons"]
+    processed = set()
+    for item in candidates:
+        key = production.make_review_key(item)
+        if key in processed:
+            counts["candidate_key_duplicates"] += 1
+            continue
+        processed.add(key)
+        author = production.normalize_spaces(item.get("author", "")).casefold()
+        if author in historical_authors:
+            counts["existing_author_overlap"] += 1
+        if (author, item.get("rating")) in historical_author_ratings:
+            counts["existing_author_rating_overlap"] += 1
+        if not (item.get("text") or "").strip():
+            counts["empty_text_candidates"] += 1
+        digest = production.canonical_review_hash(item)
+        if digest in saved_hashes:
+            counts["exact_stored_hash_matches"] += 1
+        elif key in saved_keys:
+            counts["normalized_existing_matches_only"] += 1
+        elif production.find_existing_review_match(item, normalized_saved, saved_keys):
+            counts["expanded_text_variant_matches_only"] += 1
+        else:
+            counts["potential_new_candidates"] += 1
+    counts["matching_or_potential_total"] = (
+        counts["exact_stored_hash_matches"]
+        + counts["normalized_existing_matches_only"]
+        + counts["expanded_text_variant_matches_only"]
+        + counts["potential_new_candidates"]
+        + counts["candidate_key_duplicates"]
+    )
+    return counts
+
+
+def main():
+    base = os.getenv("SUPABASE_URL", "")
+    key = os.getenv("SUPABASE_SERVICE_ROLE_KEY", "")
+    outcome = {
+        "status": "NOT_STARTED", "phase": "initial", "database_writes": False,
+        "review_contents_persisted": False, "complete_coverage_verified": False,
+        "stores": [],
+    }
+    if not base.startswith("https://") or not key:
+        outcome["status"] = "DATABASE_CREDENTIALS_MISSING"
+        finish(outcome, fail=True)
+        return
+    try:
+        outcome["phase"] = "load_repo_maps_urls"
+        target_urls = {
+            country: url for _, country, url in store_urls()
+            if country in STORE_NAMES
+        }
+        outcome["phase"] = "get_stores"
+        all_db_stores = read_only_get("stores", {
+            "select": "id,store_name,country,google_maps_url,is_active",
+            "limit": "1000",
+        }, base=base, key=key)
+        outcome["phase"] = "verify_store_mapping"
+        selected = {}
+        for country, name in STORE_NAMES.items():
+            rows = [
+                row for row in all_db_stores
+                if row.get("store_name") == name
+                and row.get("country") == country
+                and row.get("is_active") is True
+            ]
+            if len(rows) != 1 or not target_urls.get(country):
+                raise ValueError("MISSING_OR_AMBIGUOUS_STORE_MAPPING")
+            db_identity = safe_maps_identity(rows[0].get("google_maps_url"))
+            live_identity = safe_maps_identity(target_urls[country])
+            if not db_identity or db_identity != live_identity:
+                raise ValueError("STORE_GOOGLE_MAPS_IDENTITY_MISMATCH")
+            selected[country] = rows[0]
+        # Restrict to one known Google account, with in-memory authentication.
+        outcome["phase"] = "load_dedicated_google_auth"
+        auth = production.load_dedicated_google_auth_state()
+        if auth is None:
+            raise RuntimeError("AUTH_SECRET_MISSING")
+        outcome["phase"] = "launch_playwright"
+        with sync_playwright() as p:
+            browser = p.chromium.launch(headless=True, args=[
+                "--disable-blink-features=AutomationControlled",
+                "--disable-dev-shm-usage", "--no-sandbox",
+                "--disable-setuid-sandbox", "--lang=en-US,en",
+            ])
+            try:
+                outcome["phase"] = "apply_auth_cookie_context"
+                context = production.new_crawler_context(browser, auth_state=auth)
+                try:
+                    context.add_init_script(
+                        "Object.defineProperty(navigator,'webdriver',{get:()=>undefined});"
+                    )
+                    page = context.new_page()
+                    page.set_default_timeout(45000)
+                    outcome["phase"] = "open_maps_auth_ui"
+                    page.goto("https://www.google.com/maps",
+                              wait_until="domcontentloaded", timeout=45000)
+                    page.wait_for_timeout(2500)
+                    if not production.verify_dedicated_google_login(page):
+                        raise RuntimeError("GOOGLE_AUTH_SESSION_NOT_VISIBLE")
+                    # The account-verification tab never enters a store.
+                    # Each store gets its own fresh tab to avoid leaking Maps SPA
+                    # navigation/review-pane state into the next scan.
+                    page.close()
+                    for country, db_name in STORE_NAMES.items():
+                        outcome["phase"] = "read_saved_reviews_" + country.lower()
+                        store = selected[country]
+                        existing = load_existing_store_reviews(
+                            store["id"], base=base, key=key
+                        )
+                        target = {
+                            "id": store["id"],
+                            "store_name": db_name, "sv": "READ_ONLY_AUDIT",
+                            "country": country, "city": "",
+                            "url": store["google_maps_url"],
+                        }
+                        final_result = None
+                        final_evidence = {}
+                        final_browser_state = {}
+                        final_exception_type = None
+                        attempt_diagnostics = []
+                        for attempt in range(1, 3):
+                            scan_page = context.new_page()
+                            scan_page.set_default_timeout(45000)
+                            evidence = {}
+                            result = None
+                            error_type = None
+                            try:
+                                outcome["phase"] = (
+                                    "read_maps_reviews_" + country.lower()
+                                    + "_attempt_" + str(attempt)
+                                )
+                                # Scraper's debug output may include Maps URLs.
+                                # Never publish its raw stdout/stderr or raw IDs.
+                                with contextlib.redirect_stdout(io.StringIO()), \
+                                     contextlib.redirect_stderr(io.StringIO()):
+                                    result = production.scrape_store(
+                                        scan_page, target, existing_reviews=[],
+                                        collection_evidence=evidence,
+                                        force_english_ui=True,
+                                    )
+                            except Exception as exc:
+                                error_type = type(exc).__name__
+                            finally:
+                                browser_state = coarse_page_diagnostics(scan_page)
+                                scan_page.close()
+                            observed_count = (
+                                len(result.get("reviews", []))
+                                if isinstance(result, dict) else None
+                            )
+                            attempt_diagnostics.append({
+                                "attempt": attempt,
+                                "observed_candidates": observed_count or 0,
+                                "browser_page_category": browser_state.get("page_category"),
+                                "review_panel_unverified": bool(
+                                    evidence.get("review_panel_unverified")
+                                ),
+                                "exception_type": error_type,
+                            })
+                            final_result = result
+                            final_evidence = evidence
+                            final_browser_state = browser_state
+                            final_exception_type = error_type
+                            if not should_retry_read_only_store(
+                                len(existing), observed_count, attempt
+                            ):
+                                break
+                        outcome["phase"] = "compare_saved_keys_" + country.lower()
+                        if final_result is not None and final_exception_type is None:
+                            candidates = final_result.get("reviews", [])
+                            row = {
+                                "store": db_name, "country": country,
+                                "extraction_status": (
+                                    "SCANNED" if final_result.get("ok")
+                                    else "PARTIAL_OR_FAILED"
+                                ),
+                                "observed_review_count": final_evidence.get(
+                                    "observed_review_count", 0
+                                ),
+                                "collection_issue": final_result.get("collection_issue"),
+                                "completeness_verified": False,
+                                "browser_state": final_browser_state,
+                                "source_id_metrics": source_identity_counts(candidates),
+                                "live_body_script_metrics": script_counts(candidates),
+                                "saved_body_script_metrics": script_counts(existing),
+                                **compare_candidates(candidates, existing, db_name),
+                            }
+                        else:
+                            row = {
+                                "store": db_name, "country": country,
+                                "extraction_status": "ERROR",
+                                "exception_type": final_exception_type or "UnknownError",
+                                "existing_db_rows": len(existing),
+                                "completeness_verified": False,
+                                "browser_state": final_browser_state,
+                            }
+                        row["read_only_attempts"] = attempt_diagnostics
+                        outcome["stores"].append(row)
+                        print("READ_ONLY_STORE_RECONCILIATION: " + json.dumps(row, ensure_ascii=False))
+                    outcome["phase"] = "complete"
+                    gate = reconciliation_verdict(outcome["stores"], set(STORE_NAMES))
+                    outcome.update(gate)
+                    # A successful read-only scan must never be confused with
+                    # complete Maps feed coverage or permission to append.
+                    for row in outcome["stores"]:
+                        row["audit_blockers"] = gate["store_gate_reasons"].get(row["country"], [])
+                finally:
+                    context.close()
+            finally:
+                browser.close()
+    except Exception as exc:
+        # Never log detailed third-party errors, as these may include sensitive URLs.
+        outcome["status"] = "ERROR"
+        outcome["error_type"] = type(exc).__name__
+    finish(outcome, fail=outcome["status"] != "PASS")
+
+
+def finish(outcome, fail=False):
+    REPORT.write_text(json.dumps(outcome, ensure_ascii=False, indent=2),
+                      encoding="utf-8")
+    print("READ_ONLY_DB_RECONCILIATION_VERDICT: " + json.dumps(outcome, ensure_ascii=False))
+    if os.getenv("GITHUB_STEP_SUMMARY"):
+        with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as f:
+            f.write("## Authenticated Maps vs existing Supabase reviews (GET-only)\n\n")
+            f.write("Result: **" + outcome["status"] + "**. No database changes.\n\n")
+            f.write("PASS requires independently verified full feed coverage. ")
+            f.write("A partial scan is NOT approval to append reviews.\n\n")
+            f.write("| Store | Existing DB | Observed | Exact hash | Normalized | Text variants | Potential new | Coverage |\n")
+            f.write("|---|---:|---:|---:|---:|---:|---:|---|\n")
+            for x in outcome["stores"]:
+                f.write("| " + x["store"] + " | " + str(x.get("existing_db_rows", 0))
+                        + " | " + str(x.get("live_candidates", 0))
+                        + " | " + str(x.get("exact_stored_hash_matches", 0))
+                        + " | " + str(x.get("normalized_existing_matches_only", 0))
+                        + " | " + str(x.get("expanded_text_variant_matches_only", 0))
+                        + " | " + str(x.get("potential_new_candidates", 0))
+                        + " | NOT VERIFIED |\n")
+            f.write("\nPotential new is a candidate count only, not approved for insertion.\n")
+            for country, reasons in outcome.get("store_gate_reasons", {}).items():
+                if reasons:
+                    f.write("- " + country + " blockers: " + ", ".join(reasons) + "\n")
+
+    if fail:
+        sys.exit(2)
+
+
+if __name__ == "__main__":
+    main()

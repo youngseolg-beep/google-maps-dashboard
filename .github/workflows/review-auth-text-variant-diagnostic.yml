@@ -1,0 +1,41 @@
+name: review-auth-text-variant-diagnostic
+
+on:
+  push:
+    branches: [test/review-collection-without-sort]
+    paths:
+      - "scraper/review_auth_text_variant_probe.py"
+      - ".github/workflows/review-auth-text-variant-diagnostic.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  read-only-language-and-match-probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Compile text variant probe
+        run: python -m py_compile scraper/review_auth_text_variant_probe.py
+      - name: Install Chromium
+        run: |
+          pip install -r scraper/requirements.txt
+          python -m playwright install --with-deps chromium
+      - name: Compare translated and original-text review representations
+        env:
+          GOOGLE_MAPS_STORAGE_STATE_B64: ${{ secrets.GOOGLE_MAPS_STORAGE_STATE_B64 }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: python scraper/review_auth_text_variant_probe.py
+      - name: Upload aggregate-only diagnostic
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: review-text-variant-diagnostic-aggregate
+          path: review-auth-text-language-audit-aggregate.json
+          if-no-files-found: ignore

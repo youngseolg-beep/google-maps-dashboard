@@ -57,6 +57,7 @@ jobs:
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          GOOGLE_MAPS_STORAGE_STATE_B64: ${{ secrets.GOOGLE_MAPS_STORAGE_STATE_B64 }}
           STATUS_ONLY: ${{ github.event_name == 'workflow_dispatch' && inputs.status_only || false }}
           REPAIR_ONLY: ${{ github.event_name == 'workflow_dispatch' && inputs.repair_only || false }}
           TARGET_STORE: ${{ github.event_name == 'workflow_dispatch' && inputs.target_store || '' }}

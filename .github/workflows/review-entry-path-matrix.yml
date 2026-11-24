@@ -1,0 +1,41 @@
+name: review-entry-path-matrix
+
+on:
+  push:
+    branches:
+      - test/review-collection-without-sort
+    paths:
+      - "scraper/review_entry_matrix_probe.py"
+      - ".github/workflows/review-entry-path-matrix.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  review-matrix-read-only:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Compile entry matrix diagnostic
+        run: python -m py_compile scraper/review_entry_matrix_probe.py
+      - name: Install Playwright and Chromium
+        run: |
+          pip install -r scraper/requirements.txt
+          python -m playwright install --with-deps chromium
+      - name: Compare one store through three entry paths without DB access
+        env:
+          SUPABASE_URL: ""
+          SUPABASE_SERVICE_ROLE_KEY: ""
+        run: python scraper/review_entry_matrix_probe.py
+      - name: Upload aggregate evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: review-entry-path-aggregate
+          path: review-entry-matrix.json
+          if-no-files-found: ignore

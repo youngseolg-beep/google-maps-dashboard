@@ -1,11 +1,12 @@
 import os
+import base64
 import json
 import re
 import hashlib
 import time
 from pathlib import Path
 from urllib.error import HTTPError, URLError
-from urllib.parse import urlencode
+from urllib.parse import urlencode, urlsplit, urlunsplit
 from urllib.request import Request, urlopen
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
@@ -14,6 +15,8 @@ from playwright.sync_api import sync_playwright
 SUPABASE_URL = os.environ.get("SUPABASE_URL", "").rstrip("/")
 SUPABASE_SERVICE_ROLE_KEY = os.environ.get("SUPABASE_SERVICE_ROLE_KEY", "")
 REVIEW_INSERT_PREFERENCE = "resolution=ignore-duplicates,return=minimal"
+# Test-branch safety: no Supabase write unless explicitly enabled for a vetted rollout.
+REVIEW_APPEND_MODE = os.environ.get("REVIEW_APPEND_MODE", "dry_run").strip().lower()
 STATUS_ONLY = os.environ.get("STATUS_ONLY", "").strip().lower() in {"1", "true", "yes", "on"}
 REPAIR_ONLY = os.environ.get("REPAIR_ONLY", "").strip().lower() in {"1", "true", "yes", "on"}
 TARGET_STORE = os.environ.get("TARGET_STORE", "").strip()
@@ -25,8 +28,10 @@ SORT_CAPTURE_STYLE = """
 img, svg, canvas, video, iframe, input, textarea { visibility: hidden !important; }
 """
 
-MAX_SCROLL_ROUNDS = 8
-STOP_STALLED_ROUNDS = 2
+# A fixed eight-round limit truncated stores with long review histories.
+# Keep a configurable safety ceiling, but continue until the feed actually stalls.
+MAX_SCROLL_ROUNDS = max(1, min(int(os.environ.get("REVIEW_MAX_SCROLL_ROUNDS", "150")), 300))
+STOP_STALLED_ROUNDS = 3
 MIN_REVIEWS_TARGET = 50
 
 # Recent-only mode settings
@@ -40,6 +45,91 @@ MIN_EXPANSION_TEXT_LENGTH = 24
 
 KST = ZoneInfo("Asia/Seoul")
 
+
+
+def load_dedicated_google_auth_state(raw=None, now_seconds=None):
+    """Restore only valid Google cookies; fail closed without exposing values.
+
+    Cookies are the same dedicated account state verified by the read-only
+    167-card probe. This opt-in state never becomes part of DB or logs.
+    """
+    if raw is None:
+        raw = os.environ.get("GOOGLE_MAPS_STORAGE_STATE_B64", "")
+    if not raw or not raw.strip():
+        return None
+    try:
+        state = json.loads(base64.b64decode(raw.strip(), validate=True))
+        if not isinstance(state, dict) or not isinstance(state.get("cookies"), list):
+            raise ValueError("invalid state structure")
+        now = time.time() if now_seconds is None else now_seconds
+        clean = []
+        for item in state["cookies"]:
+            if not isinstance(item, dict):
+                continue
+            domain = item.get("domain", "")
+            if not isinstance(domain, str):
+                continue
+            root = domain.lstrip(".").lower()
+            if root != "google.com" and not root.endswith(".google.com"):
+                continue
+            name, value = item.get("name"), item.get("value")
+            path, expires = item.get("path", "/"), item.get("expires", -1)
+            same_site = item.get("sameSite")
+            if (not isinstance(name, str) or not name
+                    or not isinstance(value, str)
+                    or not isinstance(path, str) or not path.startswith("/")
+                    or isinstance(expires, bool) or not isinstance(expires, (int, float))
+                    or (expires > 0 and expires <= now)
+                    or same_site not in (None, "Strict", "Lax", "None")):
+                continue
+            cookie = {
+                "name": name, "value": value, "domain": domain, "path": path,
+                "secure": bool(item.get("secure", False)),
+                "httpOnly": bool(item.get("httpOnly", False)),
+            }
+            if expires >= 0:
+                cookie["expires"] = expires
+            if same_site is not None:
+                cookie["sameSite"] = same_site
+            clean.append(cookie)
+        if not clean:
+            raise ValueError("no valid Google cookies")
+        return {"cookies": clean, "origins": []}
+    except Exception:
+        # Never expose parser/Playwright exceptions, cookie names or values.
+        raise RuntimeError("전용 Google 인증 상태가 유효하지 않습니다. 인증 Secret을 점검하세요.") from None
+
+
+def new_crawler_context(browser, auth_state=None):
+    options = {
+        "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
+        "locale": "en-US",
+        "timezone_id": "Asia/Seoul",
+        "viewport": {"width": 1440, "height": 1000},
+    }
+    if auth_state is not None:
+        options["storage_state"] = auth_state
+    try:
+        return browser.new_context(**options)
+    except Exception:
+        if auth_state is not None:
+            raise RuntimeError("전용 Google 인증 쿠키를 브라우저에 적용하지 못했습니다.") from None
+        raise
+
+
+def verify_dedicated_google_login(page):
+    """Read-only account UI indicator, not a formal Google API login proof."""
+    selector = (
+        "a[aria-label^='Google Account'], button[aria-label^='Google Account'], "
+        "a[aria-label^='Google 계정'], button[aria-label^='Google 계정'], "
+        "a[href*='SignOutOptions'], a[href*='AccountChooser']"
+    )
+    try:
+        return bool(page.evaluate(
+            "(selector) => !!document.querySelector(selector)", selector
+        ))
+    except Exception:
+        return False
 
 def now_kst():
     return datetime.now(KST)
@@ -112,13 +202,35 @@ def review_dates_are_newest_first(relative_dates, minimum_samples=3):
 
 
 def build_url_candidates(url):
+    """Use only same-place Maps URL variants; never invent a /reviews suffix.
+
+    Short links are retried once because redirect resolution can be intermittent.
+    Long Maps place URLs get two reversible, same-place fallbacks. No search
+    or arbitrary place lookup is allowed, preventing review/DB misattribution.
+    """
     base = url.strip()
+    parsed = urlsplit(base)
+    host = (parsed.hostname or "").lower()
+
+    if parsed.scheme != "https":
+        return [base]
+    if host == "maps.app.goo.gl":
+        return [base, base]
+    if host not in {"google.com", "www.google.com", "maps.google.com"}:
+        return [base]
+    if not parsed.path.startswith("/maps/place/"):
+        return [base]
+
     urls = [base]
-
-    reviews_url = base.split("?")[0].rstrip("/") + "/reviews/"
-    if reviews_url not in urls:
-        urls.append(reviews_url)
-
+    paths = [parsed.path.replace("!9m1!1b1", "")]
+    if "/data=" in parsed.path:
+        paths.append(parsed.path.split("/data=", 1)[0])
+    for path in paths:
+        candidate = urlunsplit((
+            parsed.scheme, parsed.netloc, path, parsed.query, parsed.fragment
+        ))
+        if candidate not in urls:
+            urls.append(candidate)
     return urls
 
 
@@ -146,11 +258,12 @@ def safe_attr(locator, attr, default=""):
 
 
 def parse_rating(label):
+    # Never assign a 5-star rating merely because Maps omitted the label.
+    # Unrecognized ratings are excluded by append-only validation.
     if not label:
-        return 5
-
+        return 0
     match = re.search(r"([1-5])", label)
-    return int(match.group(1)) if match else 5
+    return int(match.group(1)) if match else 0
 
 
 def click_cookie_buttons(page):
@@ -247,33 +360,206 @@ def is_valid_google_maps_place_page(page):
     return False
 
 
-def open_reviews_panel(page):
-    print("🔘 리뷰 패널 열기 시도 중...")
 
+def open_all_reviews_control(page):
+    """Use only a visible explicit Google Maps full-review control.
+
+    Do not click arbitrary links or individual review text.
+    """
+    selector = "button, [role='button'], a[href]"
+    try:
+        index = page.evaluate("""(selector) => {
+            const rx = /more reviews|see (all|more) reviews|view (all|more) reviews|리뷰 더보기|모든 리뷰|전체 리뷰|meer recensies|semua ulasan/i;
+            const nodes = [...document.querySelectorAll(selector)];
+            for (let i=0; i<nodes.length; i++) {
+                const e=nodes[i], r=e.getBoundingClientRect();
+                if (!r.width || !r.height || e.closest('.jftiEf,[data-review-id]')) continue;
+                const label=(e.getAttribute('aria-label')||'')+' '+(e.innerText||'').slice(0,140);
+                if (!rx.test(label)) continue;
+                const href=e.getAttribute('href')||'';
+                if (href && /^https?:\/\//i.test(href)
+                    && !/^https?:\/\/(www\.)?google\.[^/]+\/maps\//i.test(href)) continue;
+                return i;
+            }
+            return null;
+        }""", selector)
+        if type(index) is not int:
+            return False
+        page.locator(selector).nth(index).click(timeout=4500)
+        page.wait_for_timeout(3000)
+        if "/maps/place/" not in str(getattr(page, "url", "")):
+            return False
+        count = page.locator(".jftiEf").count()
+        feed = page.locator("div[role='feed']").filter(
+            has=page.locator(".jftiEf")
+        ).count()
+        if count > 5 or feed > 0:
+            print("✅ 전체 리뷰 목록 진입 확인")
+            return True
+    except Exception as exc:
+        print(f"REVIEW_MORE_DIAGNOSTIC unavailable={type(exc).__name__}")
+    return False
+
+
+def review_pane_progress(page):
+    """Two non-sensitive measurements: scrollTop and current scroll range."""
+    try:
+        progress = page.evaluate("""() => {
+            const card=document.querySelector('.jftiEf');
+            if (!card) return null;
+            for (let el=card.parentElement; el; el=el.parentElement) {
+                const r=el.getBoundingClientRect(), css=getComputedStyle(el);
+                if (r.width>0 && r.height>0 && ['auto','scroll'].includes(css.overflowY)
+                    && el.scrollHeight>el.clientHeight+30)
+                    return [Math.round(el.scrollTop),
+                            Math.round(el.scrollHeight-el.clientHeight)];
+            }
+            return null;
+        }""")
+        if (isinstance(progress, list) and len(progress) == 2
+                and all(type(x) in (int, float) and x >= 0 for x in progress)):
+            return tuple(progress)
+    except Exception:
+        pass
+    return None
+
+
+
+def force_google_maps_english_ui(page):
+    """Keep dedicated Google login while requesting an English Maps view.
+
+    This is explicitly opt-in during authenticated scraping. The user's
+    account settings and stored review data are never changed.
+    """
+    try:
+        current = urlsplit(str(getattr(page, "url", "")))
+        host = (current.hostname or "").lower()
+        if (current.scheme != "https"
+                or host not in {"google.com", "www.google.com", "maps.google.com"}
+                or not current.path.startswith("/maps/")):
+            return False
+        params = [
+            part for part in current.query.split("&")
+            if part and not part.lower().startswith(("hl=", "gl="))
+        ]
+        params += ["hl=en", "gl=us"]
+        new_url = urlunsplit((
+            current.scheme, current.netloc, current.path,
+            "&".join(params), current.fragment
+        ))
+        if new_url != page.url:
+            page.goto(new_url, wait_until="domcontentloaded", timeout=45000)
+            page.wait_for_timeout(2000)
+        # Verify that a Maps *place* was reached. A generic /maps/ page
+        # must not count as a successful review-page language switch.
+        final_url = urlsplit(str(getattr(page, "url", "")))
+        valid_google = (
+            final_url.scheme == "https"
+            and (final_url.hostname or "").lower() in {
+                "google.com", "www.google.com", "maps.google.com"
+            }
+        )
+        if not valid_google:
+            return False
+        if final_url.path.startswith("/maps/place/"):
+            return True
+        return bool(
+            final_url.path.startswith("/maps/")
+            and (is_valid_google_maps_place_page(page)
+                 or page.locator(".jftiEf").count() > 0)
+        )
+    except Exception:
+        # Browser/page exceptions may include URLs or account details.
+        raise RuntimeError("Google Maps 영어 표시 설정에 실패했습니다.") from None
+
+
+def is_reviews_tab_selected(page):
+    """A preview feed in Overview is not the full Reviews tab."""
+    try:
+        return page.locator("[role='tab'][aria-selected='true']").filter(
+            has_text=re.compile(r"Reviews|리뷰|Recensies|Beoordelingen|Ulasan", re.I)
+        ).count() > 0
+    except Exception:
+        return False
+
+
+def open_reviews_panel(page):
+    """Activate reviews without navigating away from the current Maps place.
+
+    The selected Reviews tab is not proof of a complete review feed: the
+    place page can display only five preview cards with that tab selected.
+    """
+    print("🔘 리뷰 패널 열기 시도 중...")
+    # Prefer clicking the Reviews tab from the default Overview view.
+
+    # Do not click generic "reviews" text or hrefs. The A/B run on 2026-11-20
+    # demonstrated that a review link can leave Google Maps entirely.
     click_targets = [
-        ("tab reviews", lambda: page.get_by_role("tab", name=re.compile(r"Reviews|리뷰|Recensies|Beoordelingen|Ulasan", re.I)).first),
-        ("button reviews", lambda: page.get_by_role("button", name=re.compile(r"Reviews|리뷰|Recensies|Beoordelingen|Ulasan", re.I)).first),
-        ("aria reviews", lambda: page.locator("button[aria-label*='Reviews'], button[aria-label*='reviews'], button[aria-label*='리뷰'], button[aria-label*='Recensies'], button[aria-label*='recensies'], button[aria-label*='Beoordelingen'], button[aria-label*='beoordelingen'], button[aria-label*='Ulasan'], button[aria-label*='ulasan']").first),
-        ("jsaction moreReviews", lambda: page.locator("button[jsaction*='pane.rating.moreReviews']").first),
-        ("text reviews", lambda: page.locator("text=/Reviews|리뷰|Recensies|Beoordelingen|Ulasan/i").first),
+        ("tab reviews", lambda: page.get_by_role("tab", name=re.compile(
+            r"Reviews|리뷰|Recensies|Beoordelingen|Ulasan", re.I)).first),
+        ("jsaction moreReviews", lambda: page.locator(
+            "button[jsaction*='pane.rating.moreReviews']").first),
+        ("button reviews", lambda: page.get_by_role("button", name=re.compile(
+            r"Reviews|리뷰|Recensies|Beoordelingen|Ulasan", re.I)).first),
+        ("aria reviews", lambda: page.locator(
+            "button[aria-label*='Reviews'], button[aria-label*='reviews'], "
+            "button[aria-label*='리뷰'], button[aria-label*='Recensies'], "
+            "button[aria-label*='recensies'], button[aria-label*='Beoordelingen'], "
+            "button[aria-label*='beoordelingen'], button[aria-label*='Ulasan'], "
+            "button[aria-label*='ulasan']").first),
     ]
 
+    initial_url = getattr(page, "url", "")
     for name, get_locator in click_targets:
         try:
             locator = get_locator()
-            if locator.count() > 0:
-                print(f"🔘 클릭 후보 발견: {name}")
-                locator.click(timeout=5000, force=True)
-                page.wait_for_timeout(6000)
-                print(f"✅ 클릭 실행 완료: {name}")
+            if locator.count() == 0:
+                continue
+            print(f"🔘 클릭 후보 발견: {name}")
+            locator.click(timeout=5000, force=True)
+            page.wait_for_timeout(6000)
 
-                if has_review_dom(page):
-                    print("✅ 클릭 후 리뷰 DOM 감지")
+            # Stop immediately if a button navigates away. Never continue
+            # clicking unrelated controls on a non-place page.
+            current_url = getattr(page, "url", "")
+            if (isinstance(initial_url, str) and "/maps/place/" in initial_url and
+                    (not isinstance(current_url, str) or "/maps/place/" not in current_url)):
+                print(f"REVIEW_PANEL_DIAGNOSTIC left_place_page candidate={name}")
+                return False
+
+            feed_count = page.locator("div[role='feed']").filter(
+                has=page.locator(".jftiEf")
+            ).count()
+            selected_tab = page.locator(
+                "[role='tab'][aria-selected='true']"
+            ).filter(has_text=re.compile(
+                r"Reviews|리뷰|Recensies|Beoordelingen|Ulasan", re.I
+            )).count() > 0
+            card_count = page.locator(".jftiEf").count()
+            print(
+                f"REVIEW_PANEL_DIAGNOSTIC candidate={name} "
+                f"review_feed_count={feed_count} selected_reviews_tab={selected_tab} "
+                f"cards={card_count}"
+            )
+            if feed_count:
+                print("✅ 리뷰 피드 확인")
+                return True
+            if selected_tab:
+                if isinstance(card_count, int) and card_count > 5:
+                    print("✅ 리뷰 탭에서 5건 초과 리뷰 카드 확인")
                     return True
-        except Exception as e:
-            print(f"⚠️ 클릭 실패: {name} / {e}")
+                # Don't keep clicking other UI controls once Reviews is
+                # selected: that caused a 5 -> 0 card navigation regression.
+                if open_all_reviews_control(page):
+                    return True
+                print("REVIEW_PANEL_DIAGNOSTIC selected_tab_only_no_feed; stop_without_navigation")
+                return False
+        except Exception as exc:
+            print(f"⚠️ 리뷰 패널 클릭 실패: {name} / {type(exc).__name__}")
 
-    print("⚠️ 리뷰 패널 클릭으로 열기 실패")
+    if open_all_reviews_control(page):
+        return True
+    print("REVIEW_PANEL_DIAGNOSTIC full_review_feed_unverified")
     return False
 
 
@@ -1003,38 +1289,96 @@ def get_review_rating(card):
 
 
 def get_scroll_target(page):
-    candidates = [
-        "div[role='feed']",
-        "div.m6QErb.DxyBCb.kA9KIf.dS8AEf",
-        "div.m6QErb[tabindex='-1']",
-    ]
+    """Choose a visible, scrollable ancestor of an actual review card."""
+    try:
+        cards = page.locator(".jftiEf")
+        if cards.count() == 0:
+            return None
+        handle = cards.first.evaluate_handle("""card => {
+            for (let el = card.parentElement; el; el = el.parentElement) {
+                const style = getComputedStyle(el);
+                const rect = el.getBoundingClientRect();
+                if (rect.width > 0 && rect.height > 0 &&
+                    ['auto', 'scroll'].includes(style.overflowY) &&
+                    el.scrollHeight > el.clientHeight + 30) return el;
+            }
+            return null;
+        }""")
+        target = handle.as_element()
+        if target is not None:
+            print("SCROLL_TARGET_DIAGNOSTIC source=review_card_ancestor")
+        return target
+    except Exception as exc:
+        print(f"SCROLL_TARGET_DIAGNOSTIC error={type(exc).__name__}")
+        return None
 
-    for selector in candidates:
-        try:
-            target = page.locator(selector).first
-            if target.count() > 0:
-                return target
-        except:
-            pass
 
-    return None
+def diagnose_review_access(page):
+    """Read-only signals: distinguish ordinary sign-in links from blocking dialogs."""
+    try:
+        signals = page.evaluate("""() => {
+            const text = (document.body?.innerText || '').slice(0, 12000).toLowerCase();
+            const phrases = [
+                'sign in', 'log in', '로그인', '로그인하여',
+                'access denied', 'unusual traffic',
+                'before you continue', 'verify you are human'
+            ];
+            const matched = phrases.filter(phrase => text.includes(phrase));
+            const dialogs = [...document.querySelectorAll('[role="dialog"]')]
+                .filter(el => el.getClientRects().length > 0)
+                .map(el => {
+                    const dialogText = (el.innerText || '').toLowerCase().slice(0, 1500);
+                    return {
+                        sign_in: /sign in|log in|로그인/.test(dialogText),
+                        consent: /accept all|reject all|cookies|동의/.test(dialogText),
+                        challenge: /unusual traffic|verify you are human|captcha/.test(dialogText),
+                        blocks_review_feed: (() => {
+                            const feed = [...document.querySelectorAll('[role="feed"]')]
+                                .find(feed => feed.querySelector('.jftiEf'));
+                            if (!feed) return false;
+                            const r = feed.getBoundingClientRect();
+                            const d = el.getBoundingClientRect();
+                            return d.left < r.right && d.right > r.left &&
+                                d.top < r.bottom && d.bottom > r.top;
+                        })()
+                    };
+                });
+            return { matched, dialogs };
+        }""")
+        print(
+            "REVIEW_ACCESS_DIAGNOSTIC "
+            f"signals={','.join(signals.get('matched', [])) or 'none'} "
+            f"visible_dialogs={len(signals.get('dialogs', []))} "
+            f"dialog_flags={json.dumps(signals.get('dialogs', []), separators=(',', ':'))}"
+        )
+    except Exception as exc:
+        print(f"REVIEW_ACCESS_DIAGNOSTIC unavailable={type(exc).__name__}")
 
 
 def scroll_reviews(page):
+    """Keep original wheel/PageDown, targeting the review card's scroll pane."""
     target = get_scroll_target(page)
-
+    if target is None:
+        print("SCROLL_DIAGNOSTIC missing_review_scroll_target")
+        return False
     try:
-        if target:
+        try:
             target.hover(timeout=2000)
-        else:
-            page.mouse.move(500, 500)
-    except:
-        page.mouse.move(500, 500)
-
-    page.mouse.wheel(0, 8000)
-    page.wait_for_timeout(900)
-    page.keyboard.press("PageDown")
-    page.wait_for_timeout(1400)
+        except Exception as exc:
+            print(f"SCROLL_DIAGNOSTIC hover_failed={type(exc).__name__} fallback=target_center")
+            box = target.bounding_box()
+            if not box or box["width"] <= 0 or box["height"] <= 0:
+                return False
+            page.mouse.move(box["x"] + box["width"] / 2, box["y"] + box["height"] / 2)
+        page.mouse.wheel(0, 8000)
+        page.wait_for_timeout(900)
+        page.keyboard.press("PageDown")
+        page.wait_for_timeout(1400)
+        print("SCROLL_DIAGNOSTIC method=targeted_wheel_pagedown")
+        return True
+    except Exception as exc:
+        print(f"SCROLL_DIAGNOSTIC error={type(exc).__name__}")
+        return False
 
 
 def require_supabase_config():
@@ -1287,6 +1631,23 @@ def make_review_key(review):
 
 
 
+def hash_google_source_review_id(store_name, source_id):
+    """Hashed in-memory source identity; never store or log raw Maps review ID.
+
+    Caller should scope by immutable Supabase store_id when available;
+    display names are a fallback only for disconnected diagnostic fixtures.
+    This is intentionally NOT a replacement for the current review_key:
+    legacy Supabase rows lack the Google source ID and need reconciliation
+    before any new database identity can be safely enabled.
+    """
+    store = normalize_spaces(store_name).casefold()
+    if (not store or not isinstance(source_id, str)
+            or not source_id.strip() or len(source_id) > 2048):
+        return None
+    payload = "google-maps-review-id-v1\n" + store + "\n" + source_id.strip()
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
 def canonical_review_hash(review):
     return hashlib.sha256(make_review_key(review).encode("utf-8")).hexdigest()
 
@@ -1430,9 +1791,16 @@ def feed_grew(previous_card_count, card_count, previous_processed_count, process
 def extract_reviews(page, store, existing_reviews=None, newest_verified=False, collection_evidence=None):
     collected = []
     processed_keys = set()
+    # Google Maps keeps already-seen cards in the DOM while more cards load.
+    # Avoid repeatedly expanding/parsing the same immutable review ID.
+    processed_dom_ids = set()
+    skipped_repeat_dom_cards = 0
     feed_stalled_count = 0
+    feed_stalled = False
+    scroll_target_missing = False
     last_card_count = 0
     last_processed_count = 0
+    last_scroll_progress = None
     checked_count = 0
     consecutive_existing_hits = 0
 
@@ -1440,14 +1808,17 @@ def extract_reviews(page, store, existing_reviews=None, newest_verified=False, c
     existing_keys = {make_review_key(review) for review in existing_reviews if make_review_key(review)}
     recent_only_mode = bool(existing_reviews)
 
+    # When newest sorting is unavailable, scan the visible feed without assuming chronology.
+    # Keep existing-review deduplication, but disable the recent-only early-stop heuristic.
     if recent_only_mode and not newest_verified:
-        raise RuntimeError("최근 리뷰 모드는 최신순 정렬 검증 후에만 실행할 수 있습니다.")
+        print("📦 최신순 미확인: 전체 탐색 모드로 전환 (날짜순/신규 누락 없음 보장 불가)")
+        recent_only_mode = False
 
     if recent_only_mode:
         print(f"⚡ 최근 리뷰 모드 적용: {store['store_name']} / 기존 리뷰 key {len(existing_keys)}개")
         max_rounds = min(MAX_SCROLL_ROUNDS, RECENT_ONLY_MAX_ROUNDS)
     else:
-        print(f"📦 기존 리뷰 없음: {store['store_name']} / 초기 수집 모드")
+        print(f"📦 정렬 미검증 전체 탐색: {store['store_name']} / 기존 리뷰 {len(existing_reviews)}건" if existing_reviews else f"📦 기존 리뷰 없음: {store['store_name']} / 초기 수집 모드")
         max_rounds = MAX_SCROLL_ROUNDS
 
     for round_no in range(max_rounds):
@@ -1460,9 +1831,40 @@ def extract_reviews(page, store, existing_reviews=None, newest_verified=False, c
 
         print(f"🔎 {round_no + 1}회차 리뷰 카드 감지 수: {card_count} / selector={used_selector}")
 
+        # Track review-card identity between rounds, not only the live DOM count.
+        # Google Maps can recycle five visible cards while the feed is scrolling.
+        visible_review_ids = []
         for i in range(card_count):
             try:
                 card = cards.nth(i)
+                card_id = card.get_attribute("data-review-id")
+                if card_id:
+                    identity = "id:" + card_id
+                else:
+                    # Google Maps may omit data-review-id; use visible review fields
+                    # solely for anonymized diagnostics, never for persistence.
+                    identity = "fields:" + "|".join((
+                        get_review_author(card),
+                        get_review_date(card),
+                        get_review_text(card),
+                        str(get_review_rating(card)),
+                    ))
+                visible_review_ids.append(hashlib.sha256(identity.encode("utf-8")).hexdigest()[:12])
+            except Exception:
+                pass
+        print(
+            f"CARD_DIAGNOSTIC round={round_no + 1} "
+            f"visible={card_count} unique_card_ids={len(set(visible_review_ids))} "
+            f"fingerprints={','.join(visible_review_ids[:10])}"
+        )
+
+        for i in range(card_count):
+            try:
+                card = cards.nth(i)
+                dom_id = card.get_attribute("data-review-id")
+                if dom_id and dom_id in processed_dom_ids:
+                    skipped_repeat_dom_cards += 1
+                    continue
                 expand_review_text(card, page)
 
                 text = get_review_text(card)
@@ -1501,12 +1903,27 @@ def extract_reviews(page, store, existing_reviews=None, newest_verified=False, c
                     "review_date_source": "estimated",
                     "collected_at": now_kst().strftime("%Y-%m-%d"),
                 }
+                source_hash = hash_google_source_review_id(
+                    str(store.get("id") or store["store_name"]), dom_id
+                )
+                if source_hash:
+                    # Metadata only. prepare_review_row intentionally does not
+                    # send it to the current Supabase reviews schema.
+                    review["google_source_id_hash"] = source_hash
+                    if collection_evidence is not None:
+                        collection_evidence["hashed_source_ids_observed"] = (
+                            collection_evidence.get("hashed_source_ids_observed", 0) + 1
+                        )
 
                 key = make_review_key(review)
 
                 if not key:
                     continue
 
+                # Mark only after successfully extracting fields; failed
+                # extraction can be retried in a later scroll round.
+                if dom_id:
+                    processed_dom_ids.add(dom_id)
                 if key in processed_keys:
                     continue
 
@@ -1517,14 +1934,14 @@ def extract_reviews(page, store, existing_reviews=None, newest_verified=False, c
                         collection_evidence.get("observed_review_count", 0), checked_count
                     )
 
-                if recent_only_mode and find_existing_review_match(review, existing_reviews, existing_keys):
+                if find_existing_review_match(review, existing_reviews, existing_keys):
                     consecutive_existing_hits += 1
                     print(
                         f"🟡 기존 리뷰 감지: 연속 {consecutive_existing_hits}/{RECENT_ONLY_EXISTING_HIT_LIMIT} "
                         f"/ 확인 {checked_count}/{RECENT_ONLY_MIN_CHECKED}"
                     )
 
-                    if should_stop_recent_collection(round_no + 1, checked_count, consecutive_existing_hits):
+                    if recent_only_mode and should_stop_recent_collection(round_no + 1, checked_count, consecutive_existing_hits):
                         print("✅ 최신순에서 연속 기존 리뷰를 충분히 감지. 최근 리뷰 확인 종료.")
                         return collected
 
@@ -1547,32 +1964,55 @@ def extract_reviews(page, store, existing_reviews=None, newest_verified=False, c
         else:
             print(f"⚠️ {round_no + 1}회차: 신규 후보 없음 / 이번 매장 누적 {len(collected)}건")
 
-        if not recent_only_mode and len(collected) >= MIN_REVIEWS_TARGET:
-            print(f"✅ 목표 수집량 도달: {len(collected)}건")
-            break
-
-        if feed_grew(last_card_count, card_count, last_processed_count, len(processed_keys)):
+        # A growing review list can have many screens without new cards.
+        # Only classify stalling when neither review identities nor scroll
+        # position/range has advanced.
+        current_progress = review_pane_progress(page)
+        position_advanced = (
+            current_progress is not None and last_scroll_progress is not None
+            and (current_progress[0] > last_scroll_progress[0] + 3
+                 or current_progress[1] > last_scroll_progress[1] + 3)
+        )
+        if feed_grew(last_card_count, card_count, last_processed_count, len(processed_keys)) or position_advanced:
             feed_stalled_count = 0
         else:
             feed_stalled_count += 1
 
         last_card_count = card_count
         last_processed_count = len(processed_keys)
+        last_scroll_progress = current_progress
 
-        if feed_stalled_count >= STOP_STALLED_ROUNDS and checked_count > 0:
-            print("✅ 추가 카드 로딩 정체 감지. 수집 종료.")
+        if feed_stalled_count >= STOP_STALLED_ROUNDS:
+            feed_stalled = True
+            diagnose_review_access(page)
+            if collection_evidence is not None:
+                collection_evidence["feed_stalled"] = True
+                collection_evidence["full_coverage_verified"] = False
+                collection_evidence["observed_review_count"] = checked_count
+            print("⚠️ 추가 카드 로딩 정체: 관측 리뷰만 수집했으며 전체 리뷰 확인은 불가.")
             break
 
         if recent_only_mode and round_no + 1 >= max_rounds:
             print("✅ 최근 리뷰 모드 확인 라운드 완료. 다음 매장으로 이동.")
             break
 
-        scroll_reviews(page)
+        if not scroll_reviews(page):
+            scroll_target_missing = True
+            if collection_evidence is not None:
+                collection_evidence["scroll_target_missing"] = True
+                collection_evidence["full_coverage_verified"] = False
+            print("⚠️ 리뷰 스크롤 실패: 추가 리뷰 로딩을 확인할 수 없어 부분 수집으로 기록합니다.")
+            break
 
+    if collection_evidence is not None:
+        collection_evidence["feed_stalled"] = feed_stalled
+        collection_evidence["scroll_target_missing"] = scroll_target_missing
+        collection_evidence["full_coverage_verified"] = False
+        collection_evidence["repeat_dom_cards_skipped"] = skipped_repeat_dom_cards
     return collected
 
 
-def scrape_store(page, store, existing_reviews=None, collection_evidence=None):
+def scrape_store(page, store, existing_reviews=None, collection_evidence=None, force_english_ui=False):
     print(f"\n==============================")
     print(f"🏪 매장 크롤링 시작: {store['store_name']}")
     print(f"👤 담당 SV: {store['sv']} / 국가: {store['country']}")
@@ -1580,7 +2020,7 @@ def scrape_store(page, store, existing_reviews=None, collection_evidence=None):
 
     url_candidates = build_url_candidates(store["url"])
     valid_place_detected = False
-    recent_sort_verification_failed = False
+    panel_unverified_seen = False
 
     for idx, target_url in enumerate(url_candidates):
         print(f"🌐 URL 후보 {idx + 1}/{len(url_candidates)} 진입 시도: {target_url}")
@@ -1591,6 +2031,17 @@ def scrape_store(page, store, existing_reviews=None, collection_evidence=None):
             print(f"⚠️ 페이지 로딩 중 오류. 계속 진행: {e}")
 
         page.wait_for_timeout(5000)
+        if force_english_ui:
+            try:
+                english_place_ready = force_google_maps_english_ui(page)
+            except RuntimeError:
+                english_place_ready = False
+            if not english_place_ready:
+                print("⚠️ Google Maps 상세 화면 영어 표시 확인 실패: 다음 URL 후보 재시도")
+                if collection_evidence is not None:
+                    collection_evidence["english_place_entry_unverified"] = True
+                continue
+            print("✅ Google Maps 영어 표시 URL 및 장소 진입 확인")
         click_cookie_buttons(page)
 
         print("⏳ Google Maps 기본 페이지 렌더링 대기 중...")
@@ -1600,8 +2051,21 @@ def scrape_store(page, store, existing_reviews=None, collection_evidence=None):
             valid_place_detected = True
             print("✅ Google Maps 매장 상세 페이지 확인")
 
-        if not has_review_dom(page):
-            open_reviews_panel(page)
+        # Initial cards in place details are not proof that the Reviews panel
+        # opened. Prefer an explicit tab activation when no review feed exists.
+        review_feed_present = page.locator("div[role='feed']").filter(
+            has=page.locator(".jftiEf")
+        ).count() > 0
+        panel_opened = (
+            (review_feed_present and is_reviews_tab_selected(page))
+            or open_reviews_panel(page)
+        )
+        if not panel_opened:
+            panel_unverified_seen = True
+            print("⚠️ 리뷰 탭 미확인: 개요의 미리보기 리뷰는 수집하지 않습니다.")
+            if collection_evidence is not None:
+                collection_evidence["review_panel_unverified"] = True
+            continue
 
         print("⏳ Google Maps 리뷰 패널 렌더링 대기 중...")
         page.wait_for_timeout(4000)
@@ -1610,25 +2074,17 @@ def scrape_store(page, store, existing_reviews=None, collection_evidence=None):
             existing_store_reviews = get_existing_reviews_for_store(
                 existing_reviews or [], store["store_name"]
             )
-            newest_verified = set_reviews_sort_to_newest(page)
+            # Google Maps ordering is not a prerequisite for collection.
+            # Collect in display order; sort stored reviews in our own system.
+            newest_verified = False
 
-            if existing_store_reviews and not newest_verified:
-                recent_sort_verification_failed = True
-                print(
-                    "⚠️ 최근 리뷰 수집 검증 실패: 최신순 aria-checked=true를 확인할 수 없어 "
-                    "기존 리뷰 기반 수집을 중단합니다."
-                )
-                continue
-
-            if not newest_verified:
-                print("⚠️ 최신순 정렬을 검증하지 못했습니다. 초기 전체 수집만 안전 상한 내에서 계속합니다.")
-
+            scan_evidence = collection_evidence if collection_evidence is not None else {}
             reviews = extract_reviews(
                 page,
                 store,
                 existing_store_reviews,
                 newest_verified=newest_verified,
-                collection_evidence=collection_evidence,
+                collection_evidence=scan_evidence,
             )
 
             if reviews or existing_store_reviews:
@@ -1646,23 +2102,18 @@ def scrape_store(page, store, existing_reviews=None, collection_evidence=None):
                     "error": "",
                     "crawled_at": now_kst().strftime("%Y-%m-%d %H:%M:%S"),
                     "reviews": reviews,
+                    "collection_issue": (
+                        "review_panel_unverified_partial"
+                        if scan_evidence.get("review_panel_unverified")
+                        else ("review_scroll_unavailable_partial"
+                              if scan_evidence.get("scroll_target_missing")
+                              else ("review_feed_stalled_partial"
+                                    if scan_evidence.get("feed_stalled")
+                                    else "completeness_unverified"))
+                    ),
                 }
 
         print(f"⚠️ URL 후보 {idx + 1}에서 리뷰 DOM 감지 실패 또는 리뷰 없음")
-
-    if recent_sort_verification_failed:
-        print(f"❌ 최신순 검증 실패로 최근 리뷰 수집을 완료하지 못함: {store['store_name']}")
-        return {
-            "ok": False,
-            "store_name": store["store_name"],
-            "sv": store["sv"],
-            "country": store["country"],
-            "collected_count": 0,
-            "error": "Google Maps 최신순 정렬 검증 실패로 최근 리뷰 수집 중단",
-            "collection_issue": "newest_verification_failed",
-            "crawled_at": now_kst().strftime("%Y-%m-%d %H:%M:%S"),
-            "reviews": [],
-        }
 
     # A real place page with no review DOM is a valid zero-review store, not a crawl failure.
     if valid_place_detected:
@@ -1674,7 +2125,10 @@ def scrape_store(page, store, existing_reviews=None, collection_evidence=None):
             "country": store["country"],
             "collected_count": 0,
             "error": "",
-            "collection_issue": "no_usable_reviews_observed",
+            "collection_issue": (
+                "review_panel_unverified_partial"
+                if panel_unverified_seen else "no_usable_reviews_observed"
+            ),
             "crawled_at": now_kst().strftime("%Y-%m-%d %H:%M:%S"),
             "reviews": [],
         }
@@ -1754,20 +2208,88 @@ def get_new_reviews_to_insert(existing_reviews, new_reviews):
     return unique_new_reviews, rows_to_insert
 
 
-def save_reviews(new_reviews, crawl_run_id, existing_reviews=None):
+
+def plan_safe_review_append(existing_reviews, new_reviews):
+    """Classify new candidates without editing any historical row.
+
+    A legacy review has no Google review ID. Translations can change its text
+    hash, so when the same named author exists in the same store we cannot
+    confidently call a different text a *new* review. Hold it for review or
+    future stable-ID reconciliation; retry on subsequent runs.
+
+    Returns only aggregate reasons in diagnostics; raw held reviews remain in
+    this process's memory and are never written to a quarantine table.
+    """
+    unique, unmatched = get_new_reviews_to_insert(existing_reviews, new_reviews)
+    authors_by_store = set()
+    for old in existing_reviews:
+        store = normalize_spaces(old.get("store_name", "")).casefold()
+        author = normalize_spaces(old.get("author", "")).casefold()
+        if store and author:
+            authors_by_store.add((store, author))
+
+    ready, held = [], []
+    reasons = {
+        "prior_author_collision": 0,
+        "missing_or_generic_author": 0,
+        "unverified_rating_or_date": 0,
+    }
+    for review in unmatched:
+        store = normalize_spaces(review.get("store_name", "")).casefold()
+        author = normalize_spaces(review.get("author", "")).casefold()
+        rating = review.get("rating")
+        relative_date = normalize_spaces(review.get("date", ""))
+        if not store or not author or author in ("anonymous", "unknown"):
+            reasons["missing_or_generic_author"] += 1
+            held.append(review)
+        elif type(rating) not in (int, float) or not 1 <= rating <= 5 or not relative_date or relative_date.casefold() == "unknown":
+            reasons["unverified_rating_or_date"] += 1
+            held.append(review)
+        elif (store, author) in authors_by_store:
+            reasons["prior_author_collision"] += 1
+            held.append(review)
+        else:
+            ready.append(review)
+
+    return {
+        "unique_candidates": unique,
+        "already_matched": len(unique) - len(unmatched),
+        "ready": ready,
+        "held": held,
+        "held_reasons": reasons,
+    }
+
+def save_reviews(new_reviews, crawl_run_id, existing_reviews=None, *, dry_run=False, conservative_dedupe=False):
     existing_reviews = existing_reviews if existing_reviews is not None else load_existing_reviews()
     existing_keys = {make_review_key(r) for r in existing_reviews if make_review_key(r)}
     unique_new_reviews, rows_to_insert = get_new_reviews_to_insert(existing_reviews, new_reviews)
     expansion_variant_count = len(unique_new_reviews) - len(rows_to_insert) - sum(
         1 for review in unique_new_reviews if make_review_key(review) in existing_keys
     )
+    held_count = 0
+    held_reasons = {}
+    if conservative_dedupe:
+        safety = plan_safe_review_append(existing_reviews, new_reviews)
+        rows_to_insert = safety["ready"]
+        held_count = len(safety["held"])
+        held_reasons = safety["held_reasons"]
 
     store_id_map = load_store_id_map()
     rows = [prepare_review_row(review, store_id_map, crawl_run_id) for review in rows_to_insert]
-    if rows:
+    if rows and not dry_run:
         upsert_review_batch(rows)
 
-    print("\n✨ Supabase 리뷰 삽입 요청 완료")
+    print("REVIEW_APPEND_PLAN " + json.dumps({
+        "mode": "DRY_RUN" if dry_run else "APPEND_ONLY",
+        "observed_candidates": len(new_reviews),
+        "unique_candidates": len(unique_new_reviews),
+        "matched_existing": len(unique_new_reviews) - len(rows_to_insert) - held_count,
+        "ready_to_append": len(rows),
+        "held_for_duplicate_risk": held_count,
+        "held_reasons": held_reasons,
+        "database_writes": (not dry_run and bool(rows)),
+    }, ensure_ascii=False))
+    print("\n✨ Supabase 리뷰 누적 계획 완료" if dry_run else "\n✨ Supabase 리뷰 누적 삽입 요청 완료")
     print(f"   - crawl_run_id: {crawl_run_id}")
     print(f"   - 기존 리뷰: {len(existing_reviews)}건")
     print(f"   - 이번 수집 후보: {len(new_reviews)}건")
@@ -1790,8 +2312,10 @@ def classify_collection_status(*, attempted, observed_review_count=0, independen
 
 
 def collection_status_row(store, *, attempted=False, observed_review_count=0, result=None,
-                          independent_completeness_confirmed=False):
+                          independent_completeness_confirmed=False, feed_stalled=False,
+                          scroll_target_missing=False, full_coverage_verified=False):
     # A successful scan, sort check, or zero candidate count cannot prove completeness.
+    # full_coverage_verified is diagnostic evidence, not independent verification.
     # No current collection path has an independent completeness check.
     status = classify_collection_status(
         attempted=attempted,
@@ -1805,7 +2329,11 @@ def collection_status_row(store, *, attempted=False, observed_review_count=0, re
     elif result is None:
         reason = "attempt_interrupted"
     elif status == "PARTIAL":
-        reason = "completeness_unverified"
+        reason = (
+            "review_scroll_unavailable_partial" if scroll_target_missing
+            else "review_feed_stalled_partial" if feed_stalled
+            else "completeness_unverified"
+        )
     else:
         reason = result.get("collection_issue") or "no_usable_reviews_observed"
     return {
@@ -1831,11 +2359,14 @@ def collection_status_counts(store_rows):
     return counts
 
 
-def scrape_store_with_reporting(page, store, existing_reviews, status_row):
+def scrape_store_with_reporting(page, store, existing_reviews, status_row, *, force_english_ui=False):
     evidence = {"observed_review_count": 0}
     result = None
     try:
-        result = scrape_store(page, store, existing_reviews, collection_evidence=evidence)
+        options = {"collection_evidence": evidence}
+        if force_english_ui:
+            options["force_english_ui"] = True
+        result = scrape_store(page, store, existing_reviews, **options)
         return result
     finally:
         status_row.update(collection_status_row(store, attempted=True, result=result, **evidence))
@@ -2081,6 +2612,13 @@ def scrape():
         run_repair_only()
         return
 
+    # Validate mode and dedicated auth before any database operations.
+    if REVIEW_APPEND_MODE not in ("dry_run", "append"):
+        raise RuntimeError("REVIEW_APPEND_MODE는 dry_run 또는 append만 허용합니다.")
+    auth_state = load_dedicated_google_auth_state()
+    if REVIEW_APPEND_MODE == "append" and auth_state is None:
+        raise RuntimeError("로그인 인증이 없는 상태에서 리뷰 자동 누적 저장을 실행하지 않습니다.")
+    dry_run = REVIEW_APPEND_MODE == "dry_run"
     started_at = now_kst()
     all_new_reviews = []
     crawl_results = []
@@ -2096,7 +2634,8 @@ def scrape():
     execution = "FAILED"
 
     try:
-        crawl_run_id = create_crawl_run(len(stores))
+        if dry_run:
+            print("🧪 DRY_RUN: crawl_runs 및 reviews DB 쓰기를 모두 생략합니다.")
         with sync_playwright() as p:
             browser = p.chromium.launch(
                 headless=True,
@@ -2109,12 +2648,7 @@ def scrape():
                 ],
             )
             try:
-                context = browser.new_context(
-                    user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
-                    locale="en-US",
-                    timezone_id="Asia/Seoul",
-                    viewport={"width": 1440, "height": 1000},
-                )
+                context = new_crawler_context(browser, auth_state=auth_state)
                 context.add_init_script(
                     """
                     Object.defineProperty(navigator, 'webdriver', {
@@ -2124,26 +2658,45 @@ def scrape():
                 )
                 page = context.new_page()
                 page.set_default_timeout(45000)
+                if auth_state is not None:
+                    page.goto("https://www.google.com/maps",
+                              wait_until="domcontentloaded", timeout=45000)
+                    page.wait_for_timeout(2500)
+                    if not verify_dedicated_google_login(page):
+                        raise RuntimeError("전용 Google 인증 세션을 확인하지 못했습니다. 리뷰 저장을 중단합니다.")
+                    print("✅ 전용 Google 계정 로그인 UI 확인")
+
+                # No DB mutation is allowed until the dedicated Google session
+                # is confirmed. Authentication loss must not leave a fake run.
+                if not dry_run:
+                    crawl_run_id = create_crawl_run(len(stores))
 
                 for store, status_row in zip(stores, store_rows):
-                    result = scrape_store_with_reporting(page, store, existing_reviews, status_row)
+                    result = scrape_store_with_reporting(
+                        page, store, existing_reviews, status_row,
+                        force_english_ui=(auth_state is not None),
+                    )
                     crawl_results.append(result)
                     all_new_reviews.extend(result["reviews"])
                     page.wait_for_timeout(3000)
 
                 if all_new_reviews or existing_reviews:
-                    save_reviews(all_new_reviews, crawl_run_id, existing_reviews)
+                    save_reviews(
+                        all_new_reviews, crawl_run_id, existing_reviews,
+                        dry_run=dry_run, conservative_dedupe=True,
+                    )
                 else:
-                    print("❌ 저장할 기존/신규 리뷰가 없습니다.")
+                    print("❌ 관측된 기존/신규 리뷰가 없습니다.")
 
-                finish_crawl_run(crawl_run_id, store_rows, started_at)
-                crawl_run_finished = True
+                if not dry_run:
+                    finish_crawl_run(crawl_run_id, store_rows, started_at)
+                    crawl_run_finished = True
 
                 if all_crawl_results_failed(crawl_results):
                     raise RuntimeError("모든 대상 매장 수집이 실패했습니다. GitHub Actions를 실패로 처리합니다.")
             finally:
                 browser.close()
-        execution = "COMPLETED"
+        execution = "DRY_RUN_COMPLETED" if dry_run else "COMPLETED"
     except Exception as error:
         print(f"🔥 치명적 오류: {error}")
         if crawl_run_id is not None and not crawl_run_finished:

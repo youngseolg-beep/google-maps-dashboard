@@ -1,0 +1,42 @@
+name: review-production-auth-cross-country-readonly
+
+on:
+  push:
+    branches: [test/review-collection-without-sort]
+    paths:
+      - "scraper/review_production_auth_cross_country.py"
+      - ".github/workflows/review-production-auth-cross-country-readonly.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  cross-country-production-readonly:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Compile test script
+        run: python -m py_compile scraper/scraper.py scraper/review_production_auth_cross_country.py
+      - name: Install Chromium
+        run: |
+          pip install -r scraper/requirements.txt
+          python -m playwright install --with-deps chromium
+      - name: Run Taiwan and Mongolia production parser read-only
+        env:
+          GOOGLE_MAPS_STORAGE_STATE_B64: ${{ secrets.GOOGLE_MAPS_STORAGE_STATE_B64 }}
+          SUPABASE_URL: ""
+          SUPABASE_SERVICE_ROLE_KEY: ""
+          REVIEW_MAX_SCROLL_ROUNDS: "20"
+        run: python scraper/review_production_auth_cross_country.py
+      - name: Upload aggregate-only verification report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: production-auth-cross-country-summary
+          path: review-production-auth-cross-country-result.json
+          if-no-files-found: ignore

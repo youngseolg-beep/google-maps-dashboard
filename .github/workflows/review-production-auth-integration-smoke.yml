@@ -1,0 +1,42 @@
+name: review-production-auth-integration-smoke
+
+on:
+  push:
+    branches: [test/review-collection-without-sort]
+    paths:
+      - "scraper/review_production_auth_smoke.py"
+      - ".github/workflows/review-production-auth-integration-smoke.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  production-parser-and-scroll-readonly:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Compile isolated production integration test
+        run: python -m py_compile scraper/scraper.py scraper/review_production_auth_smoke.py
+      - name: Install Chromium
+        run: |
+          pip install -r scraper/requirements.txt
+          python -m playwright install --with-deps chromium
+      - name: Run actual scraper extraction with dedicated auth but no database
+        env:
+          GOOGLE_MAPS_STORAGE_STATE_B64: ${{ secrets.GOOGLE_MAPS_STORAGE_STATE_B64 }}
+          SUPABASE_URL: ""
+          SUPABASE_SERVICE_ROLE_KEY: ""
+          REVIEW_MAX_SCROLL_ROUNDS: "100"
+        run: python scraper/review_production_auth_smoke.py
+      - name: Upload aggregate-only report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: review-production-auth-smoke-aggregate
+          path: review-production-auth-smoke-report.json
+          if-no-files-found: ignore

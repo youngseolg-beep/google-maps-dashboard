@@ -1,0 +1,41 @@
+name: review-windows-user-agent-verification
+
+on:
+  push:
+    branches: [test/review-collection-without-sort]
+    paths:
+      - "scraper/review_windows_ua_probe.py"
+      - ".github/workflows/review-windows-user-agent-verification.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  read-only-windows-ua-matrix:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Compile read-only diagnostics
+        run: |
+          python -m py_compile scraper/review_windows_ua_probe.py scraper/review_browser_environment_probe.py
+      - name: Install Chromium/Chrome dependencies
+        run: |
+          pip install -r scraper/requirements.txt
+          python -m playwright install --with-deps chromium
+      - name: Compare three Windows Chrome user-agent versions
+        env:
+          SUPABASE_URL: ""
+          SUPABASE_SERVICE_ROLE_KEY: ""
+        run: python scraper/review_windows_ua_probe.py
+      - name: Upload summary
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: review-windows-ua-results
+          path: review-windows-ua-comparison.json
+          if-no-files-found: ignore

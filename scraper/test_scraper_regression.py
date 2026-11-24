@@ -182,9 +182,336 @@ class ReviewCrawlerRegressionTests(unittest.TestCase):
             "Short preview with the full expanded review text available",
         )
 
-    def test_recent_collection_refuses_unverified_newest_sort(self):
-        with self.assertRaisesRegex(RuntimeError, "최신순 정렬 검증"):
-            scraper.extract_reviews(None, STORE, [review("Existing full review text that is long enough")], newest_verified=False)
+    def test_scroll_target_falls_back_to_review_card_ancestor_without_feed_role(self):
+        page = Mock()
+        page.locator.return_value.count.return_value = 1
+        page.locator.return_value.is_visible.return_value = False
+        ancestor = Mock()
+        page.locator.return_value.first.evaluate_handle.return_value.as_element.return_value = ancestor
+        with patch("builtins.print"):
+            target = scraper.get_scroll_target(page)
+        self.assertIs(target, ancestor)
+        script = page.locator.return_value.first.evaluate_handle.call_args.args[0]
+        self.assertIn("card.parentElement", script)
+        self.assertIn("scrollHeight > el.clientHeight + 30", script)
+        self.assertIn("rect.width > 0", script)
+
+    def test_scroll_target_rejects_non_scrollable_review_ancestor(self):
+        page = Mock()
+        page.locator.return_value.count.return_value = 1
+        page.locator.return_value.is_visible.return_value = False
+        page.locator.return_value.first.evaluate_handle.return_value.as_element.return_value = None
+        with patch("builtins.print"):
+            self.assertIsNone(scraper.get_scroll_target(page))
+
+    def test_scroll_target_without_review_cards_does_not_select_place_pane(self):
+        page = Mock()
+        page.locator.return_value.count.return_value = 0
+        with patch("builtins.print"):
+            self.assertIsNone(scraper.get_scroll_target(page))
+        page.locator.return_value.first.evaluate_handle.assert_not_called()
+
+    def test_scroll_target_ignores_visible_non_scrollable_feed(self):
+        page = Mock()
+        ancestor = Mock()
+        page.locator.return_value.count.return_value = 1
+        page.locator.return_value.first.evaluate_handle.return_value.as_element.return_value = ancestor
+        self.assertIs(scraper.get_scroll_target(page), ancestor)
+        page.locator.return_value.is_visible.assert_not_called()
+
+    def test_hover_timeout_uses_original_mouse_fallback(self):
+        page = Mock()
+        target = Mock()
+        target.hover.side_effect = TimeoutError("not hoverable")
+        target.bounding_box.return_value = {"x": 10, "y": 20, "width": 100, "height": 80}
+        with patch.object(scraper, "get_scroll_target", return_value=target), patch("builtins.print"):
+            self.assertTrue(scraper.scroll_reviews(page))
+        page.mouse.move.assert_called_once_with(60, 60)
+        page.mouse.wheel.assert_called_once_with(0, 8000)
+        page.keyboard.press.assert_called_once_with("PageDown")
+
+    def test_scroll_targets_review_feed_with_legacy_wheel_and_page_down(self):
+        page = Mock()
+        feed = Mock()
+        with patch.object(scraper, "get_scroll_target", return_value=feed):
+            self.assertTrue(scraper.scroll_reviews(page))
+        feed.hover.assert_called_once_with(timeout=2000)
+        page.mouse.wheel.assert_called_once_with(0, 8000)
+        page.keyboard.press.assert_called_once_with("PageDown")
+        self.assertEqual(page.wait_for_timeout.call_args_list, [call(900), call(1400)])
+
+    def test_scroll_without_review_feed_uses_original_mouse_fallback(self):
+        page = Mock()
+        with patch.object(scraper, "get_scroll_target", return_value=None), patch("builtins.print"):
+            self.assertFalse(scraper.scroll_reviews(page))
+        page.mouse.wheel.assert_not_called()
+        page.keyboard.press.assert_not_called()
+
+    def test_failed_scroll_records_partial_evidence_and_stops_retrying(self):
+        class EmptyCards:
+            def count(self):
+                return 0
+
+        evidence = {}
+        with patch("builtins.print"), \
+             patch.object(scraper, "click_more_buttons"), \
+             patch.object(scraper, "click_original_review_buttons"), \
+             patch.object(scraper, "get_review_cards", return_value=(EmptyCards(), ".jftiEf")), \
+             patch.object(scraper, "scroll_reviews", return_value=False) as scroll:
+            found = scraper.extract_reviews(
+                Mock(), STORE, [], newest_verified=False, collection_evidence=evidence
+            )
+        self.assertEqual(found, [])
+        self.assertEqual(scroll.call_count, 1)
+        self.assertTrue(evidence["scroll_target_missing"])
+        self.assertFalse(evidence["full_coverage_verified"])
+
+    def test_empty_review_feed_stops_after_stall_threshold(self):
+        class EmptyCards:
+            def count(self):
+                return 0
+
+        evidence = {}
+        with (
+            patch("builtins.print"),
+            patch.object(scraper, "click_more_buttons"),
+            patch.object(scraper, "click_original_review_buttons"),
+            patch.object(scraper, "get_review_cards", return_value=(EmptyCards(), ".jftiEf")),
+            patch.object(scraper, "scroll_reviews", return_value=True) as scroll,
+            patch.object(scraper, "diagnose_review_access") as diagnose,
+        ):
+            found = scraper.extract_reviews(
+                Mock(), STORE, [], newest_verified=False, collection_evidence=evidence
+            )
+        self.assertEqual(found, [])
+        self.assertEqual(scroll.call_count, scraper.STOP_STALLED_ROUNDS - 1)
+        self.assertTrue(evidence["feed_stalled"])
+        self.assertFalse(evidence["full_coverage_verified"])
+        diagnose.assert_called_once()
+
+    def test_stalled_review_feed_is_reported_as_partial(self):
+        class OneCardList:
+            def count(self):
+                return 1
+
+            def nth(self, index):
+                return Mock()
+
+        evidence = {}
+        with patch("builtins.print"), \
+             patch.object(scraper, "click_more_buttons"), \
+             patch.object(scraper, "click_original_review_buttons"), \
+             patch.object(scraper, "get_review_cards", return_value=(OneCardList(), ".jftiEf")), \
+             patch.object(scraper, "expand_review_text"), \
+             patch.object(scraper, "get_review_text", return_value="A complete and useful review"), \
+             patch.object(scraper, "get_review_date", return_value="2 weeks ago"), \
+             patch.object(scraper, "get_review_author", return_value="Reviewer A"), \
+             patch.object(scraper, "get_review_rating", return_value=5), \
+             patch.object(scraper, "scroll_reviews", return_value=True), \
+             patch.object(scraper, "diagnose_review_access") as diagnose:
+            found = scraper.extract_reviews(
+                Mock(), STORE, [], newest_verified=False, collection_evidence=evidence
+            )
+        self.assertEqual(len(found), 1)
+        self.assertTrue(evidence["feed_stalled"])
+        self.assertFalse(evidence["full_coverage_verified"])
+        self.assertEqual(evidence["observed_review_count"], 1)
+        diagnose.assert_called_once()
+
+    def test_successful_scroll_does_not_mark_target_missing(self):
+        class EmptyCards:
+            def count(self):
+                return 0
+
+        evidence = {}
+        with patch("builtins.print"), \
+             patch.object(scraper, "click_more_buttons"), \
+             patch.object(scraper, "click_original_review_buttons"), \
+             patch.object(scraper, "get_review_cards", return_value=(EmptyCards(), ".jftiEf")), \
+             patch.object(scraper, "scroll_reviews", return_value=True) as scroll:
+            scraper.extract_reviews(
+                Mock(), STORE, [], newest_verified=False, collection_evidence=evidence
+            )
+        self.assertEqual(scroll.call_count, scraper.STOP_STALLED_ROUNDS - 1)
+        self.assertFalse(evidence["scroll_target_missing"])
+
+    def test_selected_reviews_tab_without_feed_is_partial(self):
+        page = Mock()
+        page.url = "https://www.google.com/maps/place/test"
+        page.get_by_role.return_value.first.count.return_value = 1
+        page.locator.return_value.filter.return_value.count.side_effect = [0, 1]
+        page.locator.return_value.count.return_value = 5
+        with patch("builtins.print"):
+            self.assertFalse(scraper.open_reviews_panel(page))
+        page.locator.assert_any_call("[role='tab'][aria-selected='true']")
+        page.get_by_role.return_value.first.click.assert_called_once()
+        self.assertFalse(any(
+            "a[href" in str(item.args[0]) for item in page.locator.call_args_list
+        ))
+
+    def test_reviews_panel_aborts_if_click_leaves_maps(self):
+        page = Mock()
+        page.url = "https://www.google.com/maps/place/test"
+        page.get_by_role.return_value.first.count.return_value = 1
+
+        def navigate(*args, **kwargs):
+            page.url = "https://www.google.com/search?q=unrelated"
+
+        page.get_by_role.return_value.first.click.side_effect = navigate
+        with patch("builtins.print"):
+            self.assertFalse(scraper.open_reviews_panel(page))
+        page.locator.assert_not_called()
+
+    def test_reviews_feed_confirms_full_panel_without_link_fallback(self):
+        page = Mock()
+        page.url = "https://www.google.com/maps/place/test"
+        page.get_by_role.return_value.first.count.return_value = 1
+        page.locator.return_value.filter.return_value.count.return_value = 1
+        with patch("builtins.print"):
+            self.assertTrue(scraper.open_reviews_panel(page))
+        page.get_by_role.return_value.first.click.assert_called_once()
+
+    def test_unselected_reviews_tab_does_not_confirm_panel(self):
+        page = Mock()
+        page.get_by_role.return_value.first.count.return_value = 1
+        page.locator.return_value.filter.return_value.count.return_value = 0
+        with patch("builtins.print"):
+            self.assertFalse(scraper.open_reviews_panel(page))
+
+    def test_overview_preview_feed_never_bypasses_reviews_click(self):
+        page = Mock()
+        page.url = "https://www.google.com/maps/place/test"
+        # A review feed/preview is visible even though Overview is selected.
+        page.locator.return_value.filter.return_value.count.return_value = 1
+        evidence = {}
+        with (
+            patch("builtins.print"),
+            patch.object(scraper, "build_url_candidates", return_value=[page.url]),
+            patch.object(scraper, "click_cookie_buttons"),
+            patch.object(scraper, "is_valid_google_maps_place_page", return_value=True),
+            patch.object(scraper, "is_reviews_tab_selected", return_value=False),
+            patch.object(scraper, "open_reviews_panel", return_value=False) as open_panel,
+            patch.object(scraper, "wait_for_reviews") as wait,
+            patch.object(scraper, "extract_reviews") as extract,
+        ):
+            result = scraper.scrape_store(
+                page, {**STORE, "url": page.url},
+                collection_evidence=evidence,
+            )
+        open_panel.assert_called_once_with(page)
+        wait.assert_not_called()
+        extract.assert_not_called()
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["collected_count"], 0)
+        self.assertEqual(result["collection_issue"], "review_panel_unverified_partial")
+        self.assertTrue(evidence["review_panel_unverified"])
+
+    def test_unopened_reviews_panel_is_recorded_as_partial(self):
+        page = Mock()
+        page.locator.return_value.filter.return_value.count.return_value = 0
+        existing = review("Existing full review text that is long enough")
+        evidence = {}
+        with (
+            patch("builtins.print"),
+            patch.object(scraper, "build_url_candidates", return_value=["https://maps.google.com/example"]),
+            patch.object(scraper, "click_cookie_buttons"),
+            patch.object(scraper, "is_valid_google_maps_place_page", return_value=True),
+            patch.object(scraper, "open_reviews_panel", return_value=False),
+            patch.object(scraper, "wait_for_reviews", return_value=True),
+            patch.object(scraper, "extract_reviews", return_value=[]),
+        ):
+            result = scraper.scrape_store(
+                page, {**STORE, "url": "https://maps.google.com/example"},
+                [existing], collection_evidence=evidence
+            )
+        self.assertTrue(result["ok"])
+        self.assertTrue(evidence["review_panel_unverified"])
+        self.assertEqual(result["collection_issue"], "review_panel_unverified_partial")
+
+    def test_store_scan_does_not_invoke_google_sort(self):
+        page = Mock()
+        page.locator.return_value.filter.return_value.count.return_value = 1
+        existing = review("Existing full review text that is long enough")
+        evidence = {"observed_review_count": 0}
+        with (
+            patch("builtins.print"),
+            patch.object(scraper, "build_url_candidates", return_value=["https://maps.google.com/example"]),
+            patch.object(scraper, "click_cookie_buttons"),
+            patch.object(scraper, "is_valid_google_maps_place_page", return_value=True),
+            patch.object(scraper, "wait_for_reviews", return_value=True),
+            patch.object(scraper, "set_reviews_sort_to_newest") as google_sort,
+            patch.object(scraper, "extract_reviews", return_value=[]) as extract,
+        ):
+            result = scraper.scrape_store(
+                page, {**STORE, "url": "https://maps.google.com/example"},
+                [existing], collection_evidence=evidence
+            )
+        self.assertTrue(result["ok"])
+        google_sort.assert_not_called()
+        self.assertFalse(extract.call_args.kwargs["newest_verified"])
+
+    def test_legacy_scroll_uses_wheel_and_pagedown_on_review_pane(self):
+        page = Mock()
+        target = Mock()
+        with patch.object(scraper, "get_scroll_target", return_value=target):
+            self.assertTrue(scraper.scroll_reviews(page))
+        target.hover.assert_called_once_with(timeout=2000)
+        page.mouse.wheel.assert_called_once_with(0, 8000)
+        page.keyboard.press.assert_called_once_with("PageDown")
+
+    def test_original_scroll_falls_back_when_pane_missing(self):
+        page = Mock()
+        with patch.object(scraper, "get_scroll_target", return_value=None), patch("builtins.print"):
+            self.assertFalse(scraper.scroll_reviews(page))
+        page.mouse.wheel.assert_not_called()
+        page.keyboard.press.assert_not_called()
+
+    def test_unverified_sort_falls_back_to_bounded_scan(self):
+        class EmptyCards:
+            def count(self):
+                return 0
+        with patch.object(scraper, "click_more_buttons"), \
+             patch.object(scraper, "click_original_review_buttons"), \
+             patch.object(scraper, "get_review_cards", return_value=(EmptyCards(), ".jftiEf")), \
+             patch.object(scraper, "scroll_reviews") as scroll:
+            result = scraper.extract_reviews(
+                Mock(), STORE, [review("Existing full review text that is long enough")],
+                newest_verified=False
+            )
+        self.assertEqual(result, [])
+        self.assertEqual(scroll.call_count, scraper.STOP_STALLED_ROUNDS - 1)
+
+    def test_unsorted_existing_store_keeps_only_new_review_candidates(self):
+        saved = review("Existing full review text that is long enough")
+        fresh = review("New review with completely different content", author="New Reviewer")
+        cards = Mock()
+        cards.count.return_value = 2
+        evidence = {"observed_review_count": 0}
+
+        def text_for_card(card):
+            return saved["text"] if card is cards.nth.return_value else fresh["text"]
+
+        # Mock nth() with stable distinct card objects, so each visible card is checked.
+        old_card, new_card = Mock(), Mock()
+        cards.nth.side_effect = [old_card, new_card] * scraper.MAX_SCROLL_ROUNDS
+        with (
+            patch("builtins.print"),
+            patch.object(scraper, "click_more_buttons"),
+            patch.object(scraper, "click_original_review_buttons"),
+            patch.object(scraper, "get_review_cards", return_value=(cards, ".jftiEf")),
+            patch.object(scraper, "expand_review_text"),
+            patch.object(scraper, "get_review_text", side_effect=lambda card: saved["text"] if card is old_card else fresh["text"]),
+            patch.object(scraper, "get_review_date", return_value=saved["date"]),
+            patch.object(scraper, "get_review_author", side_effect=lambda card: saved["author"] if card is old_card else fresh["author"]),
+            patch.object(scraper, "get_review_rating", return_value=5),
+            patch.object(scraper, "scroll_reviews"),
+            patch.object(scraper, "should_stop_recent_collection", return_value=True) as recent_stop,
+        ):
+            found = scraper.extract_reviews(Mock(), STORE, [saved], newest_verified=False, collection_evidence=evidence)
+        self.assertEqual(len(found), 1)
+        self.assertEqual(found[0]["author"], fresh["author"])
+        self.assertEqual(evidence["observed_review_count"], 2)
+        recent_stop.assert_not_called()
 
     def test_newest_sort_verification_requires_aria_checked_true(self):
         self.assertFalse(scraper.newest_sort_is_selected(FakeSortPage(False)))
@@ -256,6 +583,35 @@ class ReviewCrawlerRegressionTests(unittest.TestCase):
             scraper.select_target_stores(stores, "Bornga")
         self.assertTrue(scraper.all_crawl_results_failed([{"ok": False}]))
         self.assertFalse(scraper.all_crawl_results_failed([{"ok": True}, {"ok": False}]))
+
+    def test_collection_reporting_accepts_scroll_and_stall_evidence(self):
+        result = {"ok": True, "collected_count": 0, "error": "",
+                  "crawled_at": "2026-11-16 16:00:00",
+                  "collection_issue": "review_scroll_unavailable_partial"}
+        for evidence, expected in (
+            ({"observed_review_count": 5, "scroll_target_missing": True,
+              "feed_stalled": False, "full_coverage_verified": False},
+             "review_scroll_unavailable_partial"),
+            ({"observed_review_count": 5, "scroll_target_missing": False,
+              "feed_stalled": True, "full_coverage_verified": False},
+             "review_feed_stalled_partial"),
+        ):
+            with self.subTest(expected=expected):
+                row = scraper.collection_status_row(
+                    STORE, attempted=True, result=result, **evidence
+                )
+                self.assertEqual(row["collection_status"], "PARTIAL")
+                self.assertEqual(row["collection_reason"], expected)
+                self.assertEqual(row["observed_review_count"], 5)
+
+    def test_collection_reporting_does_not_upgrade_diagnostic_coverage_to_verified(self):
+        row = scraper.collection_status_row(
+            STORE, attempted=True, observed_review_count=5,
+            full_coverage_verified=True,
+            result={"ok": True, "collected_count": 5, "error": "",
+                    "crawled_at": "2026-11-16 16:00:00"},
+        )
+        self.assertEqual(row["collection_status"], "PARTIAL")
 
     def test_verified_requires_independent_completeness_evidence(self):
         classify = scraper.classify_collection_status
@@ -452,6 +808,300 @@ class ReviewPersistenceRegressionTests(unittest.TestCase):
         request.assert_called_once()
         self.assertEqual(request.call_args.kwargs["body"], rows)
         self.assertIs(failure.exception, error)
+
+    def test_auth_state_omitted_preserves_anonymous_browser_context(self):
+        self.assertIsNone(scraper.load_dedicated_google_auth_state(raw=""))
+        browser = Mock()
+        scraper.new_crawler_context(browser, auth_state=None)
+        self.assertNotIn("storage_state", browser.new_context.call_args.kwargs)
+
+    def test_auth_state_filters_expired_and_non_google_cookies_without_logging(self):
+        import base64
+        state = {"cookies": [
+            {"name": "SESSION", "value": "secret", "domain": ".google.com", "path": "/", "expires": 1999999999, "sameSite": "Lax", "partitionKey": "https://example.com"},
+            {"name": "EXPIRED", "value": "x", "domain": ".google.com", "path": "/", "expires": 100},
+            {"name": "UNRELATED", "value": "y", "domain": "example.com", "path": "/"},
+        ], "origins": [{"origin": "https://example.com", "localStorage": []}]}
+        raw = base64.b64encode(json.dumps(state).encode("utf-8")).decode("ascii")
+        restored = scraper.load_dedicated_google_auth_state(raw=raw, now_seconds=1000)
+        self.assertEqual(len(restored["cookies"]), 1)
+        self.assertEqual(restored["cookies"][0]["name"], "SESSION")
+        self.assertNotIn("partitionKey", restored["cookies"][0])
+        self.assertEqual(restored["origins"], [])
+        browser = Mock()
+        scraper.new_crawler_context(browser, auth_state=restored)
+        self.assertEqual(browser.new_context.call_args.kwargs["storage_state"], restored)
+
+    def test_invalid_auth_state_fails_closed_without_secret_leak(self):
+        invalid = "sensitive-but-not-base64"
+        with self.assertRaises(RuntimeError) as error:
+            scraper.load_dedicated_google_auth_state(raw=invalid)
+        self.assertNotIn(invalid, str(error.exception))
+        browser = Mock()
+        browser.new_context.side_effect = RuntimeError("secret-cookie-value")
+        with self.assertRaises(RuntimeError) as error:
+            scraper.new_crawler_context(browser, auth_state={"cookies": []})
+        self.assertNotIn("secret-cookie-value", str(error.exception))
+
+    def test_auth_account_ui_required_before_crawling_any_stores(self):
+        page = Mock()
+        page.evaluate.return_value = False
+        self.assertFalse(scraper.verify_dedicated_google_login(page))
+        page.evaluate.return_value = True
+        self.assertTrue(scraper.verify_dedicated_google_login(page))
+
+    def test_explicit_full_reviews_control_is_used_without_generic_links(self):
+        page = Mock()
+        page.url = "https://www.google.com/maps/place/example"
+        page.evaluate.return_value = 0
+        page.locator.return_value.count.return_value = 7
+        self.assertTrue(scraper.open_all_reviews_control(page))
+        page.locator.return_value.nth.assert_called_once_with(0)
+        page.locator.return_value.nth.return_value.click.assert_called_once()
+
+    def test_review_more_control_ignores_untyped_mock_or_missing_control(self):
+        page = Mock()
+        page.evaluate.return_value = None
+        self.assertFalse(scraper.open_all_reviews_control(page))
+        page.locator.assert_not_called()
+
+    def test_scroll_progress_defers_stall_while_pane_moves(self):
+        class OneCardList:
+            def count(self): return 1
+            def nth(self, index): return Mock()
+        with (
+            patch("builtins.print"),
+            patch.object(scraper, "click_more_buttons"),
+            patch.object(scraper, "click_original_review_buttons"),
+            patch.object(scraper, "get_review_cards", return_value=(OneCardList(), ".jftiEf")),
+            patch.object(scraper, "expand_review_text"),
+            patch.object(scraper, "get_review_text", return_value="Review body for a scrolling regression"),
+            patch.object(scraper, "get_review_date", return_value="2 weeks ago"),
+            patch.object(scraper, "get_review_author", return_value="Tester"),
+            patch.object(scraper, "get_review_rating", return_value=4),
+            patch.object(scraper, "review_pane_progress", side_effect=[
+                (0, 8000), (1200, 8000), (2400, 8000), (3600, 8000), (4800, 8000)
+            ]),
+            patch.object(scraper, "scroll_reviews", return_value=True) as wheel,
+            patch.object(scraper, "MAX_SCROLL_ROUNDS", 5),
+        ):
+            rows = scraper.extract_reviews(Mock(), STORE, [], newest_verified=False)
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(wheel.call_count, 5)
+
+    def test_cached_google_review_id_skips_repeat_parsing_without_skipping_new_ids(self):
+        class CardCollection:
+            def __init__(self, cards): self.cards = cards
+            def count(self): return len(self.cards)
+            def nth(self, index): return self.cards[index]
+        first, second = Mock(), Mock()
+        first.get_attribute.return_value = "same-review-id"
+        second.get_attribute.return_value = "new-review-id"
+        # Rounds 1/2 show the same single card; round 3 introduces a new ID.
+        collections = [CardCollection([first]), CardCollection([first]),
+                       CardCollection([first, second]), CardCollection([first, second])]
+        evidence = {}
+        with (
+            patch("builtins.print"),
+            patch.object(scraper, "MAX_SCROLL_ROUNDS", 4),
+            patch.object(scraper, "click_more_buttons"),
+            patch.object(scraper, "click_original_review_buttons"),
+            patch.object(scraper, "get_review_cards", side_effect=[
+                (cards, ".jftiEf") for cards in collections
+            ]),
+            patch.object(scraper, "get_review_text", return_value="A good restaurant and service"),
+            patch.object(scraper, "get_review_date", return_value="2 weeks ago"),
+            patch.object(scraper, "get_review_rating", return_value=4),
+            patch.object(scraper, "get_review_author", side_effect=lambda card:
+                         "Author One" if card is first else "Author Two"),
+            patch.object(scraper, "expand_review_text") as expand,
+            patch.object(scraper, "scroll_reviews", return_value=True),
+            patch.object(scraper, "review_pane_progress", side_effect=[
+                (0, 10000), (1200, 10000), (2400, 10000), (3600, 10000)
+            ]),
+        ):
+            found = scraper.extract_reviews(Mock(), STORE, [],
+                                            newest_verified=False, collection_evidence=evidence)
+        self.assertEqual(len(found), 2)
+        self.assertEqual(expand.call_count, 2)
+        self.assertGreaterEqual(evidence["repeat_dom_cards_skipped"], 2)
+        self.assertEqual(evidence["observed_review_count"], 2)
+
+    def test_maps_url_candidates_never_create_invalid_review_suffix(self):
+        short = "https://maps.app.goo.gl/AbCd1234"
+        self.assertEqual(scraper.build_url_candidates(short), [short, short])
+        original = ("https://www.google.com/maps/place/Test+Store/@0,0,15z/"
+                    "data=!4m1!9m1!1b1?entry=ttu")
+        candidates = scraper.build_url_candidates(original)
+        self.assertEqual(candidates[0], original)
+        self.assertTrue(any("/data=" not in u for u in candidates[1:]))
+        self.assertTrue(any("!9m1!1b1" not in u for u in candidates[1:]))
+        self.assertTrue(all("/maps/place/" in u for u in candidates))
+        self.assertTrue(all(not u.endswith("/reviews/") for u in candidates))
+
+    def test_english_maps_rejects_generic_page_after_navigation(self):
+        page = Mock()
+        page.url = "https://www.google.com/maps/@0,0,15z"
+        page.locator.return_value.count.return_value = 0
+        with patch.object(scraper, "is_valid_google_maps_place_page", return_value=False):
+            self.assertFalse(scraper.force_google_maps_english_ui(page))
+
+    def test_hash_uses_immutable_store_scope_to_survive_rename(self):
+        store_id = "949dfe3a-782d-4142-b25d-94c650a1a7d4"
+        raw_review_id = "review-id"
+        original = dict(STORE, id=store_id)
+        renamed = dict(original, store_name="Renamed Store")
+        # The extractor passes the immutable store ID as hash scope.
+        self.assertEqual(
+            scraper.hash_google_source_review_id(str(original["id"]), raw_review_id),
+            scraper.hash_google_source_review_id(str(renamed["id"]), raw_review_id),
+        )
+
+    def test_force_maps_english_url_uses_google_place_only(self):
+        page = Mock()
+        page.url = "https://www.google.com/maps/place/sample?entry=ttu&hl=ko"
+        def navigate(url, **kwargs):
+            page.url = url
+        page.goto.side_effect = navigate
+        with patch("builtins.print"):
+            self.assertTrue(scraper.force_google_maps_english_ui(page))
+        next_url = page.goto.call_args.args[0]
+        self.assertIn("hl=en", next_url)
+        self.assertIn("gl=us", next_url)
+        self.assertNotIn("hl=ko", next_url)
+        self.assertIn("entry=ttu", next_url)
+
+    def test_force_maps_english_rejects_short_and_account_pages_without_navigation(self):
+        for url in ("https://maps.app.goo.gl/abc123",
+                    "https://accounts.google.com/signin",
+                    "https://untrusted.example/maps/place/x"):
+            page = Mock()
+            page.url = url
+            self.assertFalse(scraper.force_google_maps_english_ui(page))
+            page.goto.assert_not_called()
+
+    def test_force_maps_english_failure_is_sanitized(self):
+        page = Mock()
+        page.url = "https://www.google.com/maps/place/test"
+        page.goto.side_effect = RuntimeError("private-account-data")
+        with self.assertRaises(RuntimeError) as raised:
+            scraper.force_google_maps_english_ui(page)
+        self.assertNotIn("private-account-data", str(raised.exception))
+
+    def test_unknown_rating_never_becomes_fake_five_stars(self):
+        self.assertEqual(scraper.parse_rating(""), 0)
+        self.assertEqual(scraper.parse_rating("Rating unavailable"), 0)
+        self.assertEqual(scraper.parse_rating("4 stars"), 4)
+
+    def test_append_plan_holds_same_author_when_translation_changes_text(self):
+        existing = review("Great meals and service", author="Existing User")
+        translated = review("훌륭한 음식과 서비스", author="Existing User")
+        fresh = review("Very nice dinner", author="Completely New User")
+        plan = scraper.plan_safe_review_append([existing], [translated, fresh])
+        self.assertEqual([r["author"] for r in plan["ready"]], ["Completely New User"])
+        self.assertEqual(len(plan["held"]), 1)
+        self.assertEqual(plan["held_reasons"]["prior_author_collision"], 1)
+
+    def test_append_plan_does_not_cross_contaminate_authors_between_stores(self):
+        existing = review("Great meals", author="Shared User")
+        another_store = review("Another restaurant", author="Shared User", store_name="Another Store")
+        plan = scraper.plan_safe_review_append([existing], [another_store])
+        self.assertEqual(len(plan["ready"]), 1)
+        self.assertEqual(plan["held"], [])
+
+    def test_append_plan_blocks_unknown_author_date_and_rating(self):
+        candidates = [
+            review("Great food", author="Anonymous"),
+            review("Other experience", author="Reviewer B", rating=0),
+            review("Helpful staff", author="Reviewer C", date="Unknown"),
+        ]
+        plan = scraper.plan_safe_review_append([], candidates)
+        self.assertEqual(len(plan["held"]), 3)
+        self.assertEqual(len(plan["ready"]), 0)
+
+    def test_dry_run_generates_plan_but_never_writes_reviews(self):
+        new = review("Fresh feedback", author="New Person")
+        with (
+            patch.object(scraper, "load_store_id_map", return_value={STORE["store_name"].casefold(): "s1"}),
+            patch.object(scraper, "upsert_review_batch") as write,
+            patch("builtins.print") as output,
+        ):
+            scraper.save_reviews([new], None, [], dry_run=True, conservative_dedupe=True)
+        write.assert_not_called()
+        self.assertTrue(any("REVIEW_APPEND_PLAN" in str(x) for x in output.call_args_list))
+
+    def test_safe_append_only_submits_review_not_on_hold(self):
+        old = review("Previously saved", author="Reviewer A")
+        translated = review("이전 방문", author="Reviewer A")
+        new = review("First time here", author="Reviewer B")
+        with (
+            patch.object(scraper, "load_store_id_map", return_value={STORE["store_name"].casefold(): "s1"}),
+            patch.object(scraper, "upsert_review_batch") as write,
+            patch("builtins.print"),
+        ):
+            scraper.save_reviews([translated, new], 11, [old], conservative_dedupe=True)
+        write.assert_called_once()
+        rows = write.call_args.args[0]
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["author"], "Reviewer B")
+
+    def test_expired_google_auth_prevents_any_db_run_or_review_insert(self):
+        from unittest.mock import MagicMock
+        playwright = MagicMock()
+        browser = playwright.return_value.__enter__.return_value.chromium.launch.return_value
+        page = MagicMock()
+        context = MagicMock()
+        context.new_page.return_value = page
+        store = dict(STORE, url="https://www.google.com/maps/place/example", id="store-id")
+        with (
+            patch.object(scraper, "REVIEW_APPEND_MODE", "append"),
+            patch.object(scraper, "load_dedicated_google_auth_state", return_value={"cookies":[{"name":"dummy"}]}),
+            patch.object(scraper, "load_stores_from_supabase", return_value=[store]),
+            patch.object(scraper, "select_target_stores", return_value=[store]),
+            patch.object(scraper, "load_store_id_map", return_value={store["store_name"].casefold():"store-id"}),
+            patch.object(scraper, "validate_store_configuration"),
+            patch.object(scraper, "load_existing_reviews", return_value=[]),
+            patch.object(scraper, "save_migrated_existing_reviews"),
+            patch.object(scraper, "sync_playwright", return_value=playwright.return_value),
+            patch.object(scraper, "new_crawler_context", return_value=context),
+            patch.object(scraper, "verify_dedicated_google_login", return_value=False),
+            patch.object(scraper, "create_crawl_run") as create_run,
+            patch.object(scraper, "finish_crawl_run") as finish_run,
+            patch.object(scraper, "upsert_review_batch") as insert,
+            patch.object(scraper, "report_collection_status"),
+            patch("builtins.print"),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "전용 Google 인증 세션"):
+                scraper.scrape()
+        create_run.assert_not_called()
+        finish_run.assert_not_called()
+        insert.assert_not_called()
+
+    def test_google_source_identity_hash_stable_and_scoped(self):
+        first = scraper.hash_google_source_review_id("Bornga Dunnan Store", "google-review-id")
+        repeated = scraper.hash_google_source_review_id(" bornga  dunnan store ", "google-review-id")
+        other_store = scraper.hash_google_source_review_id("Saemaeul Seoul St.", "google-review-id")
+        self.assertEqual(first, repeated)
+        self.assertEqual(len(first), 64)
+        self.assertNotEqual(first, other_store)
+        self.assertNotIn("google-review-id", first)
+
+    def test_google_source_identity_hash_rejects_invalid_values(self):
+        self.assertIsNone(scraper.hash_google_source_review_id("Store", ""))
+        self.assertIsNone(scraper.hash_google_source_review_id("Store", None))
+        self.assertIsNone(scraper.hash_google_source_review_id("", "id"))
+        self.assertIsNone(scraper.hash_google_source_review_id("Store", "x" * 2049))
+
+    def test_source_identity_metadata_does_not_change_legacy_review_key(self):
+        standard = review("Good restaurant")
+        tagged = dict(standard, google_source_id_hash="a" * 64)
+        self.assertEqual(scraper.canonical_review_hash(standard), scraper.canonical_review_hash(tagged))
+        row = scraper.prepare_review_row(
+            tagged, {STORE["store_name"].casefold(): "store-id"}, None
+        )
+        self.assertNotIn("google_source_id_hash", row)
+        self.assertNotIn("google-review-id", str(row))
+
 
 
 if __name__ == "__main__":

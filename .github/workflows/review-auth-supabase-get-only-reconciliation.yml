@@ -1,0 +1,44 @@
+name: review-auth-supabase-get-only-reconciliation
+
+on:
+  push:
+    branches: [test/review-collection-without-sort]
+    paths:
+      - "scraper/review_auth_db_reconciliation.py"
+      - ".github/workflows/review-auth-supabase-get-only-reconciliation.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  isolated-db-get-only-reconciliation:
+    runs-on: ubuntu-latest
+    timeout-minutes: 24
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Compile and test isolated read-only reconciliation
+        run: |
+          python -m py_compile scraper/scraper.py scraper/review_auth_db_reconciliation.py scraper/review_identity_metrics.py
+          python -m unittest discover -s scraper -p 'test_review_identity_metrics.py' -v
+      - name: Install Chromium
+        run: |
+          pip install -r scraper/requirements.txt
+          python -m playwright install --with-deps chromium
+      - name: Reconcile observed reviews and existing saved keys with GET only
+        env:
+          GOOGLE_MAPS_STORAGE_STATE_B64: ${{ secrets.GOOGLE_MAPS_STORAGE_STATE_B64 }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          REVIEW_MAX_SCROLL_ROUNDS: "10"
+        run: python scraper/review_auth_db_reconciliation.py
+      - name: Upload aggregate-only report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: review-auth-db-reconciliation-aggregate
+          path: review-auth-db-reconciliation-aggregate.json
+          if-no-files-found: ignore
