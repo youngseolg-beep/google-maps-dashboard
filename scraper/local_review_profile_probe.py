@@ -339,21 +339,60 @@ def audit_loaded_fields(page, observed_unique):
 
 
 MORE_LABEL = re.compile(r"^(?:자세히 보기|더보기|더 보기|more|read more|see more)$", re.I)
-ORIGINAL_LABEL = re.compile(r"^(?:원문 보기|원본 보기|See original|Show original|View original)$", re.I)
+ORIGINAL_LABEL = re.compile(r"^(?:원문 보기|원본 보기|See original|Show original|View original)(?:\s*\([^()\r\n]{1,40}\))?$", re.I)
 
 
 def body_measure(card):
-    # Review text stays inside the browser; only lengths and UI state are returned.
+    # Measure the main review only, not the owner's reply or extra fields.
     return card.evaluate(r"""card => {
         const visible = el => !!el.getClientRects().length;
-        const texts = [...card.querySelectorAll('.wiI7pd,.MyEned')]
-            .filter(visible).map(el => (el.innerText || '').trim());
-        return Math.max(0, ...texts.map(t => t.length));
+        const primary = [...card.querySelectorAll('.wiI7pd')].find(visible)
+            || [...card.querySelectorAll('.MyEned')].find(visible);
+        return primary ? (primary.innerText || '').trim().length : 0;
     }""")
 
 
 def body_control(card, pattern):
-    return card.locator('button,[role="button"]').filter(has_text=pattern).filter(visible=True)
+    """Identify only controls structurally associated with the main review.
+
+    A card can also contain an owner's response with identical controls.
+    Exclude controls in that response or associated with a later body.
+    If the remaining association is ambiguous, do not click anything.
+    """
+    candidates = card.locator('button,[role="button"],a').filter(has_text=pattern).filter(visible=True)
+    result = candidates.evaluate_all(r"""els => {
+        const accepted = [];
+        let excluded = 0, unresolved = 0;
+        for (let i = 0; i < els.length; i++) {
+            const el = els[i], card = el.closest('.jftiEf[data-review-id]');
+            if (!card) { unresolved++; continue; }
+            const visible = node => !!node.getClientRects().length;
+            const bodies = [...card.querySelectorAll('.wiI7pd')].filter(visible);
+            const primary = bodies[0] || [...card.querySelectorAll('.MyEned')].find(visible);
+            if (!primary) { unresolved++; continue; }
+            const precedes = (a,b) => !!(a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING);
+            const replyHeaders = [...card.querySelectorAll('span,div')].filter(node =>
+                !node.children.length && /^(?:업체 대표 응답|소유자 답변|Response from the owner|Owner response)$/i.test((node.innerText || '').trim())
+            );
+            if (el.closest('.CDe7pd') ||
+                replyHeaders.some(h => precedes(primary,h) && precedes(h,el)) ||
+                bodies.slice(1).some(b => precedes(primary,b) && precedes(b,el))) {
+                excluded++; continue;
+            }
+            let common = el, distance = 0;
+            while (common && common !== card && !common.contains(primary)) {
+                common = common.parentElement; distance++;
+            }
+            if (!common || common === card) { unresolved++; continue; }
+            accepted.push({index:i, distance});
+        }
+        return {accepted, excluded, unresolved};
+    }""")
+    indexes = result["accepted"]
+    # One structurally verified candidate only; no arbitrary first-button click.
+    count = len(indexes) + result["unresolved"]
+    return (candidates.nth(indexes[0]["index"]) if count == 1 and len(indexes) == 1 else None,
+            count, result["excluded"])
 
 
 def body_sample_status(metrics):
@@ -378,7 +417,8 @@ def audit_body_sample(page, store_key, reviews, limit=10):
                    more_ambiguous=0, original_candidates=0,
                    original_confirmed=0, original_length_changed=0,
                    body_missing_after=0, identity_mismatch=0,
-                   context_lost=False, click_errors=0)
+                   context_lost=False, click_errors=0,
+                   excluded_nonreview_more=0, excluded_nonreview_original=0)
     for i in range(n):
         if blocked(page) or not same_place(page.url, store_key) or not selected(reviews):
             metrics["context_lost"] = True
@@ -386,10 +426,11 @@ def audit_body_sample(page, store_key, reviews, limit=10):
         card = cards.nth(i)
         identity = card.get_attribute("data-review-id")
         before = body_measure(card)
-        more = body_control(card, MORE_LABEL)
-        if more.count():
+        more, more_count, excluded = body_control(card, MORE_LABEL)
+        metrics["excluded_nonreview_more"] += excluded
+        if more_count:
             metrics["more_candidates"] += 1
-            if more.count() != 1:
+            if more is None:
                 metrics["more_ambiguous"] += 1
             else:
                 try:
@@ -406,14 +447,16 @@ def audit_body_sample(page, store_key, reviews, limit=10):
                         metrics["more_length_increased"] += 1
                     else:
                         metrics["more_no_length_increase"] += 1
-                    if after > before and more.count() == 0:
+                    _, remaining, _ = body_control(card, MORE_LABEL)
+                    if after > before and remaining == 0:
                         metrics["more_confirmed"] += 1
                 except Exception:
                     metrics["click_errors"] += 1
-        original = body_control(card, ORIGINAL_LABEL)
-        if original.count():
+        original, original_count, excluded = body_control(card, ORIGINAL_LABEL)
+        metrics["excluded_nonreview_original"] += excluded
+        if original_count:
             metrics["original_candidates"] += 1
-            if original.count() == 1:
+            if original is not None:
                 try:
                     before_original = body_measure(card)
                     original.click(timeout=2500)
@@ -427,7 +470,8 @@ def audit_body_sample(page, store_key, reviews, limit=10):
                     after_original = body_measure(card)
                     if after_original != before_original:
                         metrics["original_length_changed"] += 1
-                    if original.count() == 0 and after_original > 0:
+                    _, remaining, _ = body_control(card, ORIGINAL_LABEL)
+                    if remaining == 0 and after_original > 0:
                         metrics["original_confirmed"] += 1
                 except Exception:
                     metrics["click_errors"] += 1
@@ -747,6 +791,9 @@ def self_test():
     assert MORE_LABEL.fullmatch("더보기")
     assert not MORE_LABEL.fullmatch("More reviews")
     assert ORIGINAL_LABEL.fullmatch("원문 보기")
+    assert ORIGINAL_LABEL.fullmatch("원본 보기(태국어)")
+    assert ORIGINAL_LABEL.fullmatch("See original (Thai)")
+    assert not ORIGINAL_LABEL.fullmatch("원본 보기(태국어) 공유")
     assert not ORIGINAL_LABEL.fullmatch("Like")
     sample = dict(context_lost=False, more_candidates=10, more_confirmed=10,
                   original_candidates=2, original_confirmed=2,
@@ -754,7 +801,7 @@ def self_test():
     assert body_sample_status(sample) == "BODY_SAMPLE_CONTROLS_VERIFIED"
     assert body_sample_status(dict(sample, more_confirmed=9)) == "BODY_SAMPLE_GAPS"
     assert body_sample_status(dict(sample, context_lost=True)) == "BODY_SAMPLE_CONTEXT_LOST"
-    print("SELF_TEST_PASS: 42 checks")
+    print("SELF_TEST_PASS: 45 checks")
 
 
 def main():
