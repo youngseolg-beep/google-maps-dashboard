@@ -575,7 +575,7 @@ def local_date_value(label, base, production):
     return (base - timedelta(days=age)).isoformat(), "estimated"
 
 
-def adapt_local_records(records, store_name, base, production):
+def adapt_local_records(records, store_name, base, production, *, store_id=None):
     """Map transient visible records into the existing engine's candidate shape.
 
     Only for offline reconciliation. Store display name is diagnostic scope,
@@ -584,7 +584,7 @@ def adapt_local_records(records, store_name, base, production):
     candidates, seen = [], set()
     gaps = dict(invalid_metadata=0, missing_source=0, duplicate_source=0)
     for raw in records:
-        source = production.hash_google_source_review_id(store_name, raw.get("source_id"))
+        source = production.hash_google_source_review_id(str(store_id or store_name), raw.get("source_id"))
         if not source:
             gaps["missing_source"] += 1
             continue
@@ -647,6 +647,152 @@ def integration_sample(page, store_key, observed_unique):
     }
 
 
+def read_only_db_config():
+    """Explicit local audit credentials only; never fall back to service role."""
+    base = os.environ.get("SV_REVIEW_AUDIT_URL", "").strip().rstrip("/")
+    key = os.environ.get("SV_REVIEW_AUDIT_API_KEY", "").strip()
+    token = os.environ.get("SV_REVIEW_AUDIT_ACCESS_TOKEN", "").strip()
+    p = urlsplit(base)
+    if not base or not key:
+        raise ValueError("AUDIT_DATABASE_CONFIG_MISSING")
+    if (p.scheme != "https" or not p.hostname or p.username or p.password
+            or p.path or p.query or p.fragment or p.port is not None):
+        raise ValueError("AUDIT_DATABASE_URL_INVALID")
+    if key.startswith("sb_secret_"):
+        raise ValueError("AUDIT_PRIVILEGED_KEY_NOT_ALLOWED")
+    # A legacy JWT service_role key is also disallowed. This check is a
+    # credential hygiene guard, not a replacement for actual DB grants/RLS.
+    import base64
+    for credential in (key, token):
+        if credential.count(".") == 2:
+            try:
+                payload = credential.split(".")[1]
+                claims = json.loads(base64.urlsafe_b64decode(payload + "=" * (-len(payload) % 4)))
+            except Exception:
+                raise ValueError("AUDIT_TOKEN_INVALID") from None
+            if claims.get("role") not in {"anon", "authenticated"}:
+                raise ValueError("AUDIT_PRIVILEGED_KEY_NOT_ALLOWED")
+    return base, key, token
+
+
+def audit_db_get(config, table, params):
+    """GET only, table allowlist, no redirects, count of rows visible to caller."""
+    from urllib.parse import urlencode
+    from urllib.request import Request, build_opener, HTTPRedirectHandler
+
+    class NoRedirect(HTTPRedirectHandler):
+        def redirect_request(self, req, fp, code, msg, headers, newurl):
+            return None
+
+    if table not in {"stores", "reviews"}:
+        raise ValueError("AUDIT_TABLE_NOT_ALLOWED")
+    base, key, token = config
+    headers = {"apikey": key, "Accept": "application/json", "Prefer": "count=exact"}
+    if token:
+        headers["Authorization"] = "Bearer " + token
+    elif key.count(".") == 2:
+        headers["Authorization"] = "Bearer " + key
+    request = Request(base + "/rest/v1/" + table + "?" + urlencode(params),
+                      headers=headers, method="GET")
+    with build_opener(NoRedirect()).open(request, timeout=45) as response:
+        rows = json.loads(response.read().decode("utf-8"))
+        content_range = response.headers.get("Content-Range", "")
+    match = re.search(r"/(\d+)$", content_range)
+    if not isinstance(rows, list) or not match:
+        raise ValueError("AUDIT_COUNT_NOT_VERIFIED")
+    return rows, int(match.group(1))
+
+
+def verified_db_store(config, store_key):
+    names = {"thailand": ("Saemaeul Central Eastville", "Thailand"),
+             "taiwan": ("Bornga Dunnan Store", "Taiwan")}
+    name, country = names[store_key]
+    rows, total = audit_db_get(config, "stores", {
+        "select": "id,store_name,country,google_maps_url,is_active",
+        "store_name": "eq." + name, "country": "eq." + country,
+        "is_active": "eq.true", "limit": "2",
+    })
+    if total != 1 or len(rows) != 1:
+        raise ValueError("AUDIT_STORE_MAPPING_UNVERIFIED")
+    row = rows[0]
+    from uuid import UUID
+    try:
+        UUID(str(row.get("id")))
+    except (TypeError, ValueError):
+        raise ValueError("AUDIT_STORE_ID_INVALID") from None
+    if (row.get("store_name") != name or row.get("country") != country
+            or row.get("is_active") is not True
+            or not isinstance(row.get("google_maps_url"), str)
+            or not same_place(row["google_maps_url"], store_key)):
+        raise ValueError("AUDIT_STORE_IDENTITY_MISMATCH")
+    return row
+
+
+def load_visible_history(config, store):
+    """Require consistent exact count and distinct row IDs across pages.
+
+    This is not a transactional snapshot or proof of unrestricted RLS access.
+    """
+    rows, ids, expected = [], set(), None
+    while True:
+        batch, total = audit_db_get(config, "reviews", {
+            "select": "id,store_id,store_name,author,rating,text,date,review_date,review_key,has_text",
+            "store_id": "eq." + str(store["id"]), "order": "id.asc",
+            "limit": "500", "offset": str(len(rows)),
+        })
+        if expected is None:
+            expected = total
+        if total != expected or expected > 20000:
+            raise ValueError("AUDIT_HISTORY_COUNT_CHANGED_OR_LIMIT")
+        for row in batch:
+            row_id = row.get("id")
+            if not row_id or row_id in ids or row.get("store_id") != store["id"]:
+                raise ValueError("AUDIT_HISTORY_IDENTITY_MISMATCH")
+            ids.add(row_id)
+            rows.append(row)
+        if len(rows) == expected:
+            return rows
+        if not batch or len(rows) > expected:
+            raise ValueError("AUDIT_HISTORY_INCOMPLETE")
+
+
+def compare_db_sample(page, store_key, observed_unique):
+    import scraper as production
+    config = read_only_db_config()
+    store = verified_db_store(config, store_key)
+    saved = load_visible_history(config, store)
+    metrics, records = audit_loaded_fields(page, observed_unique, include_records=True)
+    candidates, gaps = adapt_local_records(
+        records, store["store_name"], production.now_kst().date(), production,
+        store_id=store["id"]
+    )
+    historical = [dict(row, store_name=store["store_name"]) for row in saved]
+    plan = production.plan_safe_review_append(historical, candidates)
+    unique = len(plan["unique_candidates"])
+    matched = plan["already_matched"]
+    ready, held = len(plan["ready"]), len(plan["held"])
+    consistent = (
+        len(candidates) == observed_unique and observed_unique >= 6
+        and metrics["status"] == "REQUIRED_FIELDS_PRESENT"
+        and not any(gaps.values()) and matched + ready + held == unique
+    )
+    return {
+        "status": "LOCAL_DB_SAMPLE_COMPARED" if consistent else "LOCAL_DB_SAMPLE_GAPS",
+        "store_mapping_verified": True,
+        "visible_existing_rows": len(saved),
+        "observed_unique": observed_unique, "adapted_candidates": len(candidates),
+        "metadata_gaps": gaps, "legacy_unique_candidates": unique,
+        "legacy_key_collapses": len(candidates) - unique,
+        "matched_existing": matched, "potential_new_unapproved": ready,
+        "held_for_review": held, "held_reasons": plan["held_reasons"],
+        "actual_database_compared": True, "database_writes": False,
+        "history_visibility": "CALLER_VISIBLE_ONLY",
+        "transactional_snapshot_verified": False,
+        "full_text_verified": False, "full_coverage_verified": False,
+        "write_approved": False,
+    }
+
+
 def coverage_status(count, expected, blocked=False):
     """Compare against the user-observed count, not proof of an API snapshot."""
     if blocked:
@@ -658,7 +804,7 @@ def coverage_status(count, expected, blocked=False):
     return "EXPECTED_COUNT_NOT_REACHED"
 
 
-def run_once(context, expected_total=None, store_key="thailand", auto_total=False, scroll_mode="baseline", audit_fields=False, field_sample=False, body_sample=False, adapter_sample=False):
+def run_once(context, expected_total=None, store_key="thailand", auto_total=False, scroll_mode="baseline", audit_fields=False, field_sample=False, body_sample=False, adapter_sample=False, db_sample=False):
     report = {"status": "NOT_STARTED", "phase": "select_startup_tab",
               "overview_selected": False,
               "reviews_selected": False, "initial_unique": 0,
@@ -785,7 +931,7 @@ def run_once(context, expected_total=None, store_key="thailand", auto_total=Fals
         report["phase"] = "observe_initial_reviews"
         report["initial_unique"], _ = observe(page, seen, id_cache)
         report["observed_unique"] = len(seen)
-        if field_sample or body_sample or adapter_sample:
+        if field_sample or body_sample or adapter_sample or db_sample:
             report["phase"] = "initial_field_sample"
             report["field_audit"] = audit_loaded_fields(page, len(seen))
             report["status"] = (
@@ -793,6 +939,13 @@ def run_once(context, expected_total=None, store_key="thailand", auto_total=Fals
                 if len(seen) >= 6 and report["field_audit"]["status"] == "REQUIRED_FIELDS_PRESENT"
                 else "FIELD_SAMPLE_GAPS"
             )
+            if db_sample and report["status"] == "FIELD_SAMPLE_VERIFIED":
+                report["phase"] = "local_db_sample"
+                if blocked(page) or not same_place(page.url, store_key) or not selected(reviews):
+                    report["status"] = "DB_SAMPLE_CONTEXT_UNVERIFIED"
+                    return report
+                report["db_sample"] = compare_db_sample(page, store_key, len(seen))
+                report["status"] = report["db_sample"]["status"]
             if adapter_sample and report["status"] == "FIELD_SAMPLE_VERIFIED":
                 report["phase"] = "local_adapter_sample"
                 report["integration_sample"] = integration_sample(page, store_key, len(seen))
@@ -1006,7 +1159,17 @@ def main():
                         help="Check More and Original controls on up to ten initial cards; aggregate only.")
     parser.add_argument("--adapter-sample", action="store_true",
                         help="Read-only sample mapping and synthetic legacy replay; no database access.")
+    parser.add_argument("--db-sample", action="store_true",
+                        help="Compare initial cards with caller-visible database rows; GET only.")
     args = parser.parse_args()
+    if args.db_sample and (args.adapter_sample or args.body_sample or args.field_sample or args.audit_fields or args.auto_total or args.expected_total is not None):
+        parser.error("--db-sample is a standalone diagnostic")
+    if args.db_sample:
+        try:
+            read_only_db_config()
+        except Exception:
+            print("LOCAL_DB_AUDIT_CONFIG_UNAVAILABLE")
+            return 2
     if args.adapter_sample and (args.body_sample or args.field_sample or args.audit_fields or args.auto_total or args.expected_total is not None):
         parser.error("--adapter-sample is a standalone diagnostic")
     if args.body_sample and (args.field_sample or args.audit_fields or args.auto_total or args.expected_total is not None):
@@ -1039,12 +1202,14 @@ def main():
     # No export or import of cookies, no synthetic browser identity. Each
     # trial opens and closes the existing dedicated local Chrome normally.
     count_mode = args.auto_total or args.expected_total is not None
-    target_runs = 1 if count_mode or args.field_sample or args.body_sample or args.adapter_sample else args.runs
+    target_runs = 1 if count_mode or args.field_sample or args.body_sample or args.adapter_sample or args.db_sample else args.runs
     success_status = "FIELD_SAMPLE_VERIFIED" if args.field_sample else ("EXPECTED_COUNT_MATCHED" if count_mode else "REVIEW_DEPTH_VERIFIED")
     if args.body_sample:
         success_status = "BODY_SAMPLE_CONTROLS_VERIFIED"
     if args.adapter_sample:
         success_status = "LOCAL_ADAPTER_SAMPLE_PASSED"
+    if args.db_sample:
+        success_status = "LOCAL_DB_SAMPLE_COMPARED"
     for attempt in range(1, target_runs + 1):
         context = None
         try:
@@ -1054,7 +1219,7 @@ def main():
                     args=["--profile-directory=Default"],
                 )
                 try:
-                    report = run_once(context, args.expected_total, args.store, args.auto_total, args.scroll_mode, args.audit_fields, args.field_sample, args.body_sample, args.adapter_sample)
+                    report = run_once(context, args.expected_total, args.store, args.auto_total, args.scroll_mode, args.audit_fields, args.field_sample, args.body_sample, args.adapter_sample, args.db_sample)
                     # Snapshot unexpected lifecycle events BEFORE our intentional
                     # cleanup, so closing Chrome normally is not a false failure.
                     report["lifecycle"] = dict(report["lifecycle"])
@@ -1091,6 +1256,8 @@ def main():
         final_status = "LOCAL_BODY_SAMPLE_PASSED" if passed else "LOCAL_BODY_SAMPLE_GAPS"
     if args.adapter_sample:
         final_status = "LOCAL_ADAPTER_SAMPLE_PASSED" if passed else "LOCAL_ADAPTER_SAMPLE_GAPS"
+    if args.db_sample:
+        final_status = "LOCAL_DB_SAMPLE_COMPARED" if passed else "LOCAL_DB_SAMPLE_GAPS"
     print("LOCAL_REVIEW_FINAL: " + json.dumps({
         "status": final_status,
         "attempts": len(reports), "database_writes": False,
@@ -1103,6 +1270,7 @@ def main():
         "field_audit": reports[-1].get("field_audit") if reports else None,
         "body_sample": reports[-1].get("body_sample") if reports else None,
         "integration_sample": reports[-1].get("integration_sample") if reports else None,
+        "db_sample": reports[-1].get("db_sample") if reports else None,
         "full_coverage_verified": False,
     }), flush=True)
     return 0 if passed else 2
