@@ -338,6 +338,109 @@ def audit_loaded_fields(page, observed_unique):
     return metrics
 
 
+MORE_LABEL = re.compile(r"^(?:자세히 보기|더보기|더 보기|more|read more|see more)$", re.I)
+ORIGINAL_LABEL = re.compile(r"^(?:원문 보기|원본 보기|See original|Show original|View original)$", re.I)
+
+
+def body_measure(card):
+    # Review text stays inside the browser; only lengths and UI state are returned.
+    return card.evaluate(r"""card => {
+        const visible = el => !!el.getClientRects().length;
+        const texts = [...card.querySelectorAll('.wiI7pd,.MyEned')]
+            .filter(visible).map(el => (el.innerText || '').trim());
+        return Math.max(0, ...texts.map(t => t.length));
+    }""")
+
+
+def body_control(card, pattern):
+    return card.locator('button,[role="button"]').filter(has_text=pattern).filter(visible=True)
+
+
+def body_sample_status(metrics):
+    if metrics["context_lost"]:
+        return "BODY_SAMPLE_CONTEXT_LOST"
+    if metrics["more_candidates"] == 0:
+        return "BODY_SAMPLE_NO_EXPANSION_EVIDENCE"
+    if (metrics["more_confirmed"] != metrics["more_candidates"]
+            or metrics["original_confirmed"] != metrics["original_candidates"]
+            or metrics["body_missing_after"]
+            or metrics["identity_mismatch"]):
+        return "BODY_SAMPLE_GAPS"
+    return "BODY_SAMPLE_CONTROLS_VERIFIED"
+
+
+def audit_body_sample(page, store_key, reviews, limit=10):
+    """Bounded ordinary UI check on initially loaded cards, aggregate only."""
+    cards = page.locator(".jftiEf[data-review-id]")
+    n = min(cards.count(), limit)
+    metrics = dict(sample_cards=n, more_candidates=0, more_confirmed=0,
+                   more_length_increased=0, more_no_length_increase=0,
+                   more_ambiguous=0, original_candidates=0,
+                   original_confirmed=0, original_length_changed=0,
+                   body_missing_after=0, identity_mismatch=0,
+                   context_lost=False, click_errors=0)
+    for i in range(n):
+        if blocked(page) or not same_place(page.url, store_key) or not selected(reviews):
+            metrics["context_lost"] = True
+            break
+        card = cards.nth(i)
+        identity = card.get_attribute("data-review-id")
+        before = body_measure(card)
+        more = body_control(card, MORE_LABEL)
+        if more.count():
+            metrics["more_candidates"] += 1
+            if more.count() != 1:
+                metrics["more_ambiguous"] += 1
+            else:
+                try:
+                    more.click(timeout=2500)
+                    page.wait_for_timeout(350)
+                    if blocked(page) or not same_place(page.url, store_key) or not selected(reviews):
+                        metrics["context_lost"] = True
+                        break
+                    if card.get_attribute("data-review-id") != identity:
+                        metrics["identity_mismatch"] += 1
+                        break
+                    after = body_measure(card)
+                    if after > before:
+                        metrics["more_length_increased"] += 1
+                    else:
+                        metrics["more_no_length_increase"] += 1
+                    if after > before and more.count() == 0:
+                        metrics["more_confirmed"] += 1
+                except Exception:
+                    metrics["click_errors"] += 1
+        original = body_control(card, ORIGINAL_LABEL)
+        if original.count():
+            metrics["original_candidates"] += 1
+            if original.count() == 1:
+                try:
+                    before_original = body_measure(card)
+                    original.click(timeout=2500)
+                    page.wait_for_timeout(350)
+                    if blocked(page) or not same_place(page.url, store_key) or not selected(reviews):
+                        metrics["context_lost"] = True
+                        break
+                    if card.get_attribute("data-review-id") != identity:
+                        metrics["identity_mismatch"] += 1
+                        break
+                    after_original = body_measure(card)
+                    if after_original != before_original:
+                        metrics["original_length_changed"] += 1
+                    if original.count() == 0 and after_original > 0:
+                        metrics["original_confirmed"] += 1
+                except Exception:
+                    metrics["click_errors"] += 1
+        if card.get_attribute("data-review-id") != identity:
+            metrics["identity_mismatch"] += 1
+            break
+        if not body_measure(card):
+            metrics["body_missing_after"] += 1
+    metrics["status"] = body_sample_status(metrics)
+    metrics["full_text_verified"] = False
+    return metrics
+
+
 def coverage_status(count, expected, blocked=False):
     """Compare against the user-observed count, not proof of an API snapshot."""
     if blocked:
@@ -349,7 +452,7 @@ def coverage_status(count, expected, blocked=False):
     return "EXPECTED_COUNT_NOT_REACHED"
 
 
-def run_once(context, expected_total=None, store_key="thailand", auto_total=False, scroll_mode="baseline", audit_fields=False, field_sample=False):
+def run_once(context, expected_total=None, store_key="thailand", auto_total=False, scroll_mode="baseline", audit_fields=False, field_sample=False, body_sample=False):
     report = {"status": "NOT_STARTED", "phase": "select_startup_tab",
               "overview_selected": False,
               "reviews_selected": False, "initial_unique": 0,
@@ -473,7 +576,7 @@ def run_once(context, expected_total=None, store_key="thailand", auto_total=Fals
         report["phase"] = "observe_initial_reviews"
         report["initial_unique"], _ = observe(page, seen, id_cache)
         report["observed_unique"] = len(seen)
-        if field_sample:
+        if field_sample or body_sample:
             report["phase"] = "initial_field_sample"
             report["field_audit"] = audit_loaded_fields(page, len(seen))
             report["status"] = (
@@ -481,6 +584,10 @@ def run_once(context, expected_total=None, store_key="thailand", auto_total=Fals
                 if len(seen) >= 6 and report["field_audit"]["status"] == "REQUIRED_FIELDS_PRESENT"
                 else "FIELD_SAMPLE_GAPS"
             )
+            if body_sample and report["status"] == "FIELD_SAMPLE_VERIFIED":
+                report["phase"] = "body_sample"
+                report["body_sample"] = audit_body_sample(page, store_key, reviews)
+                report["status"] = report["body_sample"]["status"]
             return report
         # Count IDs only in memory. Do not extract or save review contents.
         # The count check is bounded and never circumvents a restriction.
@@ -634,7 +741,17 @@ def self_test():
     assert field_audit_status(metrics, 168) == "PARTIAL_DOM_FIELD_AUDIT"
     assert field_audit_status(dict(metrics, rating_valid=166), 167) == "REQUIRED_FIELD_GAPS"
     assert field_audit_status(dict(metrics, date_present=166), 167) == "REQUIRED_FIELD_GAPS"
-    print("SELF_TEST_PASS: 35 checks")
+    assert MORE_LABEL.fullmatch("더보기")
+    assert not MORE_LABEL.fullmatch("More reviews")
+    assert ORIGINAL_LABEL.fullmatch("원문 보기")
+    assert not ORIGINAL_LABEL.fullmatch("Like")
+    sample = dict(context_lost=False, more_candidates=10, more_confirmed=10,
+                  original_candidates=2, original_confirmed=2,
+                  body_missing_after=0, identity_mismatch=0)
+    assert body_sample_status(sample) == "BODY_SAMPLE_CONTROLS_VERIFIED"
+    assert body_sample_status(dict(sample, more_confirmed=9)) == "BODY_SAMPLE_GAPS"
+    assert body_sample_status(dict(sample, context_lost=True)) == "BODY_SAMPLE_CONTEXT_LOST"
+    print("SELF_TEST_PASS: 42 checks")
 
 
 def main():
@@ -655,7 +772,11 @@ def main():
                         help="Inspect field presence on the count-matched DOM; aggregate only.")
     parser.add_argument("--field-sample", action="store_true",
                         help="Audit initially loaded cards only; no scrolling or full-store rescan.")
+    parser.add_argument("--body-sample", action="store_true",
+                        help="Check More and Original controls on up to ten initial cards; aggregate only.")
     args = parser.parse_args()
+    if args.body_sample and (args.field_sample or args.audit_fields or args.auto_total or args.expected_total is not None):
+        parser.error("--body-sample is a standalone diagnostic")
     if args.field_sample and (args.audit_fields or args.auto_total or args.expected_total is not None):
         parser.error("--field-sample is a standalone diagnostic")
     if args.audit_fields and not (args.auto_total or args.expected_total is not None):
@@ -684,8 +805,10 @@ def main():
     # No export or import of cookies, no synthetic browser identity. Each
     # trial opens and closes the existing dedicated local Chrome normally.
     count_mode = args.auto_total or args.expected_total is not None
-    target_runs = 1 if count_mode or args.field_sample else args.runs
+    target_runs = 1 if count_mode or args.field_sample or args.body_sample else args.runs
     success_status = "FIELD_SAMPLE_VERIFIED" if args.field_sample else ("EXPECTED_COUNT_MATCHED" if count_mode else "REVIEW_DEPTH_VERIFIED")
+    if args.body_sample:
+        success_status = "BODY_SAMPLE_CONTROLS_VERIFIED"
     for attempt in range(1, target_runs + 1):
         context = None
         try:
@@ -695,7 +818,7 @@ def main():
                     args=["--profile-directory=Default"],
                 )
                 try:
-                    report = run_once(context, args.expected_total, args.store, args.auto_total, args.scroll_mode, args.audit_fields, args.field_sample)
+                    report = run_once(context, args.expected_total, args.store, args.auto_total, args.scroll_mode, args.audit_fields, args.field_sample, args.body_sample)
                     # Snapshot unexpected lifecycle events BEFORE our intentional
                     # cleanup, so closing Chrome normally is not a false failure.
                     report["lifecycle"] = dict(report["lifecycle"])
@@ -728,6 +851,8 @@ def main():
     )
     if args.field_sample:
         final_status = "LOCAL_FIELD_SAMPLE_PASSED" if passed else "LOCAL_FIELD_SAMPLE_GAPS"
+    if args.body_sample:
+        final_status = "LOCAL_BODY_SAMPLE_PASSED" if passed else "LOCAL_BODY_SAMPLE_GAPS"
     print("LOCAL_REVIEW_FINAL: " + json.dumps({
         "status": final_status,
         "attempts": len(reports), "database_writes": False,
@@ -738,6 +863,7 @@ def main():
         "scroll_rounds": reports[-1].get("scroll_rounds", 0) if reports else 0,
         "elapsed_scroll_seconds": reports[-1].get("elapsed_scroll_seconds") if reports else None,
         "field_audit": reports[-1].get("field_audit") if reports else None,
+        "body_sample": reports[-1].get("body_sample") if reports else None,
         "full_coverage_verified": False,
     }), flush=True)
     return 0 if passed else 2
