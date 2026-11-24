@@ -460,11 +460,14 @@ def body_sample_status(metrics):
     return "BODY_SAMPLE_CONTROLS_VERIFIED"
 
 
-def audit_body_sample(page, store_key, reviews, limit=10):
+def audit_body_sample(page, store_key, reviews, limit=10, deadline=None):
     """Bounded ordinary UI check on initially loaded cards, aggregate only."""
     cards = page.locator(".jftiEf[data-review-id]")
     n = min(cards.count(), limit)
-    metrics = dict(sample_cards=n, more_candidates=0, more_confirmed=0,
+    metrics = dict(sample_cards=n, processed_cards=0, time_budget_reached=False,
+                   initial_body_not_detected=0, initial_body_missing_after=0,
+                   previously_present_body_lost=0,
+                   more_candidates=0, more_confirmed=0,
                    more_length_increased=0, more_no_length_increase=0,
                    more_ambiguous=0, more_control_resolved=0,
                    more_details_increased=0, more_details_only=0,
@@ -478,12 +481,17 @@ def audit_body_sample(page, store_key, reviews, limit=10):
                    context_lost=False, click_errors=0,
                    excluded_nonreview_more=0, excluded_nonreview_original=0)
     for i in range(n):
+        if deadline is not None and time.monotonic() >= deadline:
+            metrics["time_budget_reached"] = True
+            break
         if blocked(page) or not same_place(page.url, store_key) or not selected(reviews):
             metrics["context_lost"] = True
             break
         card = cards.nth(i)
         identity = card.get_attribute("data-review-id")
         before = body_measure(card)
+        if not before:
+            metrics["initial_body_not_detected"] += 1
         before_fingerprint = body_fingerprint(card)
         if before_fingerprint is None:
             metrics["primary_fingerprint_unavailable"] += 1
@@ -572,7 +580,12 @@ def audit_body_sample(page, store_key, reviews, limit=10):
             break
         if not body_measure(card):
             metrics["body_missing_after"] += 1
-    metrics["status"] = body_sample_status(metrics)
+            if before:
+                metrics["previously_present_body_lost"] += 1
+            else:
+                metrics["initial_body_missing_after"] += 1
+        metrics["processed_cards"] += 1
+    metrics["status"] = ("BODY_SAMPLE_TIME_BUDGET_REACHED" if metrics["time_budget_reached"] else body_sample_status(metrics))
     metrics["original_control_evidence"] = (
         "NOT_OBSERVED" if metrics["original_candidates"] == 0 else
         ("CONTROLS_RESOLVED" if metrics["original_confirmed"] == metrics["original_candidates"]
@@ -799,6 +812,25 @@ def load_visible_history(config, store):
 
 
 MAX_COUNT_DB_AUDIT = 1000
+MAX_COUNT_BODY_AUDIT = 250
+COUNT_BODY_SECONDS = 900
+
+
+def count_body_evidence(metrics, expected):
+    """Review-control evidence, not a claim of full text or original language."""
+    if metrics["context_lost"] or metrics["identity_mismatch"]:
+        return "COUNT_BODY_CONTEXT_LOST"
+    if metrics["time_budget_reached"] or metrics["processed_cards"] != expected:
+        return "COUNT_BODY_INCOMPLETE"
+    if (metrics["click_errors"] or metrics["previously_present_body_lost"]
+            or metrics["more_control_resolved"] != metrics["more_candidates"]
+            or metrics["original_confirmed"] != metrics["original_candidates"]):
+        return "COUNT_BODY_CONTROL_GAPS"
+    if (metrics["more_closed_without_growth"] or metrics["more_details_only"]
+            or metrics["original_confirmed"] != metrics["original_text_changed"]
+            or metrics["body_missing_after"] or metrics["primary_fingerprint_unavailable"]):
+        return "COUNT_BODY_EVIDENCE_LIMITED"
+    return "COUNT_BODY_CONTROLS_CHECKED"
 
 
 def verified_record_set(records, expected_seen):
@@ -890,7 +922,7 @@ def count_budget_status(rounds, elapsed, round_limit, second_limit):
     return None
 
 
-def run_once(context, expected_total=None, store_key="thailand", auto_total=False, scroll_mode="baseline", audit_fields=False, field_sample=False, body_sample=False, adapter_sample=False, db_sample=False, count_round_limit=240, count_second_limit=600, count_db_audit=False):
+def run_once(context, expected_total=None, store_key="thailand", auto_total=False, scroll_mode="baseline", audit_fields=False, field_sample=False, body_sample=False, adapter_sample=False, db_sample=False, count_round_limit=240, count_second_limit=600, count_db_audit=False, count_body_audit=False):
     report = {"status": "NOT_STARTED", "phase": "select_startup_tab",
               "overview_selected": False,
               "reviews_selected": False, "initial_unique": 0,
@@ -898,6 +930,9 @@ def run_once(context, expected_total=None, store_key="thailand", auto_total=Fals
               "scroll_verified": False, "database_writes": False,
               "full_coverage_verified": False}
     report["store"] = STORE_CONFIG[store_key]["name"]
+    if count_body_audit and (not count_db_audit or expected_total is None
+                             or not 1 <= expected_total <= MAX_COUNT_BODY_AUDIT):
+        raise ValueError("COUNT_BODY_AUDIT_SCOPE_INVALID")
     if count_db_audit and (store_key not in {"thailand", "taiwan"} or expected_total is None
                            or not 1 <= expected_total <= MAX_COUNT_DB_AUDIT
                            or auto_total or field_sample or body_sample or adapter_sample or db_sample):
@@ -1153,8 +1188,34 @@ def run_once(context, expected_total=None, store_key="thailand", auto_total=Fals
             if not report["append_only_retained"]:
                 report["status"] = "COUNT_DB_AUDIT_CARD_SET_UNVERIFIED"
                 return report
+            if count_body_audit:
+                report["phase"] = "count_matched_body_audit"
+                _, before_records = audit_loaded_fields(page, len(seen), include_records=True)
+                same_set = verified_record_set(before_records, seen)
+                del before_records
+                if not same_set:
+                    report["status"] = "COUNT_DB_AUDIT_CARD_SET_UNVERIFIED"
+                    return report
+                report["body_sample"] = audit_body_sample(
+                    page, store_key, reviews, limit=len(seen),
+                    deadline=time.monotonic() + COUNT_BODY_SECONDS,
+                )
+                evidence = count_body_evidence(report["body_sample"], len(seen))
+                report["count_body_evidence"] = evidence
+                if blocked(page):
+                    report["status"] = "ACCESS_RESTRICTED_STOPPED"
+                    return report
+                if (evidence in {"COUNT_BODY_CONTEXT_LOST", "COUNT_BODY_INCOMPLETE"}
+                        or not same_place(page.url, store_key) or not selected(reviews)):
+                    report["status"] = "COUNT_BODY_DB_AUDIT_INCOMPLETE"
+                    return report
+            report["phase"] = "count_matched_db_audit"
             report["db_sample"] = compare_db_sample(page, store_key, len(seen), expected_seen=seen)
             report["status"] = report["db_sample"]["status"]
+            if count_body_audit and report["status"] == "LOCAL_COUNT_DB_COMPARED":
+                report["status"] = ("LOCAL_COUNT_BODY_DB_COMPARED"
+                                    if report["count_body_evidence"] == "COUNT_BODY_CONTROLS_CHECKED"
+                                    else "LOCAL_COUNT_BODY_DB_EVIDENCE_LIMITED")
         return report
     except Exception as exc:
         report["error_type"] = type(exc).__name__
@@ -1264,7 +1325,16 @@ def self_test():
     assert not verified_record_set([{"source_id": "a"}, {"source_id": "c"}], expected)
     assert not verified_record_set([{"source_id": "a"}, {"source_id": "a"}], expected)
     assert not verified_record_set([{"source_id": None}], expected)
-    print("SELF_TEST_PASS: 63 checks")
+    body = dict(context_lost=False, identity_mismatch=0, time_budget_reached=False,
+                processed_cards=2, click_errors=0, previously_present_body_lost=0,
+                more_control_resolved=1, more_candidates=1, original_confirmed=0,
+                original_candidates=0, more_closed_without_growth=0, more_details_only=0,
+                original_text_changed=0, body_missing_after=0, primary_fingerprint_unavailable=0)
+    assert count_body_evidence(body, 2) == "COUNT_BODY_CONTROLS_CHECKED"
+    assert count_body_evidence(dict(body, body_missing_after=1), 2) == "COUNT_BODY_EVIDENCE_LIMITED"
+    assert count_body_evidence(dict(body, processed_cards=1), 2) == "COUNT_BODY_INCOMPLETE"
+    assert count_body_evidence(dict(body, click_errors=1), 2) == "COUNT_BODY_CONTROL_GAPS"
+    print("SELF_TEST_PASS: 67 checks")
 
 
 def main():
@@ -1297,7 +1367,12 @@ def main():
                         help="Explicit elapsed scroll budget in seconds; no automatic retry.")
     parser.add_argument("--count-db-audit", action="store_true",
                         help="GET-only comparison of the count-matched card set; bounded pilot, no write approval.")
+    parser.add_argument("--count-body-audit", action="store_true",
+                        help="Bounded body-control audit before count-matched DB comparison.")
     args = parser.parse_args()
+    if args.count_body_audit and (not args.count_db_audit or args.expected_total is None
+                                 or not 1 <= args.expected_total <= MAX_COUNT_BODY_AUDIT):
+        parser.error("--count-body-audit requires --count-db-audit and explicit total <= 250")
     if args.count_db_audit:
         if (args.expected_total is None or not 1 <= args.expected_total <= MAX_COUNT_DB_AUDIT
                 or args.auto_total or args.field_sample or args.body_sample or args.adapter_sample or args.db_sample):
@@ -1359,7 +1434,7 @@ def main():
     if args.db_sample:
         success_status = "LOCAL_DB_SAMPLE_COMPARED"
     if args.count_db_audit:
-        success_status = "LOCAL_COUNT_DB_COMPARED"
+        success_status = "LOCAL_COUNT_BODY_DB_COMPARED" if args.count_body_audit else "LOCAL_COUNT_DB_COMPARED"
     for attempt in range(1, target_runs + 1):
         context = None
         try:
@@ -1369,7 +1444,7 @@ def main():
                     args=["--profile-directory=Default"],
                 )
                 try:
-                    report = run_once(context, args.expected_total, args.store, args.auto_total, args.scroll_mode, args.audit_fields, args.field_sample, args.body_sample, args.adapter_sample, args.db_sample, args.count_round_limit, args.count_second_limit, args.count_db_audit)
+                    report = run_once(context, args.expected_total, args.store, args.auto_total, args.scroll_mode, args.audit_fields, args.field_sample, args.body_sample, args.adapter_sample, args.db_sample, args.count_round_limit, args.count_second_limit, args.count_db_audit, args.count_body_audit)
                     # Snapshot unexpected lifecycle events BEFORE our intentional
                     # cleanup, so closing Chrome normally is not a false failure.
                     report["lifecycle"] = dict(report["lifecycle"])
@@ -1409,7 +1484,7 @@ def main():
     if args.db_sample:
         final_status = "LOCAL_DB_SAMPLE_COMPARED" if passed else "LOCAL_DB_SAMPLE_GAPS"
     if args.count_db_audit:
-        final_status = "LOCAL_COUNT_DB_COMPARED" if passed else "LOCAL_COUNT_DB_GAPS"
+        final_status = success_status if passed else "LOCAL_COUNT_DB_GAPS"
     print("LOCAL_REVIEW_FINAL: " + json.dumps({
         "status": final_status,
         "attempts": len(reports), "database_writes": False,
@@ -1423,6 +1498,7 @@ def main():
         "elapsed_scroll_seconds": reports[-1].get("elapsed_scroll_seconds") if reports else None,
         "field_audit": reports[-1].get("field_audit") if reports else None,
         "body_sample": reports[-1].get("body_sample") if reports else None,
+        "count_body_evidence": reports[-1].get("count_body_evidence") if reports else None,
         "integration_sample": reports[-1].get("integration_sample") if reports else None,
         "db_sample": reports[-1].get("db_sample") if reports else None,
         "full_coverage_verified": False,

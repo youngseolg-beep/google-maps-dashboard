@@ -26,6 +26,7 @@ SAMPLE_STATUS = {
     "db": "LOCAL_DB_SAMPLE_COMPARED",
     "count": "EXPECTED_COUNT_MATCHED",
     "count-db": "LOCAL_COUNT_DB_COMPARED",
+    "count-body-db": "LOCAL_COUNT_BODY_DB_COMPARED",
 }
 
 
@@ -121,7 +122,7 @@ def safe_task_row(task):
 
 def classify(result, mode):
     if result.get("status") == SAMPLE_STATUS[mode]:
-        return "COUNT_DB_COMPARED" if mode == "count-db" else ("COUNT_MATCHED" if mode == "count" else "SAMPLE_PASSED")
+        return "COUNT_DB_COMPARED" if mode in {"count-db", "count-body-db"} else ("COUNT_MATCHED" if mode == "count" else "SAMPLE_PASSED")
     if result.get("observed_unique", 0) > 0:
         return "PARTIAL_SAMPLE"
     return "FAILED"
@@ -138,11 +139,11 @@ def summarize(rows, requested, mode="fields"):
             "failed": counts["FAILED"], "held": counts["HELD"],
             "not_attempted": counts["NOT_ATTEMPTED"] + requested - len(rows),
             "status": (
-                "ALL_COUNT_DB_COMPARED" if mode == "count-db" and complete
+                "ALL_COUNT_DB_COMPARED" if mode in {"count-db", "count-body-db"} and complete
                 and requested > 0 and counts["COUNT_DB_COMPARED"] == requested else
                 "ALL_EXPECTED_COUNTS_MATCHED" if mode == "count" and complete
                 and requested > 0 and counts["COUNT_MATCHED"] == requested else
-                "ALL_SAMPLES_PASSED" if mode not in {"count", "count-db"} and complete
+                "ALL_SAMPLES_PASSED" if mode not in {"count", "count-db", "count-body-db"} and complete
                 and requested > 0 and counts["SAMPLE_PASSED"] == requested else
                 "PARTIAL_OR_FAILED"
             ),
@@ -223,6 +224,7 @@ def run_batch(tasks, launch, mode, persist):
                            field_audit=result.get("field_audit"),
                            integration_sample=result.get("integration_sample"),
                            body_sample=result.get("body_sample"),
+                           count_body_evidence=result.get("count_body_evidence"),
                            db_sample=result.get("db_sample"))
                 if restriction or result.get("status") == "ACCESS_RESTRICTED_STOPPED":
                     row["outcome"] = "FAILED"
@@ -269,10 +271,11 @@ def live_launcher(profile, count_round_limit=240, count_second_limit=600):
                         context, store_key=key, field_sample=mode == "fields",
                         adapter_sample=mode == "adapter", db_sample=mode == "db",
                         body_sample=mode == "body",
-                        expected_total=task.get("expected_total") if mode in {"count", "count-db"} else None,
-                        scroll_mode="adaptive" if mode in {"count", "count-db"} else "baseline",
-                        audit_fields=mode in {"count", "count-db"},
-                        count_db_audit=mode == "count-db",
+                        expected_total=task.get("expected_total") if mode in {"count", "count-db", "count-body-db"} else None,
+                        scroll_mode="adaptive" if mode in {"count", "count-db", "count-body-db"} else "baseline",
+                        audit_fields=mode in {"count", "count-db", "count-body-db"},
+                        count_db_audit=mode in {"count-db", "count-body-db"},
+                        count_body_audit=mode == "count-body-db",
                         count_round_limit=count_round_limit, count_second_limit=count_second_limit,
                     )
                     # Stop the entire batch if a challenge is visible even
@@ -341,7 +344,9 @@ def self_test():
     assert summarize([{"outcome":"COUNT_DB_COMPARED"}], 1, "count-db")["status"] == "ALL_COUNT_DB_COMPARED"
     assert tasks[3]["key"] == build_registered_plan(list(reversed(rows)))[0]["key"]
     assert classify({"status": "BODY_SAMPLE_CONTROLS_VERIFIED"}, "body") == "SAMPLE_PASSED"
-    print("BATCH_SELF_TEST_PASS: 25 checks")
+    assert classify({"status": "LOCAL_COUNT_BODY_DB_COMPARED"}, "count-body-db") == "COUNT_DB_COMPARED"
+    assert classify({"status": "LOCAL_COUNT_BODY_DB_EVIDENCE_LIMITED", "observed_unique": 167}, "count-body-db") == "PARTIAL_SAMPLE"
+    print("BATCH_SELF_TEST_PASS: 27 checks")
 
 
 def main():
@@ -358,23 +363,23 @@ def main():
     args = parser.parse_args()
     if not 1 <= args.count_round_limit <= probe.MAX_COUNT_ROUNDS or not 1 <= args.count_second_limit <= probe.MAX_COUNT_SECONDS:
         parser.error("count budget outside diagnostic limits")
-    if args.expected and args.mode not in {"count", "count-db"}:
+    if args.expected and args.mode not in {"count", "count-db", "count-body-db"}:
         parser.error("--expected is only for count mode")
     if args.self_test:
         self_test()
         return 0
-    if args.scope == "registered" and (args.store or args.mode in {"count", "count-db"}):
+    if args.scope == "registered" and (args.store or args.mode in {"count", "count-db", "count-body-db"}):
         parser.error("registered scope supports field/body/adapter/DB samples only")
     try:
         if args.scope == "registered":
             tasks = build_registered_plan(load_active_stores(probe.read_only_db_config()))
         else:
             tasks = known_plan(list(dict.fromkeys(args.store or ["thailand", "taiwan"])))
-            if args.mode in {"db", "count-db"} and not args.plan_only:
+            if args.mode in {"db", "count-db", "count-body-db"} and not args.plan_only:
                 probe.read_only_db_config()
-            if args.mode in {"count", "count-db"}:
+            if args.mode in {"count", "count-db", "count-body-db"}:
                 targets = count_targets(args.expected, [t["key"] for t in tasks])
-                if args.mode == "count-db" and any(n > probe.MAX_COUNT_DB_AUDIT for n in targets.values()):
+                if args.mode in {"count-db", "count-body-db"} and any(n > (probe.MAX_COUNT_BODY_AUDIT if args.mode == "count-body-db" else probe.MAX_COUNT_DB_AUDIT) for n in targets.values()):
                     raise ValueError("COUNT_DB_AUDIT_PILOT_LIMIT")
                 for task in tasks:
                     task["expected_total"] = targets[task["key"]]
