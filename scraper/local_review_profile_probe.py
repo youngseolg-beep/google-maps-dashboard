@@ -84,16 +84,29 @@ def review_pane(page):
 
 
 def run_once(context):
-    report = {"status": "NOT_STARTED", "overview_selected": False,
+    report = {"status": "NOT_STARTED", "phase": "select_startup_tab",
+              "overview_selected": False,
               "reviews_selected": False, "initial_unique": 0,
               "observed_unique": 0, "scroll_rounds": 0,
               "scroll_verified": False, "database_writes": False,
               "full_coverage_verified": False}
     page = None
     seen = set()
+    # Track lifecycle events without recording URLs or other browser data.
+    lifecycle = {"context_closed": False, "page_closed": False, "page_crashed": False}
+    report["lifecycle"] = lifecycle
     try:
-        page = context.new_page()
+        context.on("close", lambda *_: lifecycle.update(context_closed=True))
+        startup_tabs = [tab for tab in context.pages if not tab.is_closed()]
+        report["startup_tab_count"] = len(startup_tabs)
+        # A persistent context normally opens its own initial page. Reuse it
+        # rather than opening a second tab while Chrome is still initializing.
+        page = startup_tabs[0] if startup_tabs else context.new_page()
+        page.on("close", lambda *_: lifecycle.update(page_closed=True))
+        page.on("crash", lambda *_: lifecycle.update(page_crashed=True))
+        report["phase"] = "open_store"
         page.goto(PLACE_URL, wait_until="domcontentloaded", timeout=45000)
+        report["phase"] = "wait_for_store"
         page.wait_for_timeout(2500)
         if blocked(page):
             report["status"] = "ACCESS_RESTRICTED_STOPPED"
@@ -102,10 +115,12 @@ def run_once(context):
             report["status"] = "PLACE_NOT_VERIFIED"
             return report
 
+        report["phase"] = "find_overview_and_reviews_tabs"
         overview = page.get_by_role("tab", name=OVERVIEW_TAB)
         reviews = page.get_by_role("tab", name=REVIEW_TAB)
         overview.first.wait_for(state="visible", timeout=20000)
         reviews.first.wait_for(state="visible", timeout=20000)
+        report["phase"] = "select_overview"
         if not selected(overview.first):
             overview.first.click(timeout=5000)
             page.wait_for_timeout(1500)
@@ -117,6 +132,7 @@ def run_once(context):
             report["status"] = "OVERVIEW_NOT_VERIFIED"
             return report
 
+        report["phase"] = "select_reviews"
         reviews.first.click(timeout=5000)
         page.wait_for_timeout(3000)
         if blocked(page):
@@ -127,17 +143,22 @@ def run_once(context):
             report["status"] = "REVIEWS_NOT_VERIFIED"
             return report
 
+        report["phase"] = "wait_for_review_cards"
         try:
             page.locator(".jftiEf[data-review-id]").first.wait_for(state="visible", timeout=12000)
-        except Exception:
+        except Exception as exc:
+            if type(exc).__name__ != "TimeoutError":
+                raise
             report["status"] = result_status(0, blocked(page))
             return report
 
+        report["phase"] = "observe_initial_reviews"
         report["initial_unique"] = observe(page, seen)
         report["observed_unique"] = len(seen)
         # This is a limited depth diagnostic, not bulk collection or proof
         # of full coverage. A visible authentication challenge ends the run.
         idle = 0
+        report["phase"] = "scroll_review_pane"
         for i in range(1, 9):
             if blocked(page):
                 report["status"] = "ACCESS_RESTRICTED_STOPPED"
@@ -172,20 +193,18 @@ def run_once(context):
             if idle >= 3:
                 break
 
+        report["phase"] = "final_depth_check"
         report["status"] = result_status(
             len(seen), blocked(page), report["scroll_verified"]
         )
         return report
     except Exception as exc:
-        report["status"] = "PROBE_ERROR"
         report["error_type"] = type(exc).__name__
+        report["status"] = (
+            "BROWSER_CONNECTION_LOST"
+            if report["error_type"] == "TargetClosedError" else "PROBE_ERROR"
+        )
         return report
-    finally:
-        if page is not None:
-            try:
-                page.close()
-            except Exception:
-                pass
 
 
 def self_test():
@@ -237,8 +256,14 @@ def main():
                 )
                 try:
                     report = run_once(context)
+                    # Snapshot unexpected lifecycle events BEFORE our intentional
+                    # cleanup, so closing Chrome normally is not a false failure.
+                    report["lifecycle"] = dict(report["lifecycle"])
                 finally:
-                    context.close()
+                    try:
+                        context.close()
+                    except Exception:
+                        pass
         except Exception as exc:
             report = {"status": "BROWSER_START_OR_CLOSE_ERROR",
                       "error_type": type(exc).__name__, "database_writes": False}
