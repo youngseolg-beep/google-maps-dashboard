@@ -64,7 +64,8 @@ def run(browser,name,state):
         # Direct Maps first; a redirect to Google Account sign-in must not
         # contaminate our separate Maps login-UI diagnostic.
         maps=ctx.new_page()
-        maps.goto("https://www.google.com/maps",wait_until="domcontentloaded",timeout=45000)
+        nav=maps.goto("https://www.google.com/maps",wait_until="domcontentloaded",timeout=45000)
+        result["maps_nav_http_code"]=nav.status if nav else None
         maps.wait_for_timeout(2200)
         result["maps_account_ui_early"]=production.verify_dedicated_google_login(maps)
         maps.wait_for_timeout(5800)
@@ -78,6 +79,20 @@ def run(browser,name,state):
                 ));
         }""")
         result["maps_shell_present"]=maps.locator("#pane, #scene, #searchboxinput").count()>0
+        result["maps_dom_state"]=maps.evaluate("""() => ({
+            maps_path: location.hostname.endsWith('google.com') &&
+                location.pathname.startsWith('/maps'),
+            google_signin_path: location.hostname === 'accounts.google.com' &&
+                /signin|challenge|identifier/i.test(location.pathname),
+            document_ready_state: document.readyState,
+            body_exists: !!document.body,
+            body_text_bucket: !document.body ? 'missing' :
+                document.body.innerText.length > 1000 ? 'long' :
+                document.body.innerText.length > 100 ? 'medium' : 'short',
+            button_count: Math.min(300, document.querySelectorAll('button').length),
+            link_count: Math.min(300, document.querySelectorAll('a').length),
+            script_count: Math.min(300, document.querySelectorAll('script').length)
+        })""")
         maps.close()
         # A new tab is used for the account-page check.
         account=ctx.new_page()
