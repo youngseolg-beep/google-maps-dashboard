@@ -11,6 +11,7 @@ import os
 from pathlib import Path
 import re
 import sys
+import time
 from urllib.parse import urlsplit
 
 STORE = "Saemaeul Central Eastville"
@@ -201,15 +202,37 @@ def selected(locator):
     return locator.get_attribute("aria-selected") == "true"
 
 
-def observe(page, seen):
-    # IDs are only used transiently to count distinct cards; no raw ID leaves
-    # the process or enters the report.
-    ids = page.locator(".jftiEf[data-review-id], [data-review-id].jftiEf").evaluate_all(
+def observe(page, seen, id_cache):
+    """Count unique IDs in memory; track whether old cards remain in the DOM.
+
+    Keep only aggregate output. The transient cache avoids hashing every old
+    review again on each scroll and is discarded with this single run.
+    """
+    ids = page.locator(".jftiEf[data-review-id]").evaluate_all(
         "(cards) => cards.map(c => c.getAttribute('data-review-id')).filter(Boolean)"
     )
+    current = set()
     for item in ids:
-        seen.add(hashlib.sha256(item.encode("utf-8")).digest())
-    return len(seen)
+        digest = id_cache.get(item)
+        if digest is None:
+            digest = hashlib.sha256(item.encode("utf-8")).digest()
+            id_cache[item] = digest
+        current.add(digest)
+    retained = seen.issubset(current)
+    seen.update(current)
+    return len(seen), retained
+
+
+def wheel_step(mode, append_only, viewport_height):
+    """Opt-in benchmark: use a larger ordinary wheel step only if cards persist.
+
+    Baseline behavior is unchanged. If the page starts recycling cards,
+    adaptive mode permanently falls back to the known 900px wheel step.
+    """
+    if mode != "adaptive" or not append_only:
+        return 900
+    return min(1800, max(900, int(viewport_height * 2)))
+
 
 
 def review_pane(page):
@@ -237,7 +260,7 @@ def coverage_status(count, expected, blocked=False):
     return "EXPECTED_COUNT_NOT_REACHED"
 
 
-def run_once(context, expected_total=None, store_key="thailand", auto_total=False):
+def run_once(context, expected_total=None, store_key="thailand", auto_total=False, scroll_mode="baseline"):
     report = {"status": "NOT_STARTED", "phase": "select_startup_tab",
               "overview_selected": False,
               "reviews_selected": False, "initial_unique": 0,
@@ -249,8 +272,14 @@ def run_once(context, expected_total=None, store_key="thailand", auto_total=Fals
         report["expected_total_user_observed"] = expected_total
         report["additional_unique"] = 0
         report["stop_reason"] = None
+    report["scroll_mode"] = scroll_mode
+    report["larger_wheel_rounds"] = 0
+    report["append_only_retained"] = True
+    started = time.monotonic()
+    scroll_started = None
     page = None
     seen = set()
+    id_cache = {}
     # Track lifecycle events without recording URLs or other browser data.
     lifecycle = {"context_closed": False, "page_closed": False, "page_crashed": False}
     report["lifecycle"] = lifecycle
@@ -353,11 +382,12 @@ def run_once(context, expected_total=None, store_key="thailand", auto_total=Fals
             return report
 
         report["phase"] = "observe_initial_reviews"
-        report["initial_unique"] = observe(page, seen)
+        report["initial_unique"], _ = observe(page, seen, id_cache)
         report["observed_unique"] = len(seen)
         # Count IDs only in memory. Do not extract or save review contents.
         # The count check is bounded and never circumvents a restriction.
         idle = 0
+        scroll_started = time.monotonic()
         report["phase"] = "scroll_review_pane"
         max_rounds = 240 if expected_total is not None else 8
         for i in range(1, max_rounds + 1):
@@ -381,10 +411,17 @@ def run_once(context, expected_total=None, store_key="thailand", auto_total=Fals
             before_top = pane.evaluate("(el) => el.scrollTop")
             before = len(seen)
             page.mouse.move(box["x"] + box["width"]/2, box["y"] + box["height"]/2)
-            page.mouse.wheel(0, 900)
+            step = wheel_step(
+                scroll_mode, report["append_only_retained"], box["height"]
+            )
+            page.mouse.wheel(0, step)
+            if step > 900:
+                report["larger_wheel_rounds"] += 1
+            # Preserve the validated wait; no increased request cadence.
             page.wait_for_timeout(1800)
             report["scroll_rounds"] = i
-            report["observed_unique"] = observe(page, seen)
+            report["observed_unique"], retained = observe(page, seen, id_cache)
+            report["append_only_retained"] = report["append_only_retained"] and retained
             after_pane = review_pane(page)
             after_top = after_pane.evaluate("(el) => el.scrollTop") if after_pane else before_top
             advanced = after_top > before_top or len(seen) > before
@@ -397,6 +434,7 @@ def run_once(context, expected_total=None, store_key="thailand", auto_total=Fals
                 if len(seen) > before or i % 5 == 0:
                     print("LOCAL_REVIEW_PROGRESS: " + json.dumps({
                         "round": i, "observed_unique": len(seen),
+                        "elapsed_scroll_seconds": round(time.monotonic() - scroll_started, 1),
                         "expected_total_user_observed": expected_total,
                     }), flush=True)
                 if len(seen) >= expected_total:
@@ -428,6 +466,9 @@ def run_once(context, expected_total=None, store_key="thailand", auto_total=Fals
         )
         return report
     finally:
+        report["elapsed_seconds"] = round(time.monotonic() - started, 1)
+        report["elapsed_scroll_seconds"] = (round(time.monotonic() - scroll_started, 1)
+                                            if scroll_started is not None else None)
         if page is not None and not page.is_closed():
             try:
                 report["ui_summary"] = page_summary(page)
@@ -458,7 +499,31 @@ def self_test():
     assert same_place(STORE_CONFIG["taiwan"]["url"], "taiwan")
     assert not same_place(STORE_CONFIG["taiwan"]["url"], "thailand")
     assert not same_place(PLACE_URL, "taiwan")
-    print("SELF_TEST_PASS: 22 checks")
+    assert wheel_step("baseline", True, 800) == 900
+    assert wheel_step("adaptive", False, 800) == 900
+    assert wheel_step("adaptive", True, 700) == 1400
+    assert wheel_step("adaptive", True, 1200) == 1800
+    assert wheel_step("adaptive", True, 300) == 900
+    # Test repeated IDs and recycled DOM cards without a browser.
+    class FakeCards:
+        def __init__(self):
+            self.ids = ["a", "b", "a"]
+        def evaluate_all(self, _):
+            return self.ids
+    class FakePage:
+        def __init__(self):
+            self.cards = FakeCards()
+        def locator(self, _):
+            return self.cards
+    fake = FakePage()
+    seen, cache = set(), {}
+    assert observe(fake, seen, cache) == (2, True)
+    fake.cards.ids = ["a", "b", "c"]
+    assert observe(fake, seen, cache) == (3, True)
+    fake.cards.ids = ["c", "d"]
+    assert observe(fake, seen, cache) == (4, False)
+    assert len(cache) == 4
+    print("SELF_TEST_PASS: 31 checks")
 
 
 def main():
@@ -473,6 +538,8 @@ def main():
                         help="Read total from verified Overview rating summary.")
     parser.add_argument("--runs", type=int, choices=(1, 3), default=3,
                         help="Independent Chrome starts for the small depth diagnostic.")
+    parser.add_argument("--scroll-mode", choices=("baseline", "adaptive"), default="baseline",
+                        help="Opt-in ordinary wheel-step benchmark; baseline remains the default.")
     args = parser.parse_args()
     if args.auto_total and args.expected_total is not None:
         parser.error("choose --auto-total or --expected-total, not both")
@@ -509,7 +576,7 @@ def main():
                     args=["--profile-directory=Default"],
                 )
                 try:
-                    report = run_once(context, args.expected_total, args.store, args.auto_total)
+                    report = run_once(context, args.expected_total, args.store, args.auto_total, args.scroll_mode)
                     # Snapshot unexpected lifecycle events BEFORE our intentional
                     # cleanup, so closing Chrome normally is not a false failure.
                     report["lifecycle"] = dict(report["lifecycle"])
@@ -546,6 +613,9 @@ def main():
         "store": STORE_CONFIG[args.store]["name"],
         "expected_total_user_observed": reports[-1].get("expected_total_user_observed") if reports else args.expected_total,
         "observed_unique": reports[-1].get("observed_unique", 0) if reports else 0,
+        "scroll_mode": args.scroll_mode,
+        "scroll_rounds": reports[-1].get("scroll_rounds", 0) if reports else 0,
+        "elapsed_scroll_seconds": reports[-1].get("elapsed_scroll_seconds") if reports else None,
         "full_coverage_verified": False,
     }), flush=True)
     return 0 if passed else 2
