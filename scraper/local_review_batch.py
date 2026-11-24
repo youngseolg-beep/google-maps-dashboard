@@ -22,6 +22,7 @@ SAMPLE_STATUS = {
     "fields": "FIELD_SAMPLE_VERIFIED",
     "adapter": "LOCAL_ADAPTER_SAMPLE_PASSED",
     "db": "LOCAL_DB_SAMPLE_COMPARED",
+    "count": "EXPECTED_COUNT_MATCHED",
 }
 
 
@@ -98,29 +99,74 @@ def known_plan(keys):
 
 
 def safe_task_row(task):
-    return {"store": task["name"], "country": task["country"]}
+    return {"store": task["name"], "country": task["country"],
+            "task_key": task["key"]}
 
 
 def classify(result, mode):
     if result.get("status") == SAMPLE_STATUS[mode]:
-        return "SAMPLE_PASSED"
+        return "COUNT_MATCHED" if mode == "count" else "SAMPLE_PASSED"
     if result.get("observed_unique", 0) > 0:
         return "PARTIAL_SAMPLE"
     return "FAILED"
 
 
-def summarize(rows, requested):
+def summarize(rows, requested, mode="fields"):
     counts = Counter(row["outcome"] for row in rows)
     complete = len(rows) == requested
     return {"requested": requested, "recorded": len(rows),
             "sample_passed": counts["SAMPLE_PASSED"],
+            "count_matched": counts["COUNT_MATCHED"],
             "partial_sample": counts["PARTIAL_SAMPLE"],
             "failed": counts["FAILED"], "held": counts["HELD"],
             "not_attempted": counts["NOT_ATTEMPTED"] + requested - len(rows),
-            "status": ("ALL_SAMPLES_PASSED" if complete and requested > 0
-                       and counts["SAMPLE_PASSED"] == requested else "PARTIAL_OR_FAILED"),
+            "status": (
+                "ALL_EXPECTED_COUNTS_MATCHED" if mode == "count" and complete
+                and requested > 0 and counts["COUNT_MATCHED"] == requested else
+                "ALL_SAMPLES_PASSED" if mode != "count" and complete
+                and requested > 0 and counts["SAMPLE_PASSED"] == requested else
+                "PARTIAL_OR_FAILED"
+            ),
             "database_writes": False, "production_collection": False,
             "full_coverage_verified": False, "write_approved": False}
+
+
+def retry_plan(rows):
+    """Manual fresh-run recommendations only. No saved review IDs or resume cursor."""
+    plan = []
+    for row in rows:
+        outcome = row["outcome"]
+        if outcome in {"SAMPLE_PASSED", "COUNT_MATCHED"}:
+            continue
+        if row.get("status") == "ACCESS_RESTRICTED_STOPPED" or row.get("reason") == "ACCESS_RESTRICTED_STOPPED":
+            action = "STOP_AND_REVIEW_ACCESS"
+        elif outcome == "HELD":
+            action = "VERIFY_STORE_MAPPING"
+        elif row.get("status") == "EXPECTED_COUNT_EXCEEDED_RECHECK_TOTAL":
+            action = "RECHECK_DISPLAYED_TOTAL"
+        elif row.get("status") == "COUNT_MATCHED_FIELD_GAPS":
+            action = "REVIEW_FIELD_EXTRACTION"
+        else:
+            action = "REVIEW_FAILURE_BEFORE_FRESH_RUN"
+        plan.append({"task_key": row["task_key"], "store": row["store"],
+                     "outcome": outcome, "action": action,
+                     "automatic_retry": False, "resume_cursor_available": False})
+    return plan
+
+
+def count_targets(values, keys):
+    targets = {}
+    for item in values:
+        key, sep, value = item.partition("=")
+        if not sep or key not in keys or key in targets:
+            raise ValueError("INVALID_OR_DUPLICATE_COUNT_TARGET")
+        number = int(value)
+        if not 1 <= number <= probe.MAX_EXPECTED_COUNT:
+            raise ValueError("COUNT_TARGET_OUT_OF_SCOPE")
+        targets[key] = number
+    if set(targets) != set(keys):
+        raise ValueError("COUNT_TARGET_REQUIRED_FOR_EACH_STORE")
+    return targets
 
 
 def checkpoint(path, report):
@@ -152,6 +198,9 @@ def run_batch(tasks, launch, mode, persist):
                            phase=result.get("phase"),
                            observed_unique=result.get("observed_unique", 0),
                            elapsed_seconds=result.get("elapsed_seconds"),
+                           expected_total=result.get("expected_total_user_observed"),
+                           stop_reason=result.get("stop_reason"),
+                           count_gap=result.get("count_gap"),
                            field_audit=result.get("field_audit"),
                            integration_sample=result.get("integration_sample"),
                            db_sample=result.get("db_sample"))
@@ -164,17 +213,18 @@ def run_batch(tasks, launch, mode, persist):
                 # Infrastructure/launch failure may affect every store.
                 stopped = "BROWSER_OR_BATCH_ERROR"
         report["stores"].append(row)
-        report["summary"] = summarize(report["stores"], len(tasks))
+        report["summary"] = summarize(report["stores"], len(tasks), mode)
         report["stop_reason"] = stopped
+        report["manual_retry_plan"] = retry_plan(report["stores"])
         persist(report)
         print("LOCAL_BATCH_STORE: " + json.dumps(row, ensure_ascii=False), flush=True)
     report["finished_at"] = datetime.now(timezone.utc).isoformat()
-    report["summary"] = summarize(report["stores"], len(tasks))
+    report["summary"] = summarize(report["stores"], len(tasks), mode)
     persist(report)
     return report
 
 
-def live_launcher(profile):
+def live_launcher(profile, count_round_limit=240, count_second_limit=600):
     from playwright.sync_api import sync_playwright
 
     def launch(task, mode):
@@ -195,6 +245,10 @@ def live_launcher(profile):
                     result = probe.run_once(
                         context, store_key=key, field_sample=mode == "fields",
                         adapter_sample=mode == "adapter", db_sample=mode == "db",
+                        expected_total=task.get("expected_total") if mode == "count" else None,
+                        scroll_mode="adaptive" if mode == "count" else "baseline",
+                        audit_fields=mode == "count",
+                        count_round_limit=count_round_limit, count_second_limit=count_second_limit,
                     )
                     # Stop the entire batch if a challenge is visible even
                     # when the inner diagnostic returned a generic error.
@@ -250,7 +304,13 @@ def self_test():
     assert len(calls) == 1 and report["summary"]["not_attempted"] == 1
     assert report["summary"]["write_approved"] is False
     assert summarize([], 0)["status"] == "PARTIAL_OR_FAILED"
-    print("BATCH_SELF_TEST_PASS: 15 checks")
+    assert classify({"status": "EXPECTED_COUNT_MATCHED"}, "count") == "COUNT_MATCHED"
+    assert classify({"status": "COUNT_MATCHED_FIELD_GAPS", "observed_unique": 167}, "count") == "PARTIAL_SAMPLE"
+    assert count_targets(["thailand=167", "taiwan=6332"], ["thailand", "taiwan"]) == {"thailand": 167, "taiwan": 6332}
+    assert retry_plan([dict(task_key="a", store="A", outcome="COUNT_MATCHED")]) == []
+    assert retry_plan([dict(task_key="b", store="B", outcome="FAILED", status="ACCESS_RESTRICTED_STOPPED")])[0]["action"] == "STOP_AND_REVIEW_ACCESS"
+    assert summarize([{"outcome":"COUNT_MATCHED"}], 1, "count")["status"] == "ALL_EXPECTED_COUNTS_MATCHED"
+    print("BATCH_SELF_TEST_PASS: 21 checks")
 
 
 def main():
@@ -260,11 +320,19 @@ def main():
     parser.add_argument("--store", choices=("thailand", "taiwan"), action="append")
     parser.add_argument("--plan-only", action="store_true")
     parser.add_argument("--self-test", action="store_true")
+    parser.add_argument("--expected", action="append", default=[],
+                        metavar="STORE=COUNT", help="Fresh observed target for each known store in count mode.")
+    parser.add_argument("--count-round-limit", type=int, default=240)
+    parser.add_argument("--count-second-limit", type=int, default=600)
     args = parser.parse_args()
+    if not 1 <= args.count_round_limit <= probe.MAX_COUNT_ROUNDS or not 1 <= args.count_second_limit <= probe.MAX_COUNT_SECONDS:
+        parser.error("count budget outside diagnostic limits")
+    if args.expected and args.mode != "count":
+        parser.error("--expected is only for count mode")
     if args.self_test:
         self_test()
         return 0
-    if args.scope == "registered" and (args.store or args.mode == "db"):
+    if args.scope == "registered" and (args.store or args.mode in {"db", "count"}):
         parser.error("registered scope supports field/adapter samples only")
     try:
         if args.scope == "registered":
@@ -273,6 +341,10 @@ def main():
             tasks = known_plan(list(dict.fromkeys(args.store or ["thailand", "taiwan"])))
             if args.mode == "db" and not args.plan_only:
                 probe.read_only_db_config()
+            if args.mode == "count":
+                targets = count_targets(args.expected, [t["key"] for t in tasks])
+                for task in tasks:
+                    task["expected_total"] = targets[task["key"]]
     except Exception as exc:
         print("LOCAL_BATCH_PREFLIGHT_FAILED: " + type(exc).__name__)
         return 2
@@ -280,7 +352,7 @@ def main():
         print("LOCAL_BATCH_PLAN: " + json.dumps({
             "scope": args.scope, "mode": args.mode, "requested": len(tasks),
             "history_visibility": "CALLER_VISIBLE_ONLY" if args.scope == "registered" else "NOT_READ",
-            "stores": [dict(safe_task_row(t), hold_reason=t["hold_reason"]) for t in tasks],
+            "stores": [dict(safe_task_row(t), hold_reason=t["hold_reason"], expected_total=t.get("expected_total")) for t in tasks],
             "database_writes": False, "write_approved": False,
         }, ensure_ascii=False))
         return 0
@@ -309,11 +381,11 @@ def main():
         try:
             stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
             path = root / "reports" / ("sample-" + stamp + "-" + uuid4().hex[:8] + ".json")
-            report = run_batch(tasks, live_launcher(profile), args.mode,
+            report = run_batch(tasks, live_launcher(profile, args.count_round_limit, args.count_second_limit), args.mode,
                                lambda data: checkpoint(path, data))
             print("LOCAL_BATCH_FINAL: " + json.dumps(report["summary"], ensure_ascii=False))
             print("LOCAL_BATCH_REPORT: " + str(path))
-            return 0 if report["summary"]["status"] == "ALL_SAMPLES_PASSED" else 2
+            return 0 if report["summary"]["status"] in {"ALL_SAMPLES_PASSED", "ALL_EXPECTED_COUNTS_MATCHED"} else 2
         finally:
             lock.seek(0)
             msvcrt.locking(lock.fileno(), msvcrt.LK_UNLCK, 1)
