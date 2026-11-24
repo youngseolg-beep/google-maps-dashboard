@@ -271,6 +271,8 @@ def audit_loaded_fields(page, observed_unique):
         const out = {
             unique_cards: 0, duplicate_cards: 0, author_present: 0,
             rating_valid: 0, date_present: 0, relative_date_label: 0,
+            ambiguous_date: 0, ambiguous_rating: 0, rating_label_candidates: 0,
+            unmatched_rating_labels: 0,
             body_present: 0, body_not_detected: 0, possible_collapsed_body: 0,
             rating_distribution: {"1":0,"2":0,"3":0,"4":0,"5":0}
         };
@@ -283,21 +285,38 @@ def audit_loaded_fields(page, observed_unique):
             seen.add(id);
             out.unique_cards++;
             if (txt(card.querySelector('.d4r55'))) out.author_present++;
-            const date = txt(card.querySelector('.rsqaof'));
-            if (date) {
+            // Only inspect compact metadata outside body, author, owner
+            // response and action controls. Never report the raw strings.
+            const isMetadata = el => !el.closest(
+                '.wiI7pd,.MyEned,.d4r55,.CDe7pd,.RfnDt,button,a,[role="button"]'
+            );
+            const relative = /^(?:(?:수정됨|edited)\s*[:·-]?\s*)?(?:(?:\d+|한|하루|어제)\s*(?:초|분|시간|일|주|개월|달|년)?\s*전|어제|방금|(?:\d+|a|an|one)\s+(?:seconds?|minutes?|hours?|days?|weeks?|months?|years?)\s+ago)(?:\s*[·(]?\s*(?:수정됨|edited)\)?)?$/i;
+            const absolute = /^(?:\d{4}[.\-/]\s*\d{1,2}[.\-/]\s*\d{1,2}\.?|\d{4}년\s*\d{1,2}월\s*\d{1,2}일)$/;
+            const dates = new Set();
+            for (const el of card.querySelectorAll('.rsqaof,.xRkPPb,span,time')) {
+                if (!isMetadata(el) || el.children.length) continue;
+                const value = txt(el);
+                if (relative.test(value) || absolute.test(value)) dates.add(value);
+            }
+            if (dates.size === 1) {
                 out.date_present++;
-                if (/(?:\d+\s*(?:초|분|시간|일|주|개월|달|년)\s*전|(?:\d+|a|an|one)\s+(?:seconds?|minutes?|hours?|days?|weeks?|months?|years?)\s+ago)/i.test(date)) {
-                    out.relative_date_label++;
+                if (relative.test([...dates][0])) out.relative_date_label++;
+            }
+            if (dates.size > 1) out.ambiguous_date++;
+            const ratings = new Set();
+            for (const el of card.querySelectorAll('[aria-label]')) {
+                if (!isMetadata(el)) continue;
+                const label = (el.getAttribute('aria-label') || '').trim();
+                const m = label.match(/^(?:별(?:표)?\s*([1-5])\s*개|([1-5])\s*stars?|([1-5])\s*개의?\s*별(?:표)?|평점\s*([1-5])(?:점|\s*\/\s*5)?|별점\s*([1-5])(?:점|\s*\/\s*5)?|([1-5])\s*\/\s*5\s*(?:stars?|점)?|5점\s*만점에\s*([1-5])점?)$/i);
+                if (m) ratings.add(Number(m.slice(1).find(Boolean)));
+                // Report only coarse label patterns and element kinds,
+                // never accessible names that could identify a reviewer.
+                if (/(?:별|stars?|평점)/i.test(label) && label.length <= 50) {
+                    out.rating_label_candidates++;
+                    if (!m) out.unmatched_rating_labels++;
                 }
             }
-            const ratings = new Set();
-            for (const el of card.querySelectorAll('.kvMYJc[aria-label],span[role="img"][aria-label]')) {
-                const label = el.getAttribute('aria-label') || '';
-                const m = label.match(/^\s*별\s*([1-5])\s*개\s*$/)
-                    || label.match(/^\s*([1-5])\s*stars?\s*$/i)
-                    || label.match(/^\s*([1-5])\s*개의?\s*별\s*$/);
-                if (m) ratings.add(Number(m[1]));
-            }
+            if (ratings.size > 1) out.ambiguous_rating++;
             if (ratings.size === 1) {
                 const rating = [...ratings][0];
                 out.rating_valid++;
@@ -330,7 +349,7 @@ def coverage_status(count, expected, blocked=False):
     return "EXPECTED_COUNT_NOT_REACHED"
 
 
-def run_once(context, expected_total=None, store_key="thailand", auto_total=False, scroll_mode="baseline", audit_fields=False):
+def run_once(context, expected_total=None, store_key="thailand", auto_total=False, scroll_mode="baseline", audit_fields=False, field_sample=False):
     report = {"status": "NOT_STARTED", "phase": "select_startup_tab",
               "overview_selected": False,
               "reviews_selected": False, "initial_unique": 0,
@@ -454,6 +473,15 @@ def run_once(context, expected_total=None, store_key="thailand", auto_total=Fals
         report["phase"] = "observe_initial_reviews"
         report["initial_unique"], _ = observe(page, seen, id_cache)
         report["observed_unique"] = len(seen)
+        if field_sample:
+            report["phase"] = "initial_field_sample"
+            report["field_audit"] = audit_loaded_fields(page, len(seen))
+            report["status"] = (
+                "FIELD_SAMPLE_VERIFIED"
+                if len(seen) >= 6 and report["field_audit"]["status"] == "REQUIRED_FIELDS_PRESENT"
+                else "FIELD_SAMPLE_GAPS"
+            )
+            return report
         # Count IDs only in memory. Do not extract or save review contents.
         # The count check is bounded and never circumvents a restriction.
         idle = 0
@@ -625,7 +653,11 @@ def main():
                         help="Opt-in ordinary wheel-step benchmark; baseline remains the default.")
     parser.add_argument("--audit-fields", action="store_true",
                         help="Inspect field presence on the count-matched DOM; aggregate only.")
+    parser.add_argument("--field-sample", action="store_true",
+                        help="Audit initially loaded cards only; no scrolling or full-store rescan.")
     args = parser.parse_args()
+    if args.field_sample and (args.audit_fields or args.auto_total or args.expected_total is not None):
+        parser.error("--field-sample is a standalone diagnostic")
     if args.audit_fields and not (args.auto_total or args.expected_total is not None):
         parser.error("--audit-fields requires --auto-total or --expected-total")
     if args.auto_total and args.expected_total is not None:
@@ -652,8 +684,8 @@ def main():
     # No export or import of cookies, no synthetic browser identity. Each
     # trial opens and closes the existing dedicated local Chrome normally.
     count_mode = args.auto_total or args.expected_total is not None
-    target_runs = 1 if count_mode else args.runs
-    success_status = "EXPECTED_COUNT_MATCHED" if count_mode else "REVIEW_DEPTH_VERIFIED"
+    target_runs = 1 if count_mode or args.field_sample else args.runs
+    success_status = "FIELD_SAMPLE_VERIFIED" if args.field_sample else ("EXPECTED_COUNT_MATCHED" if count_mode else "REVIEW_DEPTH_VERIFIED")
     for attempt in range(1, target_runs + 1):
         context = None
         try:
@@ -663,7 +695,7 @@ def main():
                     args=["--profile-directory=Default"],
                 )
                 try:
-                    report = run_once(context, args.expected_total, args.store, args.auto_total, args.scroll_mode, args.audit_fields)
+                    report = run_once(context, args.expected_total, args.store, args.auto_total, args.scroll_mode, args.audit_fields, args.field_sample)
                     # Snapshot unexpected lifecycle events BEFORE our intentional
                     # cleanup, so closing Chrome normally is not a false failure.
                     report["lifecycle"] = dict(report["lifecycle"])
@@ -694,6 +726,8 @@ def main():
         (("THREE_LOCAL_DEPTH_CHECKS_PASSED" if target_runs == 3 else "LOCAL_DEPTH_CHECK_PASSED")
          if passed else "LOCAL_DEPTH_NOT_STABLE")
     )
+    if args.field_sample:
+        final_status = "LOCAL_FIELD_SAMPLE_PASSED" if passed else "LOCAL_FIELD_SAMPLE_GAPS"
     print("LOCAL_REVIEW_FINAL: " + json.dumps({
         "status": final_status,
         "attempts": len(reports), "database_writes": False,
