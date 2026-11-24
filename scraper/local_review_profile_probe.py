@@ -56,33 +56,68 @@ def page_summary(page):
 
 
 def find_store_by_search(page, report):
-    """Follow the same normal Maps search path the user tested manually."""
+    """Use normal visible Maps controls, with strict place identity verification."""
     report["phase"] = "open_maps_home"
     page.goto(MAPS_HOME, wait_until="domcontentloaded", timeout=45000)
     page.wait_for_timeout(2500)
     if blocked(page):
         return "ACCESS_RESTRICTED_STOPPED"
-    report["phase"] = "find_maps_search_input"
-    search = page.locator(SEARCH_INPUT).filter(visible=True).first
-    search.wait_for(state="visible", timeout=20000)
-    report["phase"] = "search_store"
-    search.fill(STORE)
-    search.press("Enter")
+
+    # The current Korean Maps layout exposes the exact store in Recent.
+    # This is the same ordinary navigation action as clicking a search result.
+    exact_store = re.compile(
+        r"^Saemaeul\s*(?:\(새마을식당\))?\s*[-–]?\s*Central Eastville$",
+        re.I,
+    )
+    recent = page.get_by_text(exact_store).filter(visible=True)
+    report["phase"] = "find_store_navigation"
+    if recent.count() == 1:
+        report["entry_method"] = "visible_exact_store"
+        recent.first.click(timeout=5000)
+    else:
+        candidates = [
+            page.locator(SEARCH_INPUT),
+            page.get_by_role("combobox", name=re.compile(r"Google.*(지도|Maps)|검색|Search", re.I)),
+            page.get_by_role("textbox", name=re.compile(r"Google.*(지도|Maps)|검색|Search", re.I)),
+            page.locator("input[role='combobox'], input[type='search']"),
+        ]
+        search = None
+        for candidate in candidates:
+            visible = candidate.filter(visible=True)
+            if visible.count() == 1:
+                search = visible.first
+                break
+        if search is None:
+            report["phase"] = "find_maps_search_input"
+            return "SEARCH_CONTROL_NOT_VERIFIED"
+        report["entry_method"] = "visible_search_input"
+        report["phase"] = "search_store"
+        search.fill(STORE)
+        search.press("Enter")
+
     report["phase"] = "wait_for_expected_place"
-    # Do not click arbitrary results or accept a similarly named store.
     for _ in range(20):
         page.wait_for_timeout(1000)
         if blocked(page):
             return "ACCESS_RESTRICTED_STOPPED"
         if same_place(page.url):
             return None
+        # Search results can require an explicit choice of the exact store.
+        if report["entry_method"] == "visible_search_input":
+            result = page.get_by_text(exact_store).filter(visible=True)
+            if result.count() == 1:
+                result.first.click(timeout=5000)
+                report["entry_method"] = "search_then_exact_result"
     return "PLACE_NOT_VERIFIED"
 
 
 def same_place(url):
     p = urlsplit(url)
+    from urllib.parse import unquote
+    path = unquote(p.path).lower()
     return (p.scheme == "https" and p.hostname in ("www.google.com", "google.com", "maps.google.com")
-            and p.path.startswith("/maps/place/") and PLACE_TOKEN in p.path.lower())
+            and path.startswith("/maps/place/")
+            and (PLACE_TOKEN in path or "/g/11s674rmb9" in path))
 
 
 def result_status(count, blocked=False, scroll_verified=False):
