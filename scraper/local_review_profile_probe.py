@@ -352,6 +352,24 @@ def body_measure(card):
     }""")
 
 
+def detail_measure(card):
+    """Count only known, visibly displayed review-detail labels, not content."""
+    return card.evaluate(r"""card => {
+        const visible = el => !!el.getClientRects().length;
+        const labels = /^(?:식사 유형|방문 유형|1인당 가격|음식|서비스|분위기|meal type|price per person|food|service|atmosphere)(?:\s*[:：]\s*[1-5])?$/i;
+        const owner = [...card.querySelectorAll('span,div')].find(el =>
+            !el.children.length && /^(?:업체 대표 응답|소유자 답변|Response from the owner|Owner response)$/i.test((el.innerText || '').trim()));
+        const found = new Set();
+        for (const el of card.querySelectorAll('span,div')) {
+            if (el.children.length || !visible(el) || el.closest('.CDe7pd,.wiI7pd')) continue;
+            if (owner && (owner.compareDocumentPosition(el) & Node.DOCUMENT_POSITION_FOLLOWING)) continue;
+            const value = (el.innerText || '').trim();
+            if (labels.test(value)) found.add(value.toLowerCase());
+        }
+        return found.size;
+    }""")
+
+
 def body_control(card, pattern):
     """Identify only controls structurally associated with the main review.
 
@@ -359,13 +377,18 @@ def body_control(card, pattern):
     Exclude controls in that response or associated with a later body.
     If the remaining association is ambiguous, do not click anything.
     """
-    candidates = card.locator('button,[role="button"],a').filter(has_text=pattern).filter(visible=True)
+    selector = 'button,[role="button"],a,[role="link"]'
+    if pattern is ORIGINAL_LABEL:
+        selector += ',span[jsaction]'
+    candidates = card.locator(selector).filter(has_text=pattern).filter(visible=True)
     result = candidates.evaluate_all(r"""els => {
         const accepted = [];
         let excluded = 0, unresolved = 0;
         for (let i = 0; i < els.length; i++) {
             const el = els[i], card = el.closest('.jftiEf[data-review-id]');
             if (!card) { unresolved++; continue; }
+            // Do not count an actionable wrapper and its matching child twice.
+            if (els.some(other => other !== el && el.contains(other))) continue;
             const visible = node => !!node.getClientRects().length;
             const bodies = [...card.querySelectorAll('.wiI7pd')].filter(visible);
             const primary = bodies[0] || [...card.querySelectorAll('.MyEned')].find(visible);
@@ -400,10 +423,10 @@ def body_sample_status(metrics):
         return "BODY_SAMPLE_CONTEXT_LOST"
     if metrics["more_candidates"] == 0:
         return "BODY_SAMPLE_NO_EXPANSION_EVIDENCE"
-    if (metrics["more_confirmed"] != metrics["more_candidates"]
+    if (metrics["more_control_resolved"] != metrics["more_candidates"]
             or metrics["original_confirmed"] != metrics["original_candidates"]
             or metrics["body_missing_after"]
-            or metrics["identity_mismatch"]):
+            or metrics["identity_mismatch"] or metrics.get("click_errors", 0)):
         return "BODY_SAMPLE_GAPS"
     return "BODY_SAMPLE_CONTROLS_VERIFIED"
 
@@ -414,7 +437,10 @@ def audit_body_sample(page, store_key, reviews, limit=10):
     n = min(cards.count(), limit)
     metrics = dict(sample_cards=n, more_candidates=0, more_confirmed=0,
                    more_length_increased=0, more_no_length_increase=0,
-                   more_ambiguous=0, original_candidates=0,
+                   more_ambiguous=0, more_control_resolved=0,
+                   more_details_increased=0, more_details_only=0,
+                   more_closed_without_growth=0, more_remaining=0,
+                   original_candidates=0,
                    original_confirmed=0, original_length_changed=0,
                    body_missing_after=0, identity_mismatch=0,
                    context_lost=False, click_errors=0,
@@ -426,6 +452,7 @@ def audit_body_sample(page, store_key, reviews, limit=10):
         card = cards.nth(i)
         identity = card.get_attribute("data-review-id")
         before = body_measure(card)
+        before_details = detail_measure(card)
         more, more_count, excluded = body_control(card, MORE_LABEL)
         metrics["excluded_nonreview_more"] += excluded
         if more_count:
@@ -435,21 +462,40 @@ def audit_body_sample(page, store_key, reviews, limit=10):
             else:
                 try:
                     more.click(timeout=2500)
-                    page.wait_for_timeout(350)
-                    if blocked(page) or not same_place(page.url, store_key) or not selected(reviews):
-                        metrics["context_lost"] = True
-                        break
-                    if card.get_attribute("data-review-id") != identity:
-                        metrics["identity_mismatch"] += 1
+                    remaining = 1
+                    for _ in range(5):
+                        page.wait_for_timeout(400)
+                        if blocked(page) or not same_place(page.url, store_key) or not selected(reviews):
+                            metrics["context_lost"] = True
+                            break
+                        if card.get_attribute("data-review-id") != identity:
+                            metrics["identity_mismatch"] += 1
+                            break
+                        _, remaining, _ = body_control(card, MORE_LABEL)
+                        if remaining == 0:
+                            break
+                    if metrics["context_lost"] or metrics["identity_mismatch"]:
                         break
                     after = body_measure(card)
-                    if after > before:
+                    after_details = detail_measure(card)
+                    grew = after > before
+                    details_grew = after_details > before_details
+                    if grew:
                         metrics["more_length_increased"] += 1
                     else:
                         metrics["more_no_length_increase"] += 1
-                    _, remaining, _ = body_control(card, MORE_LABEL)
-                    if after > before and remaining == 0:
-                        metrics["more_confirmed"] += 1
+                    if details_grew:
+                        metrics["more_details_increased"] += 1
+                    if remaining == 0 and after > 0:
+                        metrics["more_control_resolved"] += 1
+                        if grew:
+                            metrics["more_confirmed"] += 1
+                        elif details_grew:
+                            metrics["more_details_only"] += 1
+                        else:
+                            metrics["more_closed_without_growth"] += 1
+                    elif remaining:
+                        metrics["more_remaining"] += 1
                 except Exception:
                     metrics["click_errors"] += 1
         original, original_count, excluded = body_control(card, ORIGINAL_LABEL)
@@ -481,6 +527,13 @@ def audit_body_sample(page, store_key, reviews, limit=10):
         if not body_measure(card):
             metrics["body_missing_after"] += 1
     metrics["status"] = body_sample_status(metrics)
+    metrics["original_control_evidence"] = (
+        "NOT_OBSERVED" if metrics["original_candidates"] == 0 else
+        ("CONTROLS_RESOLVED" if metrics["original_confirmed"] == metrics["original_candidates"]
+         else "UNRESOLVED")
+    )
+    # A resolved control is not proof of full text; unchanged-length cases
+    # remain explicitly distinguished from demonstrated body growth.
     metrics["full_text_verified"] = False
     return metrics
 
@@ -795,13 +848,15 @@ def self_test():
     assert ORIGINAL_LABEL.fullmatch("See original (Thai)")
     assert not ORIGINAL_LABEL.fullmatch("원본 보기(태국어) 공유")
     assert not ORIGINAL_LABEL.fullmatch("Like")
-    sample = dict(context_lost=False, more_candidates=10, more_confirmed=10,
-                  original_candidates=2, original_confirmed=2,
+    sample = dict(context_lost=False, more_candidates=10, more_confirmed=6,
+                  more_control_resolved=10, original_candidates=2, original_confirmed=2,
                   body_missing_after=0, identity_mismatch=0)
     assert body_sample_status(sample) == "BODY_SAMPLE_CONTROLS_VERIFIED"
-    assert body_sample_status(dict(sample, more_confirmed=9)) == "BODY_SAMPLE_GAPS"
+    assert body_sample_status(dict(sample, more_control_resolved=9)) == "BODY_SAMPLE_GAPS"
     assert body_sample_status(dict(sample, context_lost=True)) == "BODY_SAMPLE_CONTEXT_LOST"
-    print("SELF_TEST_PASS: 45 checks")
+    assert body_sample_status(dict(sample, click_errors=1)) == "BODY_SAMPLE_GAPS"
+    assert body_sample_status(dict(sample, original_confirmed=1)) == "BODY_SAMPLE_GAPS"
+    print("SELF_TEST_PASS: 47 checks")
 
 
 def main():
