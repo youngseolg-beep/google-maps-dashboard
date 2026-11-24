@@ -93,6 +93,28 @@ def run(browser,name,state):
             link_count: Math.min(300, document.querySelectorAll('a').length),
             script_count: Math.min(300, document.querySelectorAll('script').length)
         })""")
+        result["maps_page_indicators"]=maps.evaluate("""() => {
+            const body=(document.body?.innerText || '').toLowerCase();
+            const has=words=>words.some(word=>body.includes(word));
+            return {
+                consent_page_words: has(['before you continue', 'accept all', 'reject all',
+                                         'manage options', '쿠키 사용', '모두 수락']),
+                explicit_signin_words: has(['sign in to google', 'sign in to maps',
+                                           '로그인하여', '로그인이 필요']),
+                access_error_words: has(['unusual traffic', 'something went wrong',
+                                         'try again later', 'too many requests',
+                                         'access denied', '페이지를 표시할 수 없습니다']),
+                map_search_ui: !!document.querySelector(
+                    'input[aria-label*="Search"], input[aria-label*="검색"], #searchboxinput'),
+                place_title_ui: !!document.querySelector('h1.DUwDvf, [role="heading"]'),
+                visible_dialogs: Math.min(10,
+                    [...document.querySelectorAll('[role="dialog"]')].filter(el=>{
+                        const r=el.getBoundingClientRect();
+                        return r.width>0&&r.height>0;
+                    }).length),
+                top_level_iframes: Math.min(20, document.querySelectorAll('iframe').length)
+            };
+        }""")
         maps.close()
         # A new tab is used for the account-page check.
         account=ctx.new_page()
