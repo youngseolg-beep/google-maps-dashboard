@@ -33,17 +33,25 @@ SEARCH_INPUT = (
 
 def page_summary(page):
     """Safe UI counts only; never include account names, review text or URLs."""
-    return page.evaluate("""() => {
+    return page.evaluate(r"""() => {
         const visible = el => {
             const r = el.getBoundingClientRect();
             return r.width > 0 && r.height > 0;
         };
         const nodes = [...document.querySelectorAll('[role="tab"], button, [role="button"]')]
             .filter(visible);
-        const name = el => ((el.getAttribute('aria-label') || '') + ' ' +
-            (el.innerText || '')).trim();
+        const name = el => (el.innerText || '').trim().replace(/\s+/g, ' ');
+        const tabs = nodes.filter(el => el.getAttribute('role') === 'tab');
+        const tabKinds = tabs.map(el => ({
+            kind: /^(overview|개요)$/i.test(name(el)) ? 'overview' :
+                  /^(reviews|리뷰)(\s*\(?[\d,]+\)?)?$/i.test(name(el)) ? 'reviews' :
+                  /^(menu|메뉴)$/i.test(name(el)) ? 'menu' :
+                  /^(about|정보)$/i.test(name(el)) ? 'about' : 'other',
+            selected: el.getAttribute('aria-selected') === 'true'
+        }));
         return {
-            visible_tabs: nodes.filter(el => el.getAttribute('role') === 'tab').length,
+            visible_tabs: tabs.length,
+            tab_kinds: tabKinds,
             overview_controls: nodes.filter(el => /^(overview|개요)(\s|$)/i.test(name(el))).length,
             reviews_controls: nodes.filter(el => /^(reviews|리뷰)(\s|$)/i.test(name(el))).length,
             visible_inputs: [...document.querySelectorAll('input')].filter(visible).length,
@@ -143,6 +151,18 @@ def blocked(page):
     }""")
 
 
+def find_visible_tab(page, pattern):
+    """Match the rendered label, not a place-name-prefixed accessible label."""
+    tabs = page.locator("[role='tab']").filter(visible=True)
+    # Use exact displayed text first. Restrict to real tabs so review cards,
+    # rating buttons, and Write a review controls cannot be clicked by mistake.
+    match = tabs.filter(has_text=pattern)
+    match.first.wait_for(state="visible", timeout=20000)
+    if match.count() != 1:
+        raise RuntimeError("AMBIGUOUS_TAB")
+    return match.first
+
+
 def selected(locator):
     return locator.get_attribute("aria-selected") == "true"
 
@@ -199,30 +219,28 @@ def run_once(context):
             return report
 
         report["phase"] = "find_overview_tab"
-        overview = page.get_by_role("tab", name=OVERVIEW_TAB)
-        reviews = page.get_by_role("tab", name=REVIEW_TAB)
-        overview.first.wait_for(state="visible", timeout=20000)
+        overview = find_visible_tab(page, OVERVIEW_TAB)
         report["phase"] = "find_reviews_tab"
-        reviews.first.wait_for(state="visible", timeout=20000)
+        reviews = find_visible_tab(page, REVIEW_TAB)
         report["phase"] = "select_overview"
-        if not selected(overview.first):
-            overview.first.click(timeout=5000)
+        if not selected(overview):
+            overview.click(timeout=5000)
             page.wait_for_timeout(1500)
         if blocked(page):
             report["status"] = "ACCESS_RESTRICTED_STOPPED"
             return report
-        report["overview_selected"] = selected(overview.first)
+        report["overview_selected"] = selected(overview)
         if not report["overview_selected"] or not same_place(page.url):
             report["status"] = "OVERVIEW_NOT_VERIFIED"
             return report
 
         report["phase"] = "select_reviews"
-        reviews.first.click(timeout=5000)
+        reviews.click(timeout=5000)
         page.wait_for_timeout(3000)
         if blocked(page):
             report["status"] = "ACCESS_RESTRICTED_STOPPED"
             return report
-        report["reviews_selected"] = selected(reviews.first)
+        report["reviews_selected"] = selected(reviews)
         if not report["reviews_selected"] or not same_place(page.url):
             report["status"] = "REVIEWS_NOT_VERIFIED"
             return report
@@ -247,7 +265,7 @@ def run_once(context):
             if blocked(page):
                 report["status"] = "ACCESS_RESTRICTED_STOPPED"
                 return report
-            if not same_place(page.url) or not selected(reviews.first):
+            if not same_place(page.url) or not selected(reviews):
                 report["status"] = "REVIEW_CONTEXT_LOST"
                 return report
             pane = review_pane(page)
@@ -306,11 +324,14 @@ def self_test():
     assert REVIEW_TAB.fullmatch("Reviews")
     assert not REVIEW_TAB.fullmatch("Write a review")
     assert OVERVIEW_TAB.fullmatch("개요")
+    assert not OVERVIEW_TAB.fullmatch("매장 개요 보기")
+    assert not REVIEW_TAB.fullmatch("리뷰 작성")
+    assert REVIEW_TAB.fullmatch("리뷰 (167)")
     assert result_status(5, scroll_verified=True) == "REVIEW_DEPTH_UNVERIFIED"
     assert result_status(6) == "REVIEW_DEPTH_UNVERIFIED"
     assert result_status(6, scroll_verified=True) == "REVIEW_DEPTH_VERIFIED"
     assert result_status(20, True, True) == "ACCESS_RESTRICTED_STOPPED"
-    print("SELF_TEST_PASS: 12 checks")
+    print("SELF_TEST_PASS: 15 checks")
 
 
 def main():
