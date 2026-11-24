@@ -192,13 +192,28 @@ def review_pane(page):
     }""").as_element()
 
 
-def run_once(context):
+def coverage_status(count, expected, blocked=False):
+    """Compare against the user-observed count, not proof of an API snapshot."""
+    if blocked:
+        return "ACCESS_RESTRICTED_STOPPED"
+    if count == expected:
+        return "EXPECTED_COUNT_MATCHED"
+    if count > expected:
+        return "EXPECTED_COUNT_EXCEEDED_RECHECK_TOTAL"
+    return "EXPECTED_COUNT_NOT_REACHED"
+
+
+def run_once(context, expected_total=None):
     report = {"status": "NOT_STARTED", "phase": "select_startup_tab",
               "overview_selected": False,
               "reviews_selected": False, "initial_unique": 0,
               "observed_unique": 0, "scroll_rounds": 0,
               "scroll_verified": False, "database_writes": False,
               "full_coverage_verified": False}
+    if expected_total is not None:
+        report["expected_total_user_observed"] = expected_total
+        report["additional_unique"] = 0
+        report["stop_reason"] = None
     page = None
     seen = set()
     # Track lifecycle events without recording URLs or other browser data.
@@ -257,11 +272,12 @@ def run_once(context):
         report["phase"] = "observe_initial_reviews"
         report["initial_unique"] = observe(page, seen)
         report["observed_unique"] = len(seen)
-        # This is a limited depth diagnostic, not bulk collection or proof
-        # of full coverage. A visible authentication challenge ends the run.
+        # Count IDs only in memory. Do not extract or save review contents.
+        # The count check is bounded and never circumvents a restriction.
         idle = 0
         report["phase"] = "scroll_review_pane"
-        for i in range(1, 9):
+        max_rounds = 240 if expected_total is not None else 8
+        for i in range(1, max_rounds + 1):
             if blocked(page):
                 report["status"] = "ACCESS_RESTRICTED_STOPPED"
                 return report
@@ -270,9 +286,13 @@ def run_once(context):
                 return report
             pane = review_pane(page)
             if pane is None:
+                if expected_total is not None:
+                    report["stop_reason"] = "NO_REVIEW_SCROLL_PANE"
                 break
             box = pane.bounding_box()
             if not box:
+                if expected_total is not None:
+                    report["stop_reason"] = "NO_REVIEW_PANE_BOUNDS"
                 break
             # Use the ordinary visible review list and normal mouse scrolling.
             before_top = pane.evaluate("(el) => el.scrollTop")
@@ -289,16 +309,33 @@ def run_once(context):
             if blocked(page):
                 report["status"] = "ACCESS_RESTRICTED_STOPPED"
                 return report
-            if len(seen) >= 6 and report["scroll_verified"]:
+            if expected_total is not None:
+                report["additional_unique"] = len(seen) - report["initial_unique"]
+                if len(seen) > before or i % 5 == 0:
+                    print("LOCAL_REVIEW_PROGRESS: " + json.dumps({
+                        "round": i, "observed_unique": len(seen),
+                        "expected_total_user_observed": expected_total,
+                    }), flush=True)
+                if len(seen) >= expected_total:
+                    report["stop_reason"] = "EXPECTED_TOTAL_REACHED"
+                    break
+            elif len(seen) >= 6 and report["scroll_verified"]:
                 break
             idle = 0 if advanced else idle + 1
-            if idle >= 3:
+            if idle >= (4 if expected_total is not None else 3):
+                if expected_total is not None:
+                    report["stop_reason"] = "NO_FURTHER_SCROLL_OR_NEW_IDS"
                 break
 
         report["phase"] = "final_depth_check"
-        report["status"] = result_status(
-            len(seen), blocked(page), report["scroll_verified"]
-        )
+        if expected_total is not None:
+            report["stop_reason"] = report["stop_reason"] or "ROUND_LIMIT"
+            report["status"] = coverage_status(len(seen), expected_total, blocked(page))
+            report["expected_count_matched"] = report["status"] == "EXPECTED_COUNT_MATCHED"
+        else:
+            report["status"] = result_status(
+                len(seen), blocked(page), report["scroll_verified"]
+            )
         return report
     except Exception as exc:
         report["error_type"] = type(exc).__name__
@@ -331,7 +368,11 @@ def self_test():
     assert result_status(6) == "REVIEW_DEPTH_UNVERIFIED"
     assert result_status(6, scroll_verified=True) == "REVIEW_DEPTH_VERIFIED"
     assert result_status(20, True, True) == "ACCESS_RESTRICTED_STOPPED"
-    print("SELF_TEST_PASS: 15 checks")
+    assert coverage_status(167, 167) == "EXPECTED_COUNT_MATCHED"
+    assert coverage_status(166, 167) == "EXPECTED_COUNT_NOT_REACHED"
+    assert coverage_status(168, 167) == "EXPECTED_COUNT_EXCEEDED_RECHECK_TOTAL"
+    assert coverage_status(167, 167, True) == "ACCESS_RESTRICTED_STOPPED"
+    print("SELF_TEST_PASS: 19 checks")
 
 
 def main():
@@ -339,7 +380,11 @@ def main():
     parser.add_argument("--self-test", action="store_true")
     parser.add_argument("--inspect-on-failure", action="store_true",
                         help="Keep the visible Chrome window open after a failed check until Enter.")
+    parser.add_argument("--expected-total", type=int,
+                        help="Single read-only count comparison against the number seen in Maps.")
     args = parser.parse_args()
+    if args.expected_total is not None and not 1 <= args.expected_total <= 1000:
+        parser.error("--expected-total must be between 1 and 1000")
     if args.self_test:
         self_test()
         return 0
@@ -359,7 +404,9 @@ def main():
     reports = []
     # No export or import of cookies, no synthetic browser identity. Each
     # trial opens and closes the existing dedicated local Chrome normally.
-    for attempt in range(1, 4):
+    target_runs = 1 if args.expected_total is not None else 3
+    success_status = "EXPECTED_COUNT_MATCHED" if args.expected_total is not None else "REVIEW_DEPTH_VERIFIED"
+    for attempt in range(1, target_runs + 1):
         context = None
         try:
             with sync_playwright() as p:
@@ -368,11 +415,11 @@ def main():
                     args=["--profile-directory=Default"],
                 )
                 try:
-                    report = run_once(context)
+                    report = run_once(context, args.expected_total)
                     # Snapshot unexpected lifecycle events BEFORE our intentional
                     # cleanup, so closing Chrome normally is not a false failure.
                     report["lifecycle"] = dict(report["lifecycle"])
-                    if args.inspect_on_failure and report["status"] != "REVIEW_DEPTH_VERIFIED":
+                    if args.inspect_on_failure and report["status"] != success_status:
                         print("LOCAL_REVIEW_INSPECT: " + json.dumps(report, ensure_ascii=False), flush=True)
                         print("CHECK THE OPEN CHROME WINDOW. Press Enter in PowerShell to close it.", flush=True)
                         try:
@@ -390,12 +437,15 @@ def main():
         report["attempt"] = attempt
         reports.append(report)
         print("LOCAL_REVIEW_PROBE: " + json.dumps(report, ensure_ascii=False), flush=True)
-        if report["status"] != "REVIEW_DEPTH_VERIFIED":
+        if report["status"] != success_status:
             break
-    passed = len(reports) == 3 and all(r["status"] == "REVIEW_DEPTH_VERIFIED" for r in reports)
+    passed = len(reports) == target_runs and all(r["status"] == success_status for r in reports)
+    final_status = ("LOCAL_EXPECTED_COUNT_MATCHED" if passed else "LOCAL_COUNT_UNVERIFIED") if args.expected_total is not None else ("THREE_LOCAL_DEPTH_CHECKS_PASSED" if passed else "LOCAL_DEPTH_NOT_STABLE")
     print("LOCAL_REVIEW_FINAL: " + json.dumps({
-        "status": "THREE_LOCAL_DEPTH_CHECKS_PASSED" if passed else "LOCAL_DEPTH_NOT_STABLE",
+        "status": final_status,
         "attempts": len(reports), "database_writes": False,
+        "expected_total_user_observed": args.expected_total,
+        "observed_unique": reports[-1].get("observed_unique", 0) if reports else 0,
         "full_coverage_verified": False,
     }), flush=True)
     return 0 if passed else 2
