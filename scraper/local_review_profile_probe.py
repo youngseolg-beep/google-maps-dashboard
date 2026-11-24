@@ -249,6 +249,76 @@ def review_pane(page):
     }""").as_element()
 
 
+def field_audit_status(metrics, observed_unique):
+    """A DOM field audit is not proof that review values are correct or complete."""
+    if metrics["unique_cards"] != observed_unique:
+        return "PARTIAL_DOM_FIELD_AUDIT"
+    if (metrics["rating_valid"] != observed_unique
+            or metrics["author_present"] != observed_unique
+            or metrics["date_present"] != observed_unique):
+        return "REQUIRED_FIELD_GAPS"
+    return "REQUIRED_FIELDS_PRESENT"
+
+
+def audit_loaded_fields(page, observed_unique):
+    """Inspect loaded review cards in one DOM pass; return aggregate counts only.
+
+    Never export individual authors, text, dates or review IDs. A blank body
+    can be a rating-only review; an unexpanded body is not a full-text review.
+    Do not replace missing dates/ratings with guessed values.
+    """
+    metrics = page.locator(".jftiEf[data-review-id]").evaluate_all(r"""cards => {
+        const out = {
+            unique_cards: 0, duplicate_cards: 0, author_present: 0,
+            rating_valid: 0, date_present: 0, relative_date_label: 0,
+            body_present: 0, body_not_detected: 0, possible_collapsed_body: 0,
+            rating_distribution: {"1":0,"2":0,"3":0,"4":0,"5":0}
+        };
+        const seen = new Set();
+        const txt = el => (el?.innerText || el?.textContent || '').trim();
+        for (const card of cards) {
+            const id = card.getAttribute('data-review-id');
+            if (!id) continue;
+            if (seen.has(id)) { out.duplicate_cards++; continue; }
+            seen.add(id);
+            out.unique_cards++;
+            if (txt(card.querySelector('.d4r55'))) out.author_present++;
+            const date = txt(card.querySelector('.rsqaof'));
+            if (date) {
+                out.date_present++;
+                if (/(?:\d+\s*(?:초|분|시간|일|주|개월|달|년)\s*전|(?:\d+|a|an|one)\s+(?:seconds?|minutes?|hours?|days?|weeks?|months?|years?)\s+ago)/i.test(date)) {
+                    out.relative_date_label++;
+                }
+            }
+            const ratings = new Set();
+            for (const el of card.querySelectorAll('.kvMYJc[aria-label],span[role="img"][aria-label]')) {
+                const label = el.getAttribute('aria-label') || '';
+                const m = label.match(/^\s*별\s*([1-5])\s*개\s*$/)
+                    || label.match(/^\s*([1-5])\s*stars?\s*$/i)
+                    || label.match(/^\s*([1-5])\s*개의?\s*별\s*$/);
+                if (m) ratings.add(Number(m[1]));
+            }
+            if (ratings.size === 1) {
+                const rating = [...ratings][0];
+                out.rating_valid++;
+                out.rating_distribution[String(rating)]++;
+            }
+            const body = [...card.querySelectorAll('.wiI7pd,.MyEned')].some(el => !!txt(el));
+            if (body) out.body_present++;
+            else out.body_not_detected++;
+            if ([...card.querySelectorAll('button,[role="button"]')].some(el =>
+                /^(?:자세히 보기|더보기|더 보기|more|read more|see more)$/i.test(txt(el)))) {
+                out.possible_collapsed_body++;
+            }
+        }
+        return out;
+    }""")
+    metrics["status"] = field_audit_status(metrics, observed_unique)
+    metrics["full_text_verified"] = False
+    metrics["absolute_dates_verified"] = False
+    return metrics
+
+
 def coverage_status(count, expected, blocked=False):
     """Compare against the user-observed count, not proof of an API snapshot."""
     if blocked:
@@ -260,7 +330,7 @@ def coverage_status(count, expected, blocked=False):
     return "EXPECTED_COUNT_NOT_REACHED"
 
 
-def run_once(context, expected_total=None, store_key="thailand", auto_total=False, scroll_mode="baseline"):
+def run_once(context, expected_total=None, store_key="thailand", auto_total=False, scroll_mode="baseline", audit_fields=False):
     report = {"status": "NOT_STARTED", "phase": "select_startup_tab",
               "overview_selected": False,
               "reviews_selected": False, "initial_unique": 0,
@@ -457,6 +527,13 @@ def run_once(context, expected_total=None, store_key="thailand", auto_total=Fals
             report["status"] = result_status(
                 len(seen), blocked(page), report["scroll_verified"]
             )
+        if audit_fields and report["status"] == "EXPECTED_COUNT_MATCHED":
+            report["phase"] = "audit_loaded_fields"
+            if blocked(page) or not same_place(page.url, store_key) or not selected(reviews):
+                report["status"] = "FIELD_AUDIT_CONTEXT_UNVERIFIED"
+                return report
+            report["field_audit"] = audit_loaded_fields(page, len(seen))
+            report["phase"] = "final_field_audit"
         return report
     except Exception as exc:
         report["error_type"] = type(exc).__name__
@@ -523,7 +600,13 @@ def self_test():
     fake.cards.ids = ["c", "d"]
     assert observe(fake, seen, cache) == (4, False)
     assert len(cache) == 4
-    print("SELF_TEST_PASS: 31 checks")
+    metrics = {"unique_cards": 167, "rating_valid": 167,
+               "author_present": 167, "date_present": 167}
+    assert field_audit_status(metrics, 167) == "REQUIRED_FIELDS_PRESENT"
+    assert field_audit_status(metrics, 168) == "PARTIAL_DOM_FIELD_AUDIT"
+    assert field_audit_status(dict(metrics, rating_valid=166), 167) == "REQUIRED_FIELD_GAPS"
+    assert field_audit_status(dict(metrics, date_present=166), 167) == "REQUIRED_FIELD_GAPS"
+    print("SELF_TEST_PASS: 35 checks")
 
 
 def main():
@@ -540,7 +623,11 @@ def main():
                         help="Independent Chrome starts for the small depth diagnostic.")
     parser.add_argument("--scroll-mode", choices=("baseline", "adaptive"), default="baseline",
                         help="Opt-in ordinary wheel-step benchmark; baseline remains the default.")
+    parser.add_argument("--audit-fields", action="store_true",
+                        help="Inspect field presence on the count-matched DOM; aggregate only.")
     args = parser.parse_args()
+    if args.audit_fields and not (args.auto_total or args.expected_total is not None):
+        parser.error("--audit-fields requires --auto-total or --expected-total")
     if args.auto_total and args.expected_total is not None:
         parser.error("choose --auto-total or --expected-total, not both")
     if args.expected_total is not None and not 1 <= args.expected_total <= 1000:
@@ -576,7 +663,7 @@ def main():
                     args=["--profile-directory=Default"],
                 )
                 try:
-                    report = run_once(context, args.expected_total, args.store, args.auto_total, args.scroll_mode)
+                    report = run_once(context, args.expected_total, args.store, args.auto_total, args.scroll_mode, args.audit_fields)
                     # Snapshot unexpected lifecycle events BEFORE our intentional
                     # cleanup, so closing Chrome normally is not a false failure.
                     report["lifecycle"] = dict(report["lifecycle"])
@@ -616,6 +703,7 @@ def main():
         "scroll_mode": args.scroll_mode,
         "scroll_rounds": reports[-1].get("scroll_rounds", 0) if reports else 0,
         "elapsed_scroll_seconds": reports[-1].get("elapsed_scroll_seconds") if reports else None,
+        "field_audit": reports[-1].get("field_audit") if reports else None,
         "full_coverage_verified": False,
     }), flush=True)
     return 0 if passed else 2
