@@ -11,6 +11,8 @@ import json
 from unittest.mock import patch
 
 import scraper as production
+from review_append_preflight import build_append_preview
+from review_append_snapshot import reconcile_append_snapshots
 
 
 STORE = {
@@ -134,12 +136,32 @@ def run_tests():
     assert lost.requests == [1, 1, 1] and len(lost.rows) == 4
     assert lost.rows[old_row["review_key"]] == old_row
     assert lost.rows[outgoing[1]["review_key"]]["first_seen_run_id"] == 5
+    # Exercise the exact local preflight row builder with the offline writer.
+    # No real candidate, run ID or transport enters this test.
+    scoped_store = dict(STORE, is_active=True)
+    fixture = dict(new, google_source_id_hash="a" * 64)
+    memory = MemoryReviewTransport([old_row])
+    before = memory.history()
+    preview, rows = build_append_preview(scoped_store, before, [fixture], production)
+    assert preview["write_approved"] is False and len(rows) == 1
+    assert rows[0]["first_seen_run_id"] is None
+    planned = [dict(row, first_seen_run_id=7) for row in rows]
+    with patch.object(production, "supabase_request", memory.request):
+        production.upsert_review_batch(planned)
+    outcome = reconcile_append_snapshots(before, memory.history(), planned, STORE["id"])
+    assert outcome["status"] == "APPEND_SNAPSHOT_MATCHED"
+    assert outcome["write_approved"] is False
+    replay, replay_rows = build_append_preview(scoped_store, memory.history(), [fixture], production)
+    assert replay["legacy_matched"] == 1 and not replay_rows
+    assert memory.requests == [1]
     print("APPEND_EXECUTION_QA: " + json.dumps({
         "status": "SYNTHETIC_WRITER_CONTRACT_PASSED",
         "dry_run_no_requests": True, "existing_rows_preserved": True,
         "replay_no_new_rows": True, "prior_author_held": True,
         "conflict_ignored_in_fixture": True, "failed_batch_stops": True,
         "lost_response_reconciliation": True,
+        "local_preflight_to_fixture_writer": True,
+        "snapshot_row_reconciliation": True,
         "actual_database_compared": False, "database_writes": False,
         "production_write_approved": False,
     }))

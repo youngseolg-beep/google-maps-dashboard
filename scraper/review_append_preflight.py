@@ -9,7 +9,8 @@ from datetime import date
 import re
 
 
-def preview_append(store, history, candidates, production):
+def build_append_preview(store, history, candidates, production):
+    """Return aggregate report and transient hypothetical rows; never write."""
     reasons = Counter()
     store_id = store.get("id")
     name = store.get("store_name")
@@ -69,9 +70,15 @@ def preview_append(store, history, candidates, production):
                       for row in history if row.get("store_id") == store_id]
     plan = production.plan_safe_review_append(scoped_history, accepted)
     hypothetical = 0
+    preview_rows = []
+    store_blocked = any(reasons[k] for k in ("store_metadata_missing", "store_not_active", "history_store_mismatch"))
     held = 0
     row_shape_errors = 0
     for candidate in plan["ready"]:
+        if store_blocked:
+            reasons["store_scope_blocked"] += 1
+            held += 1
+            continue
         author = production.normalize_spaces(candidate["author"]).casefold()
         if authors[author] != 1:
             reasons["same_author_in_current_sample"] += 1
@@ -96,10 +103,11 @@ def preview_append(store, history, candidates, production):
                     or row["first_seen_run_id"] is not None):
                 raise ValueError("PREVIEW_ROW_INVALID")
             hypothetical += 1
+            preview_rows.append(row)
         except (ValueError, TypeError, KeyError, RuntimeError):
             row_shape_errors += 1
             reasons["row_shape_invalid"] += 1
-    return {
+    report = {
         "candidate_count": len(candidates),
         "valid_candidate_count": len(accepted),
         "legacy_matched": plan["already_matched"],
@@ -118,6 +126,12 @@ def preview_append(store, history, candidates, production):
         "database_writes": False,
         "write_approved": False,
     }
+    return report, preview_rows
+
+
+def preview_append(store, history, candidates, production):
+    report, _ = build_append_preview(store, history, candidates, production)
+    return report
 
 
 def self_test():
@@ -149,6 +163,9 @@ def self_test():
     assert report["blocking_reasons"]["history_store_mismatch"] == 1
     report = preview_append(dict(store, is_active=False), [], [first], production)
     assert report["blocking_reasons"]["store_not_active"] == 1
+    assert report["hypothetical_row_shape_valid"] == 0
+    _, rows = build_append_preview(store, history, [first, second], production)
+    assert len(rows) == 1 and rows[0]["first_seen_run_id"] is None
     assert report["write_approved"] is False
     print("APPEND_PREFLIGHT_SELF_TEST_PASS")
 
