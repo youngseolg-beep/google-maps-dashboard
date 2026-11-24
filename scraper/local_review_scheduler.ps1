@@ -148,6 +148,9 @@ switch ($Action) {
             $stage = 'offline_append_preflight_tests'
             & $python (Join-Path $PSScriptRoot 'review_append_preflight.py')
             if ($LASTEXITCODE -ne 0) { throw 'APPEND_PREFLIGHT_SELF_TEST_FAILED' }
+            $stage = 'offline_append_execution_tests'
+            & $python (Join-Path $PSScriptRoot 'review_append_execution_qa.py')
+            if ($LASTEXITCODE -ne 0) { throw 'APPEND_EXECUTION_SELF_TEST_FAILED' }
             $stage = 'known_store_adapter_samples'
             & $python $Batch --scope known --mode adapter
             $code = $LASTEXITCODE
