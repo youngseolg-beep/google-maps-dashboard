@@ -21,6 +21,13 @@ PLACE_URL = (
     "16s%2Fg%2F11s674rmb9?entry=ttu"
 )
 PLACE_TOKEN = "0x484a32408c147d14"
+STORE_CONFIG = {
+    "thailand": {"name": STORE, "url": PLACE_URL,
+                 "tokens": (PLACE_TOKEN, "/g/11s674rmb9")},
+    "taiwan": {"name": "Bornga Dunhua South",
+               "url": "https://www.google.com/maps/place/%E6%9C%AC%E5%AE%B6BORNGA%E9%9F%93%E5%BC%8F%E7%87%92%E8%82%89+%E6%95%A6%E5%8D%97%E5%BA%97/@25.044463,121.5499789,17z/data=!3m1!5s0x3442abdb36c3dd57:0x31070c64b44f2f5c!4m8!3m7!1s0x3442ab0779763169:0x584a72379db46e23!8m2!3d25.044463!4d121.5499789!9m1!1b1!16s%2Fg%2F11s9g6zd8p?entry=ttu&g_ep=EgoyMDI2MDUxMS4wIKXMDSoASAFQAw%3D%3D",
+               "tokens": ("0x584a72379db46e23", "/g/11s9g6zd8p")},
+}
 REVIEW_TAB = re.compile(r"^(reviews|리뷰)(?:\s*\(?[\d,]+\)?)?$", re.I)
 OVERVIEW_TAB = re.compile(r"^(overview|개요)$", re.I)
 MAPS_HOME = "https://www.google.com/maps"
@@ -119,13 +126,40 @@ def find_store_by_search(page, report):
     return "PLACE_NOT_VERIFIED"
 
 
-def same_place(url):
+def same_place(url, store_key="thailand"):
     p = urlsplit(url)
     from urllib.parse import unquote
     path = unquote(p.path).lower()
     return (p.scheme == "https" and p.hostname in ("www.google.com", "google.com", "maps.google.com")
             and path.startswith("/maps/place/")
-            and (PLACE_TOKEN in path or "/g/11s674rmb9" in path))
+            and any(token in path for token in STORE_CONFIG[store_key]["tokens"]))
+
+
+def displayed_total(page):
+    """Read only the place-rating summary in Overview, never filter counts."""
+    values = page.evaluate(r"""() => {
+        const found = new Set();
+        const root = document.querySelector('.F7nice');
+        if (!root || root.closest('[data-review-id],.jftiEf')) return [];
+        for (const el of root.querySelectorAll('span,button,[role="button"]')) {
+            if (!el.getClientRects().length) continue;
+            for (const value of [el.getAttribute('aria-label') || '', el.innerText || '']) {
+                const v = value.trim();
+                const m = v.match(/^\(?([\d,]+)\)?\s*(?:reviews?|리뷰|개 리뷰|개의 리뷰|건의 리뷰)$/i)
+                    || v.match(/^(?:reviews?|리뷰)\s*[:：]?\s*\(?([\d,]+)\)?$/i)
+                    || v.match(/^\(([\d,]+)\)$/);
+                if (m) {
+                    const n = Number(m[1].replace(/,/g, ''));
+                    if (Number.isSafeInteger(n) && n >= 0) found.add(n);
+                }
+            }
+        }
+        return [...found].sort((a,b) => a-b);
+    }""")
+    return {"status": "UI_DISPLAYED" if len(values) == 1 else
+            ("AMBIGUOUS" if values else "UNKNOWN"),
+            "displayed_total": values[0] if len(values) == 1 else None,
+            "candidate_counts": values}
 
 
 def result_status(count, blocked=False, scroll_verified=False):
@@ -203,13 +237,14 @@ def coverage_status(count, expected, blocked=False):
     return "EXPECTED_COUNT_NOT_REACHED"
 
 
-def run_once(context, expected_total=None):
+def run_once(context, expected_total=None, store_key="thailand", auto_total=False):
     report = {"status": "NOT_STARTED", "phase": "select_startup_tab",
               "overview_selected": False,
               "reviews_selected": False, "initial_unique": 0,
               "observed_unique": 0, "scroll_rounds": 0,
               "scroll_verified": False, "database_writes": False,
               "full_coverage_verified": False}
+    report["store"] = STORE_CONFIG[store_key]["name"]
     if expected_total is not None:
         report["expected_total_user_observed"] = expected_total
         report["additional_unique"] = 0
@@ -228,10 +263,25 @@ def run_once(context, expected_total=None):
         page = startup_tabs[0] if startup_tabs else context.new_page()
         page.on("close", lambda *_: lifecycle.update(page_closed=True))
         page.on("crash", lambda *_: lifecycle.update(page_crashed=True))
-        failure = find_store_by_search(page, report)
-        if failure:
-            report["status"] = failure
-            return report
+        if store_key == "thailand":
+            failure = find_store_by_search(page, report)
+            if failure:
+                report["status"] = failure
+                return report
+        else:
+            report["phase"] = "open_configured_store"
+            report["entry_method"] = "repository_store_url"
+            page.goto(STORE_CONFIG[store_key]["url"], wait_until="domcontentloaded", timeout=45000)
+            for _ in range(20):
+                page.wait_for_timeout(1000)
+                if blocked(page):
+                    report["status"] = "ACCESS_RESTRICTED_STOPPED"
+                    return report
+                if same_place(page.url, store_key):
+                    break
+            if not same_place(page.url, store_key):
+                report["status"] = "PLACE_NOT_VERIFIED"
+                return report
 
         report["phase"] = "find_overview_tab"
         overview = find_visible_tab(page, OVERVIEW_TAB)
@@ -245,9 +295,22 @@ def run_once(context, expected_total=None):
             report["status"] = "ACCESS_RESTRICTED_STOPPED"
             return report
         report["overview_selected"] = selected(overview)
-        if not report["overview_selected"] or not same_place(page.url):
+        if not report["overview_selected"] or not same_place(page.url, store_key):
             report["status"] = "OVERVIEW_NOT_VERIFIED"
             return report
+
+        report["phase"] = "read_overview_total"
+        total_evidence = displayed_total(page)
+        report["overview_total"] = total_evidence
+        if auto_total:
+            expected_total = total_evidence["displayed_total"]
+            if expected_total is None or not 1 <= expected_total <= 1000:
+                report["status"] = "DISPLAYED_TOTAL_NOT_VERIFIED_OR_OUT_OF_SCOPE"
+                return report
+            report["expected_total_user_observed"] = expected_total
+            report["expected_total_source"] = "overview_rating_summary"
+            report["additional_unique"] = 0
+            report["stop_reason"] = None
 
         report["phase"] = "select_reviews"
         reviews.click(timeout=5000)
@@ -256,7 +319,7 @@ def run_once(context, expected_total=None):
             report["status"] = "ACCESS_RESTRICTED_STOPPED"
             return report
         report["reviews_selected"] = selected(reviews)
-        if not report["reviews_selected"] or not same_place(page.url):
+        if not report["reviews_selected"] or not same_place(page.url, store_key):
             report["status"] = "REVIEWS_NOT_VERIFIED"
             return report
 
@@ -281,7 +344,7 @@ def run_once(context, expected_total=None):
             if blocked(page):
                 report["status"] = "ACCESS_RESTRICTED_STOPPED"
                 return report
-            if not same_place(page.url) or not selected(reviews):
+            if not same_place(page.url, store_key) or not selected(reviews):
                 report["status"] = "REVIEW_CONTEXT_LOST"
                 return report
             pane = review_pane(page)
@@ -372,7 +435,10 @@ def self_test():
     assert coverage_status(166, 167) == "EXPECTED_COUNT_NOT_REACHED"
     assert coverage_status(168, 167) == "EXPECTED_COUNT_EXCEEDED_RECHECK_TOTAL"
     assert coverage_status(167, 167, True) == "ACCESS_RESTRICTED_STOPPED"
-    print("SELF_TEST_PASS: 19 checks")
+    assert same_place(STORE_CONFIG["taiwan"]["url"], "taiwan")
+    assert not same_place(STORE_CONFIG["taiwan"]["url"], "thailand")
+    assert not same_place(PLACE_URL, "taiwan")
+    print("SELF_TEST_PASS: 22 checks")
 
 
 def main():
@@ -382,7 +448,14 @@ def main():
                         help="Keep the visible Chrome window open after a failed check until Enter.")
     parser.add_argument("--expected-total", type=int,
                         help="Single read-only count comparison against the number seen in Maps.")
+    parser.add_argument("--store", choices=sorted(STORE_CONFIG), default="thailand")
+    parser.add_argument("--auto-total", action="store_true",
+                        help="Read total from verified Overview rating summary.")
+    parser.add_argument("--runs", type=int, choices=(1, 3), default=3,
+                        help="Independent Chrome starts for the small depth diagnostic.")
     args = parser.parse_args()
+    if args.auto_total and args.expected_total is not None:
+        parser.error("choose --auto-total or --expected-total, not both")
     if args.expected_total is not None and not 1 <= args.expected_total <= 1000:
         parser.error("--expected-total must be between 1 and 1000")
     if args.self_test:
@@ -404,8 +477,9 @@ def main():
     reports = []
     # No export or import of cookies, no synthetic browser identity. Each
     # trial opens and closes the existing dedicated local Chrome normally.
-    target_runs = 1 if args.expected_total is not None else 3
-    success_status = "EXPECTED_COUNT_MATCHED" if args.expected_total is not None else "REVIEW_DEPTH_VERIFIED"
+    count_mode = args.auto_total or args.expected_total is not None
+    target_runs = 1 if count_mode else args.runs
+    success_status = "EXPECTED_COUNT_MATCHED" if count_mode else "REVIEW_DEPTH_VERIFIED"
     for attempt in range(1, target_runs + 1):
         context = None
         try:
@@ -415,7 +489,7 @@ def main():
                     args=["--profile-directory=Default"],
                 )
                 try:
-                    report = run_once(context, args.expected_total)
+                    report = run_once(context, args.expected_total, args.store, args.auto_total)
                     # Snapshot unexpected lifecycle events BEFORE our intentional
                     # cleanup, so closing Chrome normally is not a false failure.
                     report["lifecycle"] = dict(report["lifecycle"])
@@ -440,11 +514,17 @@ def main():
         if report["status"] != success_status:
             break
     passed = len(reports) == target_runs and all(r["status"] == success_status for r in reports)
-    final_status = ("LOCAL_EXPECTED_COUNT_MATCHED" if passed else "LOCAL_COUNT_UNVERIFIED") if args.expected_total is not None else ("THREE_LOCAL_DEPTH_CHECKS_PASSED" if passed else "LOCAL_DEPTH_NOT_STABLE")
+    final_status = (
+        ("LOCAL_EXPECTED_COUNT_MATCHED" if passed else "LOCAL_COUNT_UNVERIFIED")
+        if count_mode else
+        (("THREE_LOCAL_DEPTH_CHECKS_PASSED" if target_runs == 3 else "LOCAL_DEPTH_CHECK_PASSED")
+         if passed else "LOCAL_DEPTH_NOT_STABLE")
+    )
     print("LOCAL_REVIEW_FINAL: " + json.dumps({
         "status": final_status,
         "attempts": len(reports), "database_writes": False,
-        "expected_total_user_observed": args.expected_total,
+        "store": STORE_CONFIG[args.store]["name"],
+        "expected_total_user_observed": reports[-1].get("expected_total_user_observed") if reports else args.expected_total,
         "observed_unique": reports[-1].get("observed_unique", 0) if reports else 0,
         "full_coverage_verified": False,
     }), flush=True)
