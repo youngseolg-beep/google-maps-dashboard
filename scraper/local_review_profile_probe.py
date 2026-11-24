@@ -484,7 +484,10 @@ def run_once(context, expected_total=None, store_key="thailand", auto_total=Fals
         page = startup_tabs[0] if startup_tabs else context.new_page()
         page.on("close", lambda *_: lifecycle.update(page_closed=True))
         page.on("crash", lambda *_: lifecycle.update(page_crashed=True))
-        if store_key == "thailand":
+        # Field/body diagnostics and explicit-count checks do not need
+        # Overview navigation. Use the configured place link directly.
+        # Preserve the verified Thailand Overview path for auto-total only.
+        if store_key == "thailand" and auto_total:
             failure = find_store_by_search(page, report)
             if failure:
                 report["status"] = failure
