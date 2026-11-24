@@ -18,6 +18,7 @@ import scraper as production
 from review_multistore_probe import store_urls
 from review_identity_metrics import (
     source_identity_counts, script_counts, reconciliation_verdict,
+    should_retry_read_only_store,
 )
 
 REPORT = Path("review-auth-db-reconciliation-aggregate.json")
@@ -277,6 +278,10 @@ def main():
                     page.wait_for_timeout(2500)
                     if not production.verify_dedicated_google_login(page):
                         raise RuntimeError("GOOGLE_AUTH_SESSION_NOT_VISIBLE")
+                    # The account-verification tab never enters a store.
+                    # Each store gets its own fresh tab to avoid leaking Maps SPA
+                    # navigation/review-pane state into the next scan.
+                    page.close()
                     for country, db_name in STORE_NAMES.items():
                         outcome["phase"] = "read_saved_reviews_" + country.lower()
                         store = selected[country]
@@ -289,41 +294,87 @@ def main():
                             "country": country, "city": "",
                             "url": store["google_maps_url"],
                         }
-                        try:
+                        final_result = None
+                        final_evidence = {}
+                        final_browser_state = {}
+                        final_exception_type = None
+                        attempt_diagnostics = []
+                        for attempt in range(1, 3):
+                            scan_page = context.new_page()
+                            scan_page.set_default_timeout(45000)
                             evidence = {}
-                            outcome["phase"] = "read_maps_reviews_" + country.lower()
-                            with contextlib.redirect_stdout(io.StringIO()), \
-                                 contextlib.redirect_stderr(io.StringIO()):
-                                result = production.scrape_store(
-                                    page, target, existing_reviews=[],
-                                    collection_evidence=evidence,
-                                    force_english_ui=True,
+                            result = None
+                            error_type = None
+                            try:
+                                outcome["phase"] = (
+                                    "read_maps_reviews_" + country.lower()
+                                    + "_attempt_" + str(attempt)
                                 )
-                            outcome["phase"] = "compare_saved_keys_" + country.lower()
-                            candidates = result.get("reviews", [])
+                                # Scraper's debug output may include Maps URLs.
+                                # Never publish its raw stdout/stderr or raw IDs.
+                                with contextlib.redirect_stdout(io.StringIO()), \
+                                     contextlib.redirect_stderr(io.StringIO()):
+                                    result = production.scrape_store(
+                                        scan_page, target, existing_reviews=[],
+                                        collection_evidence=evidence,
+                                        force_english_ui=True,
+                                    )
+                            except Exception as exc:
+                                error_type = type(exc).__name__
+                            finally:
+                                browser_state = coarse_page_diagnostics(scan_page)
+                                scan_page.close()
+                            observed_count = (
+                                len(result.get("reviews", []))
+                                if isinstance(result, dict) else None
+                            )
+                            attempt_diagnostics.append({
+                                "attempt": attempt,
+                                "observed_candidates": observed_count or 0,
+                                "browser_page_category": browser_state.get("page_category"),
+                                "review_panel_unverified": bool(
+                                    evidence.get("review_panel_unverified")
+                                ),
+                                "exception_type": error_type,
+                            })
+                            final_result = result
+                            final_evidence = evidence
+                            final_browser_state = browser_state
+                            final_exception_type = error_type
+                            if not should_retry_read_only_store(
+                                len(existing), observed_count, attempt
+                            ):
+                                break
+                        outcome["phase"] = "compare_saved_keys_" + country.lower()
+                        if final_result is not None and final_exception_type is None:
+                            candidates = final_result.get("reviews", [])
                             row = {
                                 "store": db_name, "country": country,
                                 "extraction_status": (
-                                    "SCANNED" if result.get("ok") else "PARTIAL_OR_FAILED"
+                                    "SCANNED" if final_result.get("ok")
+                                    else "PARTIAL_OR_FAILED"
                                 ),
-                                "observed_review_count": evidence.get("observed_review_count", 0),
-                                "collection_issue": result.get("collection_issue"),
+                                "observed_review_count": final_evidence.get(
+                                    "observed_review_count", 0
+                                ),
+                                "collection_issue": final_result.get("collection_issue"),
                                 "completeness_verified": False,
-                                "browser_state": coarse_page_diagnostics(page),
+                                "browser_state": final_browser_state,
                                 "source_id_metrics": source_identity_counts(candidates),
                                 "live_body_script_metrics": script_counts(candidates),
                                 "saved_body_script_metrics": script_counts(existing),
                                 **compare_candidates(candidates, existing, db_name),
                             }
-                        except Exception as exc:
+                        else:
                             row = {
                                 "store": db_name, "country": country,
                                 "extraction_status": "ERROR",
-                                "exception_type": type(exc).__name__,
+                                "exception_type": final_exception_type or "UnknownError",
                                 "existing_db_rows": len(existing),
                                 "completeness_verified": False,
-                                "browser_state": coarse_page_diagnostics(page),
+                                "browser_state": final_browser_state,
                             }
+                        row["read_only_attempts"] = attempt_diagnostics
                         outcome["stores"].append(row)
                         print("READ_ONLY_STORE_RECONCILIATION: " + json.dumps(row, ensure_ascii=False))
                     outcome["phase"] = "complete"

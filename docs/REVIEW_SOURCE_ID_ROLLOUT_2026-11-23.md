@@ -144,3 +144,21 @@ Important:
 - Only aggregated blocker codes are emitted. Raw review IDs, text, authors,
   cookies, and authentication state remain outside logs/artifacts.
 - This change does not modify `main`, Supabase schema, or any saved review.
+
+
+## Isolated per-store review scans (2026-11-24)
+
+- Root cause is not yet proven: successive runs intermittently observe zero
+  reviews even for established stores. The most recent 2026-11-23 test saw
+  Thailand 0, Taiwan 0 and Mongolia 96 and correctly returned PARTIAL.
+- Read-only audit now closes its login-verification tab before visiting places
+  and creates a separate fresh tab for each store in the same authenticated
+  browser context. This avoids reusing the previous Maps SPA/scroll-pane state.
+- For an established store with **zero** candidates or a scan exception, the
+  audit makes **one bounded retry in a separate fresh tab**. An empty historical
+  store stays PARTIAL even if both attempts finish without exceptions.
+- Retries never merge candidates across attempts and never authorize inserts.
+  Only aggregate attempt count, observed candidate count, page category, and
+  sanitized error type are reported.
+- A valid candidate count is not proof of full-feed completeness. Existing
+  Supabase rows, `main`, and all production workflows remain unchanged.

@@ -1,7 +1,7 @@
 import unittest
 from review_identity_metrics import (
     script_counts, source_identity_counts, reconciliation_blockers,
-    reconciliation_verdict,
+    reconciliation_verdict, should_retry_read_only_store,
 )
 
 
@@ -78,6 +78,14 @@ class ReconciliationAcceptanceGateTests(unittest.TestCase):
             },
             "completeness_verified": True,
         }
+
+    def test_retry_only_historical_zero_candidate_store(self):
+        self.assertTrue(should_retry_read_only_store(111, 0, 1))
+        self.assertTrue(should_retry_read_only_store(111, None, 1))
+        self.assertFalse(should_retry_read_only_store(0, 0, 1))
+        self.assertFalse(should_retry_read_only_store(111, 96, 1))
+        self.assertFalse(should_retry_read_only_store(111, 0, 2))
+        self.assertFalse(should_retry_read_only_store(True, 0, 1))
 
     def test_verified_store_has_no_acceptance_blockers(self):
         self.assertEqual(reconciliation_blockers(self.row), [])

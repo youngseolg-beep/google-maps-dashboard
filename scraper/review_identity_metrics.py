@@ -127,3 +127,17 @@ def reconciliation_verdict(rows, expected_countries):
         # This diagnostic never grants permission to insert into production.
         "database_writes_approved": False,
     }
+
+
+def should_retry_read_only_store(saved_count, candidate_count, attempt_number, max_attempts=2):
+    """A bounded retry is justified for an established store with zero cards.
+
+    Each attempt must use an independent tab in the same authenticated context.
+    The audit never combines candidates from different attempts.
+    """
+    return (
+        isinstance(saved_count, int) and not isinstance(saved_count, bool)
+        and saved_count > 0
+        and isinstance(attempt_number, int) and 1 <= attempt_number < max_attempts
+        and (candidate_count is None or candidate_count == 0)
+    )
