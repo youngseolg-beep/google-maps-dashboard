@@ -473,6 +473,16 @@ def force_google_maps_english_ui(page):
         raise RuntimeError("Google Maps 영어 표시 설정에 실패했습니다.") from None
 
 
+def is_reviews_tab_selected(page):
+    """A preview feed in Overview is not the full Reviews tab."""
+    try:
+        return page.locator("[role='tab'][aria-selected='true']").filter(
+            has_text=re.compile(r"Reviews|리뷰|Recensies|Beoordelingen|Ulasan", re.I)
+        ).count() > 0
+    except Exception:
+        return False
+
+
 def open_reviews_panel(page):
     """Activate reviews without navigating away from the current Maps place.
 
@@ -480,8 +490,7 @@ def open_reviews_panel(page):
     place page can display only five preview cards with that tab selected.
     """
     print("🔘 리뷰 패널 열기 시도 중...")
-    if open_all_reviews_control(page):
-        return True
+    # Prefer clicking the Reviews tab from the default Overview view.
 
     # Do not click generic "reviews" text or hrefs. The A/B run on 2026-11-20
     # demonstrated that a review link can leave Google Maps entirely.
@@ -548,6 +557,8 @@ def open_reviews_panel(page):
         except Exception as exc:
             print(f"⚠️ 리뷰 패널 클릭 실패: {name} / {type(exc).__name__}")
 
+    if open_all_reviews_control(page):
+        return True
     print("REVIEW_PANEL_DIAGNOSTIC full_review_feed_unverified")
     return False
 
@@ -2009,6 +2020,7 @@ def scrape_store(page, store, existing_reviews=None, collection_evidence=None, f
 
     url_candidates = build_url_candidates(store["url"])
     valid_place_detected = False
+    panel_unverified_seen = False
 
     for idx, target_url in enumerate(url_candidates):
         print(f"🌐 URL 후보 {idx + 1}/{len(url_candidates)} 진입 시도: {target_url}")
@@ -2044,11 +2056,16 @@ def scrape_store(page, store, existing_reviews=None, collection_evidence=None, f
         review_feed_present = page.locator("div[role='feed']").filter(
             has=page.locator(".jftiEf")
         ).count() > 0
-        panel_opened = review_feed_present or open_reviews_panel(page)
+        panel_opened = (
+            (review_feed_present and is_reviews_tab_selected(page))
+            or open_reviews_panel(page)
+        )
         if not panel_opened:
-            print("⚠️ 전체 리뷰 패널 진입 미확인: 상세 화면의 리뷰 카드만 관측될 수 있습니다.")
+            panel_unverified_seen = True
+            print("⚠️ 리뷰 탭 미확인: 개요의 미리보기 리뷰는 수집하지 않습니다.")
             if collection_evidence is not None:
                 collection_evidence["review_panel_unverified"] = True
+            continue
 
         print("⏳ Google Maps 리뷰 패널 렌더링 대기 중...")
         page.wait_for_timeout(4000)
@@ -2108,7 +2125,10 @@ def scrape_store(page, store, existing_reviews=None, collection_evidence=None, f
             "country": store["country"],
             "collected_count": 0,
             "error": "",
-            "collection_issue": "no_usable_reviews_observed",
+            "collection_issue": (
+                "review_panel_unverified_partial"
+                if panel_unverified_seen else "no_usable_reviews_observed"
+            ),
             "crawled_at": now_kst().strftime("%Y-%m-%d %H:%M:%S"),
             "reviews": [],
         }
