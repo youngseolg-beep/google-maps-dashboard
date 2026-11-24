@@ -23,6 +23,7 @@ SAMPLE_STATUS = {
     "adapter": "LOCAL_ADAPTER_SAMPLE_PASSED",
     "db": "LOCAL_DB_SAMPLE_COMPARED",
     "count": "EXPECTED_COUNT_MATCHED",
+    "count-db": "LOCAL_COUNT_DB_COMPARED",
 }
 
 
@@ -105,7 +106,7 @@ def safe_task_row(task):
 
 def classify(result, mode):
     if result.get("status") == SAMPLE_STATUS[mode]:
-        return "COUNT_MATCHED" if mode == "count" else "SAMPLE_PASSED"
+        return "COUNT_DB_COMPARED" if mode == "count-db" else ("COUNT_MATCHED" if mode == "count" else "SAMPLE_PASSED")
     if result.get("observed_unique", 0) > 0:
         return "PARTIAL_SAMPLE"
     return "FAILED"
@@ -117,13 +118,16 @@ def summarize(rows, requested, mode="fields"):
     return {"requested": requested, "recorded": len(rows),
             "sample_passed": counts["SAMPLE_PASSED"],
             "count_matched": counts["COUNT_MATCHED"],
+            "count_db_compared": counts["COUNT_DB_COMPARED"],
             "partial_sample": counts["PARTIAL_SAMPLE"],
             "failed": counts["FAILED"], "held": counts["HELD"],
             "not_attempted": counts["NOT_ATTEMPTED"] + requested - len(rows),
             "status": (
+                "ALL_COUNT_DB_COMPARED" if mode == "count-db" and complete
+                and requested > 0 and counts["COUNT_DB_COMPARED"] == requested else
                 "ALL_EXPECTED_COUNTS_MATCHED" if mode == "count" and complete
                 and requested > 0 and counts["COUNT_MATCHED"] == requested else
-                "ALL_SAMPLES_PASSED" if mode != "count" and complete
+                "ALL_SAMPLES_PASSED" if mode not in {"count", "count-db"} and complete
                 and requested > 0 and counts["SAMPLE_PASSED"] == requested else
                 "PARTIAL_OR_FAILED"
             ),
@@ -136,7 +140,7 @@ def retry_plan(rows):
     plan = []
     for row in rows:
         outcome = row["outcome"]
-        if outcome in {"SAMPLE_PASSED", "COUNT_MATCHED"}:
+        if outcome in {"SAMPLE_PASSED", "COUNT_MATCHED", "COUNT_DB_COMPARED"}:
             continue
         if row.get("status") == "ACCESS_RESTRICTED_STOPPED" or row.get("reason") == "ACCESS_RESTRICTED_STOPPED":
             action = "STOP_AND_REVIEW_ACCESS"
@@ -245,9 +249,10 @@ def live_launcher(profile, count_round_limit=240, count_second_limit=600):
                     result = probe.run_once(
                         context, store_key=key, field_sample=mode == "fields",
                         adapter_sample=mode == "adapter", db_sample=mode == "db",
-                        expected_total=task.get("expected_total") if mode == "count" else None,
-                        scroll_mode="adaptive" if mode == "count" else "baseline",
-                        audit_fields=mode == "count",
+                        expected_total=task.get("expected_total") if mode in {"count", "count-db"} else None,
+                        scroll_mode="adaptive" if mode in {"count", "count-db"} else "baseline",
+                        audit_fields=mode in {"count", "count-db"},
+                        count_db_audit=mode == "count-db",
                         count_round_limit=count_round_limit, count_second_limit=count_second_limit,
                     )
                     # Stop the entire batch if a challenge is visible even
@@ -310,7 +315,9 @@ def self_test():
     assert retry_plan([dict(task_key="a", store="A", outcome="COUNT_MATCHED")]) == []
     assert retry_plan([dict(task_key="b", store="B", outcome="FAILED", status="ACCESS_RESTRICTED_STOPPED")])[0]["action"] == "STOP_AND_REVIEW_ACCESS"
     assert summarize([{"outcome":"COUNT_MATCHED"}], 1, "count")["status"] == "ALL_EXPECTED_COUNTS_MATCHED"
-    print("BATCH_SELF_TEST_PASS: 21 checks")
+    assert classify({"status": "LOCAL_COUNT_DB_COMPARED"}, "count-db") == "COUNT_DB_COMPARED"
+    assert summarize([{"outcome":"COUNT_DB_COMPARED"}], 1, "count-db")["status"] == "ALL_COUNT_DB_COMPARED"
+    print("BATCH_SELF_TEST_PASS: 23 checks")
 
 
 def main():
@@ -327,22 +334,24 @@ def main():
     args = parser.parse_args()
     if not 1 <= args.count_round_limit <= probe.MAX_COUNT_ROUNDS or not 1 <= args.count_second_limit <= probe.MAX_COUNT_SECONDS:
         parser.error("count budget outside diagnostic limits")
-    if args.expected and args.mode != "count":
+    if args.expected and args.mode not in {"count", "count-db"}:
         parser.error("--expected is only for count mode")
     if args.self_test:
         self_test()
         return 0
-    if args.scope == "registered" and (args.store or args.mode in {"db", "count"}):
+    if args.scope == "registered" and (args.store or args.mode in {"db", "count", "count-db"}):
         parser.error("registered scope supports field/adapter samples only")
     try:
         if args.scope == "registered":
             tasks = build_registered_plan(load_active_stores(probe.read_only_db_config()))
         else:
             tasks = known_plan(list(dict.fromkeys(args.store or ["thailand", "taiwan"])))
-            if args.mode == "db" and not args.plan_only:
+            if args.mode in {"db", "count-db"} and not args.plan_only:
                 probe.read_only_db_config()
-            if args.mode == "count":
+            if args.mode in {"count", "count-db"}:
                 targets = count_targets(args.expected, [t["key"] for t in tasks])
+                if args.mode == "count-db" and any(n > probe.MAX_COUNT_DB_AUDIT for n in targets.values()):
+                    raise ValueError("COUNT_DB_AUDIT_PILOT_LIMIT")
                 for task in tasks:
                     task["expected_total"] = targets[task["key"]]
     except Exception as exc:
@@ -385,7 +394,7 @@ def main():
                                lambda data: checkpoint(path, data))
             print("LOCAL_BATCH_FINAL: " + json.dumps(report["summary"], ensure_ascii=False))
             print("LOCAL_BATCH_REPORT: " + str(path))
-            return 0 if report["summary"]["status"] in {"ALL_SAMPLES_PASSED", "ALL_EXPECTED_COUNTS_MATCHED"} else 2
+            return 0 if report["summary"]["status"] in {"ALL_SAMPLES_PASSED", "ALL_EXPECTED_COUNTS_MATCHED", "ALL_COUNT_DB_COMPARED"} else 2
         finally:
             lock.seek(0)
             msvcrt.locking(lock.fileno(), msvcrt.LK_UNLCK, 1)

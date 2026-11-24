@@ -756,13 +756,37 @@ def load_visible_history(config, store):
             raise ValueError("AUDIT_HISTORY_INCOMPLETE")
 
 
-def compare_db_sample(page, store_key, observed_unique):
+MAX_COUNT_DB_AUDIT = 1000
+
+
+def verified_record_set(records, expected_seen):
+    """Count equality alone does not prove the same cards remain loaded."""
+    ids = [r.get("source_id") for r in records]
+    if any(not isinstance(i, str) or not i for i in ids):
+        return False
+    digests = {hashlib.sha256(i.encode("utf-8")).digest() for i in ids}
+    return len(ids) == len(digests) == len(expected_seen) and digests == expected_seen
+
+
+def compare_db_sample(page, store_key, observed_unique, *, expected_seen=None):
     import scraper as production
     from review_append_preflight import preview_append
+    is_count_audit = expected_seen is not None
+    metrics, records = audit_loaded_fields(page, observed_unique, include_records=True)
+    if is_count_audit and (not 1 <= observed_unique <= MAX_COUNT_DB_AUDIT
+                           or not verified_record_set(records, expected_seen)
+                           or metrics["duplicate_cards"]
+                           or metrics["status"] != "REQUIRED_FIELDS_PRESENT"):
+        return {
+            "status": "COUNT_DB_AUDIT_CARD_SET_UNVERIFIED",
+            "observed_unique": observed_unique,
+            "actual_database_compared": False, "database_writes": False,
+            "full_text_verified": False, "full_coverage_verified": False,
+            "write_approved": False,
+        }
     config = read_only_db_config()
     store = verified_db_store(config, store_key)
     saved = load_visible_history(config, store)
-    metrics, records = audit_loaded_fields(page, observed_unique, include_records=True)
     candidates, gaps = adapt_local_records(
         records, store["store_name"], production.now_kst().date(), production,
         store_id=store["id"]
@@ -774,12 +798,16 @@ def compare_db_sample(page, store_key, observed_unique):
     matched = plan["already_matched"]
     ready, held = len(plan["ready"]), len(plan["held"])
     consistent = (
-        len(candidates) == observed_unique and observed_unique >= 6
+        len(candidates) == observed_unique and observed_unique >= (1 if is_count_audit else 6)
         and metrics["status"] == "REQUIRED_FIELDS_PRESENT"
         and not any(gaps.values()) and matched + ready + held == unique
     )
     return {
-        "status": "LOCAL_DB_SAMPLE_COMPARED" if consistent else "LOCAL_DB_SAMPLE_GAPS",
+        "status": ("LOCAL_COUNT_DB_COMPARED" if consistent else "LOCAL_COUNT_DB_GAPS")
+                  if is_count_audit else ("LOCAL_DB_SAMPLE_COMPARED" if consistent else "LOCAL_DB_SAMPLE_GAPS"),
+        "scope": "COUNT_MATCHED_DOM" if is_count_audit else "INITIAL_SAMPLE",
+        "same_card_set_verified": is_count_audit,
+        "body_unexpanded_possible": metrics["possible_collapsed_body"],
         "store_mapping_verified": True,
         "visible_existing_rows": len(saved),
         "observed_unique": observed_unique, "adapted_candidates": len(candidates),
@@ -820,7 +848,7 @@ def count_budget_status(rounds, elapsed, round_limit, second_limit):
     return None
 
 
-def run_once(context, expected_total=None, store_key="thailand", auto_total=False, scroll_mode="baseline", audit_fields=False, field_sample=False, body_sample=False, adapter_sample=False, db_sample=False, count_round_limit=240, count_second_limit=600):
+def run_once(context, expected_total=None, store_key="thailand", auto_total=False, scroll_mode="baseline", audit_fields=False, field_sample=False, body_sample=False, adapter_sample=False, db_sample=False, count_round_limit=240, count_second_limit=600, count_db_audit=False):
     report = {"status": "NOT_STARTED", "phase": "select_startup_tab",
               "overview_selected": False,
               "reviews_selected": False, "initial_unique": 0,
@@ -828,6 +856,10 @@ def run_once(context, expected_total=None, store_key="thailand", auto_total=Fals
               "scroll_verified": False, "database_writes": False,
               "full_coverage_verified": False}
     report["store"] = STORE_CONFIG[store_key]["name"]
+    if count_db_audit and (store_key not in {"thailand", "taiwan"} or expected_total is None
+                           or not 1 <= expected_total <= MAX_COUNT_DB_AUDIT
+                           or auto_total or field_sample or body_sample or adapter_sample or db_sample):
+        raise ValueError("COUNT_DB_AUDIT_SCOPE_INVALID")
     if expected_total is not None:
         report["expected_total_user_observed"] = expected_total
         report["additional_unique"] = 0
@@ -1071,6 +1103,16 @@ def run_once(context, expected_total=None, store_key="thailand", auto_total=Fals
             if report["field_audit"]["status"] != "REQUIRED_FIELDS_PRESENT":
                 report["status"] = "COUNT_MATCHED_FIELD_GAPS"
             report["phase"] = "final_field_audit"
+        if count_db_audit and report["status"] == "EXPECTED_COUNT_MATCHED":
+            report["phase"] = "count_matched_db_audit"
+            if blocked(page) or not same_place(page.url, store_key) or not selected(reviews):
+                report["status"] = "COUNT_DB_AUDIT_CONTEXT_UNVERIFIED"
+                return report
+            if not report["append_only_retained"]:
+                report["status"] = "COUNT_DB_AUDIT_CARD_SET_UNVERIFIED"
+                return report
+            report["db_sample"] = compare_db_sample(page, store_key, len(seen), expected_seen=seen)
+            report["status"] = report["db_sample"]["status"]
         return report
     except Exception as exc:
         report["error_type"] = type(exc).__name__
@@ -1175,7 +1217,12 @@ def self_test():
     assert count_budget_status(5, 60, 10, 60) == "TIME_BUDGET_REACHED"
     assert coverage_status(6332, 6332) == "EXPECTED_COUNT_MATCHED"
     assert coverage_status(6331, 6332) == "EXPECTED_COUNT_NOT_REACHED"
-    print("SELF_TEST_PASS: 59 checks")
+    expected = {hashlib.sha256(x.encode()).digest() for x in ("a", "b")}
+    assert verified_record_set([{"source_id": "a"}, {"source_id": "b"}], expected)
+    assert not verified_record_set([{"source_id": "a"}, {"source_id": "c"}], expected)
+    assert not verified_record_set([{"source_id": "a"}, {"source_id": "a"}], expected)
+    assert not verified_record_set([{"source_id": None}], expected)
+    print("SELF_TEST_PASS: 63 checks")
 
 
 def main():
@@ -1206,7 +1253,19 @@ def main():
                         help="Explicit maximum scroll rounds for a count check.")
     parser.add_argument("--count-second-limit", type=int, default=600,
                         help="Explicit elapsed scroll budget in seconds; no automatic retry.")
+    parser.add_argument("--count-db-audit", action="store_true",
+                        help="GET-only comparison of the count-matched card set; bounded pilot, no write approval.")
     args = parser.parse_args()
+    if args.count_db_audit:
+        if (args.expected_total is None or not 1 <= args.expected_total <= MAX_COUNT_DB_AUDIT
+                or args.auto_total or args.field_sample or args.body_sample or args.adapter_sample or args.db_sample):
+            parser.error("--count-db-audit requires explicit --expected-total between 1 and 1000")
+        try:
+            read_only_db_config()
+        except Exception:
+            print("LOCAL_DB_AUDIT_CONFIG_UNAVAILABLE")
+            return 2
+        args.audit_fields = True
     if not 1 <= args.count_round_limit <= MAX_COUNT_ROUNDS or not 1 <= args.count_second_limit <= MAX_COUNT_SECONDS:
         parser.error("count budget outside diagnostic limits")
     if args.db_sample and (args.adapter_sample or args.body_sample or args.field_sample or args.audit_fields or args.auto_total or args.expected_total is not None):
@@ -1257,6 +1316,8 @@ def main():
         success_status = "LOCAL_ADAPTER_SAMPLE_PASSED"
     if args.db_sample:
         success_status = "LOCAL_DB_SAMPLE_COMPARED"
+    if args.count_db_audit:
+        success_status = "LOCAL_COUNT_DB_COMPARED"
     for attempt in range(1, target_runs + 1):
         context = None
         try:
@@ -1266,7 +1327,7 @@ def main():
                     args=["--profile-directory=Default"],
                 )
                 try:
-                    report = run_once(context, args.expected_total, args.store, args.auto_total, args.scroll_mode, args.audit_fields, args.field_sample, args.body_sample, args.adapter_sample, args.db_sample, args.count_round_limit, args.count_second_limit)
+                    report = run_once(context, args.expected_total, args.store, args.auto_total, args.scroll_mode, args.audit_fields, args.field_sample, args.body_sample, args.adapter_sample, args.db_sample, args.count_round_limit, args.count_second_limit, args.count_db_audit)
                     # Snapshot unexpected lifecycle events BEFORE our intentional
                     # cleanup, so closing Chrome normally is not a false failure.
                     report["lifecycle"] = dict(report["lifecycle"])
@@ -1305,6 +1366,8 @@ def main():
         final_status = "LOCAL_ADAPTER_SAMPLE_PASSED" if passed else "LOCAL_ADAPTER_SAMPLE_GAPS"
     if args.db_sample:
         final_status = "LOCAL_DB_SAMPLE_COMPARED" if passed else "LOCAL_DB_SAMPLE_GAPS"
+    if args.count_db_audit:
+        final_status = "LOCAL_COUNT_DB_COMPARED" if passed else "LOCAL_COUNT_DB_GAPS"
     print("LOCAL_REVIEW_FINAL: " + json.dumps({
         "status": final_status,
         "attempts": len(reports), "database_writes": False,
