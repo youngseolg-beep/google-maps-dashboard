@@ -287,23 +287,46 @@ def run_once(context, expected_total=None, store_key="thailand", auto_total=Fals
         overview = find_visible_tab(page, OVERVIEW_TAB)
         report["phase"] = "find_reviews_tab"
         reviews = find_visible_tab(page, REVIEW_TAB)
-        report["phase"] = "select_overview"
-        if not selected(overview):
-            overview.click(timeout=5000)
-            page.wait_for_timeout(1500)
+        report["phase"] = "verify_selected_tab"
+        report["overview_selected"] = selected(overview)
+        report["reviews_selected_at_entry"] = selected(reviews)
         if blocked(page):
             report["status"] = "ACCESS_RESTRICTED_STOPPED"
             return report
-        report["overview_selected"] = selected(overview)
-        if not report["overview_selected"] or not same_place(page.url, store_key):
-            report["status"] = "OVERVIEW_NOT_VERIFIED"
+        if not same_place(page.url, store_key):
+            report["status"] = "PLACE_NOT_VERIFIED"
             return report
 
-        report["phase"] = "read_overview_total"
-        total_evidence = displayed_total(page)
-        report["overview_total"] = total_evidence
+        if report["overview_selected"]:
+            report["phase"] = "read_overview_total"
+            report["overview_total"] = displayed_total(page)
+            report["phase"] = "select_reviews"
+            reviews.click(timeout=5000)
+        elif report["reviews_selected_at_entry"]:
+            # A canonical place link may open the review tab directly.
+            # Keep that verified state instead of forcing an unnecessary
+            # navigation back to Overview.
+            report["overview_total"] = {"status": "NOT_OBSERVED",
+                                        "displayed_total": None, "candidate_counts": []}
+        else:
+            report["status"] = "ENTRY_TAB_NOT_VERIFIED"
+            return report
+
+        report["phase"] = "verify_reviews"
+        for _ in range(15):
+            if blocked(page):
+                report["status"] = "ACCESS_RESTRICTED_STOPPED"
+                return report
+            if selected(reviews) and same_place(page.url, store_key):
+                break
+            page.wait_for_timeout(1000)
+        report["reviews_selected"] = selected(reviews)
+        if not report["reviews_selected"] or not same_place(page.url, store_key):
+            report["status"] = "REVIEWS_NOT_VERIFIED"
+            return report
+
         if auto_total:
-            expected_total = total_evidence["displayed_total"]
+            expected_total = report["overview_total"]["displayed_total"]
             if expected_total is None or not 1 <= expected_total <= 1000:
                 report["status"] = "DISPLAYED_TOTAL_NOT_VERIFIED_OR_OUT_OF_SCOPE"
                 return report
@@ -312,15 +335,12 @@ def run_once(context, expected_total=None, store_key="thailand", auto_total=Fals
             report["additional_unique"] = 0
             report["stop_reason"] = None
 
-        report["phase"] = "select_reviews"
-        reviews.click(timeout=5000)
         page.wait_for_timeout(3000)
         if blocked(page):
             report["status"] = "ACCESS_RESTRICTED_STOPPED"
             return report
-        report["reviews_selected"] = selected(reviews)
-        if not report["reviews_selected"] or not same_place(page.url, store_key):
-            report["status"] = "REVIEWS_NOT_VERIFIED"
+        if not selected(reviews) or not same_place(page.url, store_key):
+            report["status"] = "REVIEW_CONTEXT_LOST"
             return report
 
         report["phase"] = "wait_for_review_cards"
