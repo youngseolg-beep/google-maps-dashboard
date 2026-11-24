@@ -56,6 +56,49 @@ def inspect(page):
     }""")
 
 
+def aggregate_maps_network(page):
+    """Return a network counter; never record URL, body, account, or tokens."""
+    counts = {
+        "document_responses": 0, "script_responses": 0,
+        "xhr_fetch_responses": 0, "script_http_errors": 0,
+        "xhr_fetch_http_errors": 0, "failed_scripts": 0,
+        "failed_xhr_fetch": 0, "page_script_errors": 0,
+    }
+
+    def on_response(response):
+        try:
+            kind = response.request.resource_type
+            if kind == "document":
+                counts["document_responses"] += 1
+            elif kind == "script":
+                counts["script_responses"] += 1
+                if response.status >= 400:
+                    counts["script_http_errors"] += 1
+            elif kind in ("xhr", "fetch"):
+                counts["xhr_fetch_responses"] += 1
+                if response.status >= 400:
+                    counts["xhr_fetch_http_errors"] += 1
+        except Exception:
+            pass
+
+    def on_failure(request):
+        try:
+            if request.resource_type == "script":
+                counts["failed_scripts"] += 1
+            elif request.resource_type in ("xhr", "fetch"):
+                counts["failed_xhr_fetch"] += 1
+        except Exception:
+            pass
+
+    def on_page_error(_error):
+        counts["page_script_errors"] += 1
+
+    page.on("response", on_response)
+    page.on("requestfailed", on_failure)
+    page.on("pageerror", on_page_error)
+    return counts
+
+
 def run(browser,name,state):
     opts={"locale":"en-US","viewport":{"width":1365,"height":900}}
     ctx=production.new_crawler_context(browser, auth_state=state) if state else browser.new_context(**opts)
@@ -64,6 +107,7 @@ def run(browser,name,state):
         # Direct Maps first; a redirect to Google Account sign-in must not
         # contaminate our separate Maps login-UI diagnostic.
         maps=ctx.new_page()
+        maps_network = aggregate_maps_network(maps)
         nav=maps.goto("https://www.google.com/maps",wait_until="domcontentloaded",timeout=45000)
         result["maps_nav_http_code"]=nav.status if nav else None
         maps.wait_for_timeout(2200)
@@ -115,6 +159,7 @@ def run(browser,name,state):
                 top_level_iframes: Math.min(20, document.querySelectorAll('iframe').length)
             };
         }""")
+        result["maps_network_aggregate"]=dict(maps_network)
         maps.close()
         # A new tab is used for the account-page check.
         account=ctx.new_page()
