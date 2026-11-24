@@ -663,6 +663,7 @@ def integration_sample(page, store_key, observed_unique):
     The sample uses visible text and must never authorize persistence.
     """
     import scraper as production
+    from review_audit_invariants import candidate_partition_ok
     metrics, records = audit_loaded_fields(page, observed_unique, include_records=True)
     candidates, gaps = adapt_local_records(
         records, STORE_CONFIG[store_key]["name"], production.now_kst().date(), production
@@ -675,11 +676,10 @@ def integration_sample(page, store_key, observed_unique):
     matched = plan["already_matched"]
     ready, held = len(plan["ready"]), len(plan["held"])
     passed = (
-        len(candidates) == observed_unique and observed_unique >= 6
+        observed_unique >= 6
         and metrics["status"] == "REQUIRED_FIELDS_PRESENT"
-        and not any(gaps.values())
+        and candidate_partition_ok(observed_unique, len(candidates), unique, matched, ready, held, gaps)
         and replay["already_matched"] == 1 and not replay["ready"] and not replay["held"]
-        and matched + ready + held == unique
     )
     return {
         "status": "LOCAL_ADAPTER_SAMPLE_PASSED" if passed else "LOCAL_ADAPTER_SAMPLE_GAPS",
@@ -845,6 +845,7 @@ def verified_record_set(records, expected_seen):
 def compare_db_sample(page, store_key, observed_unique, *, expected_seen=None):
     import scraper as production
     from review_append_preflight import preview_append
+    from review_audit_invariants import candidate_partition_ok, preview_partition_ok
     is_count_audit = expected_seen is not None
     metrics, records = audit_loaded_fields(page, observed_unique, include_records=True)
     if is_count_audit and (not 1 <= observed_unique <= MAX_COUNT_DB_AUDIT
@@ -872,9 +873,11 @@ def compare_db_sample(page, store_key, observed_unique, *, expected_seen=None):
     matched = plan["already_matched"]
     ready, held = len(plan["ready"]), len(plan["held"])
     consistent = (
-        len(candidates) == observed_unique and observed_unique >= (1 if is_count_audit else 6)
+        observed_unique >= (1 if is_count_audit else 6)
         and metrics["status"] == "REQUIRED_FIELDS_PRESENT"
-        and not any(gaps.values()) and matched + ready + held == unique
+        and not metrics["duplicate_cards"]
+        and candidate_partition_ok(observed_unique, len(candidates), unique, matched, ready, held, gaps)
+        and preview_partition_ok(append_preview)
     )
     return {
         "status": ("LOCAL_COUNT_DB_COMPARED" if consistent else "LOCAL_COUNT_DB_GAPS")

@@ -110,6 +110,8 @@ def build_append_preview(store, history, candidates, production):
     report = {
         "candidate_count": len(candidates),
         "valid_candidate_count": len(accepted),
+        "legacy_unique_candidates": len(plan["unique_candidates"]),
+        "legacy_collapsed_candidates": len(accepted) - len(plan["unique_candidates"]),
         "legacy_matched": plan["already_matched"],
         "legacy_held": len(plan["held"]),
         "legacy_held_reasons": plan["held_reasons"],

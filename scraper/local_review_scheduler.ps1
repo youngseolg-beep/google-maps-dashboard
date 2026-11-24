@@ -145,6 +145,9 @@ switch ($Action) {
             $stage = 'offline_batch_tests'
             & $python $Batch --self-test
             if ($LASTEXITCODE -ne 0) { throw 'BATCH_SELF_TEST_FAILED' }
+            $stage = 'offline_audit_invariants_tests'
+            & $python (Join-Path $PSScriptRoot 'review_audit_invariants.py')
+            if ($LASTEXITCODE -ne 0) { throw 'AUDIT_INVARIANTS_SELF_TEST_FAILED' }
             $stage = 'offline_append_preflight_tests'
             & $python (Join-Path $PSScriptRoot 'review_append_preflight.py')
             if ($LASTEXITCODE -ne 0) { throw 'APPEND_PREFLIGHT_SELF_TEST_FAILED' }
