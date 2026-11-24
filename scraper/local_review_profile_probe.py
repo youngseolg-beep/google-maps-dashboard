@@ -16,13 +16,67 @@ from urllib.parse import urlsplit
 STORE = "Saemaeul Central Eastville"
 PLACE_URL = (
     "https://www.google.com/maps/place/Saemaeul+(새마을식당)+-+Central+Eastville/"
-    "@13.8036867,100.6145723,17z/data=!4m7!3m6!1s0x30e29df2eeea54a1:"
-    "0x484a32408c147d14!8m2!3d13.8036867!4d100.6145723!"
+    "@13.8036867,100.6145723,17z/data=!4m8!3m7!1s0x30e29df2eeea54a1:"
+    "0x484a32408c147d14!8m2!3d13.8036867!4d100.6145723!9m1!1b1!"
     "16s%2Fg%2F11s674rmb9?entry=ttu"
 )
 PLACE_TOKEN = "0x484a32408c147d14"
 REVIEW_TAB = re.compile(r"^(reviews|리뷰)(?:\s*\(?[\d,]+\)?)?$", re.I)
 OVERVIEW_TAB = re.compile(r"^(overview|개요)$", re.I)
+MAPS_HOME = "https://www.google.com/maps"
+SEARCH_INPUT = (
+    "input#searchboxinput, input[aria-label='Search Google Maps'], "
+    "input[aria-label='Google 지도 검색'], input[aria-label='Google Maps 검색'], "
+    "input[placeholder='Search Google Maps'], input[placeholder='Google 지도 검색']"
+)
+
+
+def page_summary(page):
+    """Safe UI counts only; never include account names, review text or URLs."""
+    return page.evaluate("""() => {
+        const visible = el => {
+            const r = el.getBoundingClientRect();
+            return r.width > 0 && r.height > 0;
+        };
+        const nodes = [...document.querySelectorAll('[role="tab"], button, [role="button"]')]
+            .filter(visible);
+        const name = el => ((el.getAttribute('aria-label') || '') + ' ' +
+            (el.innerText || '')).trim();
+        return {
+            visible_tabs: nodes.filter(el => el.getAttribute('role') === 'tab').length,
+            overview_controls: nodes.filter(el => /^(overview|개요)(\s|$)/i.test(name(el))).length,
+            reviews_controls: nodes.filter(el => /^(reviews|리뷰)(\s|$)/i.test(name(el))).length,
+            visible_inputs: [...document.querySelectorAll('input')].filter(visible).length,
+            visible_review_cards: [...document.querySelectorAll('.jftiEf[data-review-id]')]
+                .filter(visible).length,
+            place_heading: !!document.querySelector('h1.DUwDvf'),
+            ready: document.readyState
+        };
+    }""")
+
+
+def find_store_by_search(page, report):
+    """Follow the same normal Maps search path the user tested manually."""
+    report["phase"] = "open_maps_home"
+    page.goto(MAPS_HOME, wait_until="domcontentloaded", timeout=45000)
+    page.wait_for_timeout(2500)
+    if blocked(page):
+        return "ACCESS_RESTRICTED_STOPPED"
+    report["phase"] = "find_maps_search_input"
+    search = page.locator(SEARCH_INPUT).filter(visible=True).first
+    search.wait_for(state="visible", timeout=20000)
+    report["phase"] = "search_store"
+    search.fill(STORE)
+    search.press("Enter")
+    report["phase"] = "wait_for_expected_place"
+    # Do not click arbitrary results or accept a similarly named store.
+    for _ in range(20):
+        page.wait_for_timeout(1000)
+        if blocked(page):
+            return "ACCESS_RESTRICTED_STOPPED"
+        if same_place(page.url):
+            return None
+    return "PLACE_NOT_VERIFIED"
 
 
 def same_place(url):
@@ -104,21 +158,16 @@ def run_once(context):
         page = startup_tabs[0] if startup_tabs else context.new_page()
         page.on("close", lambda *_: lifecycle.update(page_closed=True))
         page.on("crash", lambda *_: lifecycle.update(page_crashed=True))
-        report["phase"] = "open_store"
-        page.goto(PLACE_URL, wait_until="domcontentloaded", timeout=45000)
-        report["phase"] = "wait_for_store"
-        page.wait_for_timeout(2500)
-        if blocked(page):
-            report["status"] = "ACCESS_RESTRICTED_STOPPED"
-            return report
-        if not same_place(page.url):
-            report["status"] = "PLACE_NOT_VERIFIED"
+        failure = find_store_by_search(page, report)
+        if failure:
+            report["status"] = failure
             return report
 
-        report["phase"] = "find_overview_and_reviews_tabs"
+        report["phase"] = "find_overview_tab"
         overview = page.get_by_role("tab", name=OVERVIEW_TAB)
         reviews = page.get_by_role("tab", name=REVIEW_TAB)
         overview.first.wait_for(state="visible", timeout=20000)
+        report["phase"] = "find_reviews_tab"
         reviews.first.wait_for(state="visible", timeout=20000)
         report["phase"] = "select_overview"
         if not selected(overview.first):
@@ -205,6 +254,12 @@ def run_once(context):
             if report["error_type"] == "TargetClosedError" else "PROBE_ERROR"
         )
         return report
+    finally:
+        if page is not None and not page.is_closed():
+            try:
+                report["ui_summary"] = page_summary(page)
+            except Exception:
+                pass
 
 
 def self_test():
@@ -226,6 +281,8 @@ def self_test():
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--self-test", action="store_true")
+    parser.add_argument("--inspect-on-failure", action="store_true",
+                        help="Keep the visible Chrome window open after a failed check until Enter.")
     args = parser.parse_args()
     if args.self_test:
         self_test()
@@ -259,6 +316,13 @@ def main():
                     # Snapshot unexpected lifecycle events BEFORE our intentional
                     # cleanup, so closing Chrome normally is not a false failure.
                     report["lifecycle"] = dict(report["lifecycle"])
+                    if args.inspect_on_failure and report["status"] != "REVIEW_DEPTH_VERIFIED":
+                        print("LOCAL_REVIEW_INSPECT: " + json.dumps(report, ensure_ascii=False), flush=True)
+                        print("CHECK THE OPEN CHROME WINDOW. Press Enter in PowerShell to close it.", flush=True)
+                        try:
+                            input()
+                        except EOFError:
+                            pass
                 finally:
                     try:
                         context.close()
