@@ -61,14 +61,30 @@ def run(browser,name,state):
     ctx=production.new_crawler_context(browser, auth_state=state) if state else browser.new_context(**opts)
     result={"arm":name,"status":"STARTED"}
     try:
-        page=ctx.new_page()
-        page.goto(URL,wait_until="domcontentloaded",timeout=45000)
-        page.wait_for_timeout(4200)
-        result["signals"]=inspect(page)
-        page.goto("https://www.google.com/maps",
-                  wait_until="domcontentloaded",timeout=45000)
-        page.wait_for_timeout(2200)
-        result["maps_account_ui"]=production.verify_dedicated_google_login(page)
+        # Direct Maps first; a redirect to Google Account sign-in must not
+        # contaminate our separate Maps login-UI diagnostic.
+        maps=ctx.new_page()
+        maps.goto("https://www.google.com/maps",wait_until="domcontentloaded",timeout=45000)
+        maps.wait_for_timeout(2200)
+        result["maps_account_ui_early"]=production.verify_dedicated_google_login(maps)
+        maps.wait_for_timeout(5800)
+        result["maps_account_ui_late"]=production.verify_dedicated_google_login(maps)
+        result["maps_account_ui"]=result["maps_account_ui_late"]
+        result["maps_signin_control_visible"]=maps.evaluate("""() => {
+            const visible=el=>{const r=el.getBoundingClientRect();return r.width>0&&r.height>0};
+            return [...document.querySelectorAll('a,button')].filter(visible).some(el=>
+                /^(sign in|log in|로그인)$/i.test(
+                    ((el.getAttribute('aria-label')||'')+' '+(el.innerText||'')).trim()
+                ));
+        }""")
+        result["maps_shell_present"]=maps.locator("#pane, #scene, #searchboxinput").count()>0
+        maps.close()
+        # A new tab is used for the account-page check.
+        account=ctx.new_page()
+        account.goto(URL,wait_until="domcontentloaded",timeout=45000)
+        account.wait_for_timeout(4200)
+        result["signals"]=inspect(account)
+        account.close()
         result["status"]="COMPLETE"
     except Exception as exc:
         result["status"]="ERROR"
@@ -76,7 +92,6 @@ def run(browser,name,state):
     finally:
         ctx.close()
     return result
-
 
 def main():
     if os.getenv("SUPABASE_URL") or os.getenv("SUPABASE_SERVICE_ROLE_KEY"):
