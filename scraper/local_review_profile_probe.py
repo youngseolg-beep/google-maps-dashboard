@@ -804,7 +804,20 @@ def coverage_status(count, expected, blocked=False):
     return "EXPECTED_COUNT_NOT_REACHED"
 
 
-def run_once(context, expected_total=None, store_key="thailand", auto_total=False, scroll_mode="baseline", audit_fields=False, field_sample=False, body_sample=False, adapter_sample=False, db_sample=False):
+MAX_EXPECTED_COUNT = 10000
+MAX_COUNT_ROUNDS = 5000
+MAX_COUNT_SECONDS = 10800
+
+
+def count_budget_status(rounds, elapsed, round_limit, second_limit):
+    if elapsed >= second_limit:
+        return "TIME_BUDGET_REACHED"
+    if rounds >= round_limit:
+        return "ROUND_LIMIT"
+    return None
+
+
+def run_once(context, expected_total=None, store_key="thailand", auto_total=False, scroll_mode="baseline", audit_fields=False, field_sample=False, body_sample=False, adapter_sample=False, db_sample=False, count_round_limit=240, count_second_limit=600):
     report = {"status": "NOT_STARTED", "phase": "select_startup_tab",
               "overview_selected": False,
               "reviews_selected": False, "initial_unique": 0,
@@ -816,6 +829,13 @@ def run_once(context, expected_total=None, store_key="thailand", auto_total=Fals
         report["expected_total_user_observed"] = expected_total
         report["additional_unique"] = 0
         report["stop_reason"] = None
+    if expected_total is not None or auto_total:
+        if not 1 <= count_round_limit <= MAX_COUNT_ROUNDS or not 1 <= count_second_limit <= MAX_COUNT_SECONDS:
+            raise ValueError("COUNT_BUDGET_OUT_OF_SCOPE")
+        if expected_total is not None and not 1 <= expected_total <= MAX_EXPECTED_COUNT:
+            raise ValueError("EXPECTED_COUNT_OUT_OF_SCOPE")
+        report["count_round_limit"] = count_round_limit
+        report["count_second_limit"] = count_second_limit
     report["scroll_mode"] = scroll_mode
     report["larger_wheel_rounds"] = 0
     report["append_only_retained"] = True
@@ -903,7 +923,7 @@ def run_once(context, expected_total=None, store_key="thailand", auto_total=Fals
 
         if auto_total:
             expected_total = report["overview_total"]["displayed_total"]
-            if expected_total is None or not 1 <= expected_total <= 1000:
+            if expected_total is None or not 1 <= expected_total <= MAX_EXPECTED_COUNT:
                 report["status"] = "DISPLAYED_TOTAL_NOT_VERIFIED_OR_OUT_OF_SCOPE"
                 return report
             report["expected_total_user_observed"] = expected_total
@@ -960,7 +980,7 @@ def run_once(context, expected_total=None, store_key="thailand", auto_total=Fals
         idle = 0
         scroll_started = time.monotonic()
         report["phase"] = "scroll_review_pane"
-        max_rounds = 240 if expected_total is not None else 8
+        max_rounds = count_round_limit if expected_total is not None else 8
         for i in range(1, max_rounds + 1):
             if blocked(page):
                 report["status"] = "ACCESS_RESTRICTED_STOPPED"
@@ -968,6 +988,15 @@ def run_once(context, expected_total=None, store_key="thailand", auto_total=Fals
             if not same_place(page.url, store_key) or not selected(reviews):
                 report["status"] = "REVIEW_CONTEXT_LOST"
                 return report
+            if expected_total is not None:
+                if len(seen) >= expected_total:
+                    report["stop_reason"] = "EXPECTED_TOTAL_REACHED" if len(seen) == expected_total else "EXPECTED_TOTAL_EXCEEDED"
+                    break
+                budget = count_budget_status(i - 1, time.monotonic() - scroll_started,
+                                             count_round_limit, count_second_limit)
+                if budget:
+                    report["stop_reason"] = budget
+                    break
             pane = review_pane(page)
             if pane is None:
                 if expected_total is not None:
@@ -1009,7 +1038,7 @@ def run_once(context, expected_total=None, store_key="thailand", auto_total=Fals
                         "expected_total_user_observed": expected_total,
                     }), flush=True)
                 if len(seen) >= expected_total:
-                    report["stop_reason"] = "EXPECTED_TOTAL_REACHED"
+                    report["stop_reason"] = "EXPECTED_TOTAL_REACHED" if len(seen) == expected_total else "EXPECTED_TOTAL_EXCEEDED"
                     break
             elif len(seen) >= 6 and report["scroll_verified"]:
                 break
@@ -1023,6 +1052,8 @@ def run_once(context, expected_total=None, store_key="thailand", auto_total=Fals
         if expected_total is not None:
             report["stop_reason"] = report["stop_reason"] or "ROUND_LIMIT"
             report["status"] = coverage_status(len(seen), expected_total, blocked(page))
+            report["count_gap"] = expected_total - len(seen)
+            report["count_evidence"] = "USER_OR_UI_TOTAL_COMPARISON_ONLY"
             report["expected_count_matched"] = report["status"] == "EXPECTED_COUNT_MATCHED"
         else:
             report["status"] = result_status(
@@ -1034,6 +1065,8 @@ def run_once(context, expected_total=None, store_key="thailand", auto_total=Fals
                 report["status"] = "FIELD_AUDIT_CONTEXT_UNVERIFIED"
                 return report
             report["field_audit"] = audit_loaded_fields(page, len(seen))
+            if report["field_audit"]["status"] != "REQUIRED_FIELDS_PRESENT":
+                report["status"] = "COUNT_MATCHED_FIELD_GAPS"
             report["phase"] = "final_field_audit"
         return report
     except Exception as exc:
@@ -1134,7 +1167,12 @@ def self_test():
     assert local_date_value("수정됨: 어제", base, FakeProduction) == ("2026-11-23", "estimated")
     assert local_date_value("한 달 전", base, FakeProduction) == ("2026-10-25", "estimated")
     assert local_date_value("unknown", base, FakeProduction) == (None, None)
-    print("SELF_TEST_PASS: 54 checks")
+    assert count_budget_status(5, 10, 10, 60) is None
+    assert count_budget_status(10, 10, 10, 60) == "ROUND_LIMIT"
+    assert count_budget_status(5, 60, 10, 60) == "TIME_BUDGET_REACHED"
+    assert coverage_status(6332, 6332) == "EXPECTED_COUNT_MATCHED"
+    assert coverage_status(6331, 6332) == "EXPECTED_COUNT_NOT_REACHED"
+    print("SELF_TEST_PASS: 59 checks")
 
 
 def main():
@@ -1161,7 +1199,13 @@ def main():
                         help="Read-only sample mapping and synthetic legacy replay; no database access.")
     parser.add_argument("--db-sample", action="store_true",
                         help="Compare initial cards with caller-visible database rows; GET only.")
+    parser.add_argument("--count-round-limit", type=int, default=240,
+                        help="Explicit maximum scroll rounds for a count check.")
+    parser.add_argument("--count-second-limit", type=int, default=600,
+                        help="Explicit elapsed scroll budget in seconds; no automatic retry.")
     args = parser.parse_args()
+    if not 1 <= args.count_round_limit <= MAX_COUNT_ROUNDS or not 1 <= args.count_second_limit <= MAX_COUNT_SECONDS:
+        parser.error("count budget outside diagnostic limits")
     if args.db_sample and (args.adapter_sample or args.body_sample or args.field_sample or args.audit_fields or args.auto_total or args.expected_total is not None):
         parser.error("--db-sample is a standalone diagnostic")
     if args.db_sample:
@@ -1180,8 +1224,8 @@ def main():
         parser.error("--audit-fields requires --auto-total or --expected-total")
     if args.auto_total and args.expected_total is not None:
         parser.error("choose --auto-total or --expected-total, not both")
-    if args.expected_total is not None and not 1 <= args.expected_total <= 1000:
-        parser.error("--expected-total must be between 1 and 1000")
+    if args.expected_total is not None and not 1 <= args.expected_total <= MAX_EXPECTED_COUNT:
+        parser.error("--expected-total must be between 1 and 10000")
     if args.self_test:
         self_test()
         return 0
@@ -1219,7 +1263,7 @@ def main():
                     args=["--profile-directory=Default"],
                 )
                 try:
-                    report = run_once(context, args.expected_total, args.store, args.auto_total, args.scroll_mode, args.audit_fields, args.field_sample, args.body_sample, args.adapter_sample, args.db_sample)
+                    report = run_once(context, args.expected_total, args.store, args.auto_total, args.scroll_mode, args.audit_fields, args.field_sample, args.body_sample, args.adapter_sample, args.db_sample, args.count_round_limit, args.count_second_limit)
                     # Snapshot unexpected lifecycle events BEFORE our intentional
                     # cleanup, so closing Chrome normally is not a false failure.
                     report["lifecycle"] = dict(report["lifecycle"])
@@ -1266,6 +1310,8 @@ def main():
         "observed_unique": reports[-1].get("observed_unique", 0) if reports else 0,
         "scroll_mode": args.scroll_mode,
         "scroll_rounds": reports[-1].get("scroll_rounds", 0) if reports else 0,
+        "stop_reason": reports[-1].get("stop_reason") if reports else None,
+        "count_gap": reports[-1].get("count_gap") if reports else None,
         "elapsed_scroll_seconds": reports[-1].get("elapsed_scroll_seconds") if reports else None,
         "field_audit": reports[-1].get("field_audit") if reports else None,
         "body_sample": reports[-1].get("body_sample") if reports else None,
