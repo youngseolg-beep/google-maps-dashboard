@@ -378,6 +378,34 @@ class ReviewCrawlerRegressionTests(unittest.TestCase):
         with patch("builtins.print"):
             self.assertFalse(scraper.open_reviews_panel(page))
 
+    def test_overview_preview_feed_never_bypasses_reviews_click(self):
+        page = Mock()
+        page.url = "https://www.google.com/maps/place/test"
+        # A review feed/preview is visible even though Overview is selected.
+        page.locator.return_value.filter.return_value.count.return_value = 1
+        evidence = {}
+        with (
+            patch("builtins.print"),
+            patch.object(scraper, "build_url_candidates", return_value=[page.url]),
+            patch.object(scraper, "click_cookie_buttons"),
+            patch.object(scraper, "is_valid_google_maps_place_page", return_value=True),
+            patch.object(scraper, "is_reviews_tab_selected", return_value=False),
+            patch.object(scraper, "open_reviews_panel", return_value=False) as open_panel,
+            patch.object(scraper, "wait_for_reviews") as wait,
+            patch.object(scraper, "extract_reviews") as extract,
+        ):
+            result = scraper.scrape_store(
+                page, {**STORE, "url": page.url},
+                collection_evidence=evidence,
+            )
+        open_panel.assert_called_once_with(page)
+        wait.assert_not_called()
+        extract.assert_not_called()
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["collected_count"], 0)
+        self.assertEqual(result["collection_issue"], "review_panel_unverified_partial")
+        self.assertTrue(evidence["review_panel_unverified"])
+
     def test_unopened_reviews_panel_is_recorded_as_partial(self):
         page = Mock()
         page.locator.return_value.filter.return_value.count.return_value = 0
