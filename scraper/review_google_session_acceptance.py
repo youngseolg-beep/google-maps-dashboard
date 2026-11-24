@@ -99,9 +99,17 @@ def aggregate_maps_network(page):
     return counts
 
 
-def run(browser,name,state):
+def run(browser,name,state, use_native_context=False):
     opts={"locale":"en-US","viewport":{"width":1365,"height":900}}
-    ctx=production.new_crawler_context(browser, auth_state=state) if state else browser.new_context(**opts)
+    if use_native_context and state is not None:
+        # Preserve the installed Chrome browser's own User-Agent instead of
+        # the legacy Chrome/125 override used by production.new_crawler_context.
+        ctx=browser.new_context(
+            storage_state=state, locale="en-US",
+            timezone_id="Asia/Seoul", viewport=opts["viewport"],
+        )
+    else:
+        ctx=production.new_crawler_context(browser, auth_state=state) if state else browser.new_context(**opts)
     result={"arm":name,"status":"STARTED"}
     try:
         # Direct Maps first; a redirect to Google Account sign-in must not
@@ -198,6 +206,26 @@ def main():
                 result["runs"].append(run(browser,"existing_dedicated_auth",state))
             finally:
                 browser.close()
+            # GitHub-hosted Ubuntu can include a regular Google Chrome binary.
+            # Compare it against Playwright's bundled Chromium. A missing
+            # Chrome installation is an inconclusive environment result.
+            chrome=None
+            try:
+                chrome=p.chromium.launch(headless=True,channel="chrome",args=[
+                    "--no-sandbox","--disable-dev-shm-usage"
+                ])
+                result["runs"].append(run(
+                    chrome,"existing_dedicated_auth_system_chrome",state,
+                    use_native_context=True
+                ))
+            except Exception as exc:
+                result["runs"].append({
+                    "arm":"existing_dedicated_auth_system_chrome",
+                    "status":"ERROR","error_type":type(exc).__name__,
+                })
+            finally:
+                if chrome is not None:
+                    chrome.close()
     DEST.write_text(json.dumps(result,indent=2,sort_keys=True),encoding="utf-8")
     print("GOOGLE_SESSION_ACCEPTANCE_VERDICT: "+json.dumps(result,sort_keys=True))
     if os.getenv("GITHUB_STEP_SUMMARY"):
