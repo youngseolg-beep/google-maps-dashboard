@@ -12,6 +12,7 @@ from pathlib import Path
 import re
 import sys
 import time
+from datetime import date, timedelta
 from urllib.parse import urlsplit
 
 STORE = "Saemaeul Central Eastville"
@@ -260,14 +261,14 @@ def field_audit_status(metrics, observed_unique):
     return "REQUIRED_FIELDS_PRESENT"
 
 
-def audit_loaded_fields(page, observed_unique):
+def audit_loaded_fields(page, observed_unique, *, include_records=False):
     """Inspect loaded review cards in one DOM pass; return aggregate counts only.
 
     Never export individual authors, text, dates or review IDs. A blank body
     can be a rating-only review; an unexpanded body is not a full-text review.
     Do not replace missing dates/ratings with guessed values.
     """
-    metrics = page.locator(".jftiEf[data-review-id]").evaluate_all(r"""cards => {
+    result = page.locator(".jftiEf[data-review-id]").evaluate_all(r"""(cards, includeRecords) => {
         const out = {
             unique_cards: 0, duplicate_cards: 0, author_present: 0,
             rating_valid: 0, date_present: 0, relative_date_label: 0,
@@ -277,6 +278,7 @@ def audit_loaded_fields(page, observed_unique):
             rating_distribution: {"1":0,"2":0,"3":0,"4":0,"5":0}
         };
         const seen = new Set();
+        const records = [];
         const txt = el => (el?.innerText || el?.textContent || '').trim();
         for (const card of cards) {
             const id = card.getAttribute('data-review-id');
@@ -323,6 +325,14 @@ def audit_loaded_fields(page, observed_unique):
                 out.rating_distribution[String(rating)]++;
             }
             const body = [...card.querySelectorAll('.wiI7pd,.MyEned')].some(el => !!txt(el));
+            if (includeRecords) {
+                const primary = [...card.querySelectorAll('.wiI7pd')].find(el => el.getClientRects().length)
+                    || [...card.querySelectorAll('.MyEned')].find(el => el.getClientRects().length);
+                records.push({source_id:id, author:txt(card.querySelector('.d4r55')),
+                    rating:ratings.size === 1 ? [...ratings][0] : null,
+                    date_label:dates.size === 1 ? [...dates][0] : null,
+                    body:txt(primary)});
+            }
             if (body) out.body_present++;
             else out.body_not_detected++;
             if ([...card.querySelectorAll('button,[role="button"]')].some(el =>
@@ -330,12 +340,13 @@ def audit_loaded_fields(page, observed_unique):
                 out.possible_collapsed_body++;
             }
         }
-        return out;
-    }""")
+        return {metrics:out, records};
+    }""", include_records)
+    metrics = result["metrics"]
     metrics["status"] = field_audit_status(metrics, observed_unique)
     metrics["full_text_verified"] = False
     metrics["absolute_dates_verified"] = False
-    return metrics
+    return (metrics, result["records"]) if include_records else metrics
 
 
 MORE_LABEL = re.compile(r"^(?:자세히 보기|더보기|더 보기|more|read more|see more)$", re.I)
@@ -538,6 +549,104 @@ def audit_body_sample(page, store_key, reviews, limit=10):
     return metrics
 
 
+def local_date_value(label, base, production):
+    """Preserve unknowns; do not use the legacy estimated-today fallback."""
+    if not isinstance(label, str) or not label.strip():
+        return None, None
+    value = label.strip()
+    absolute = re.fullmatch(r"(\d{4})(?:[.\-/]\s*|년\s*)(\d{1,2})(?:[.\-/]\s*|월\s*)(\d{1,2})(?:[.일])?", value)
+    if absolute:
+        try:
+            parsed = date(*map(int, absolute.groups()))
+            return (parsed.isoformat(), "displayed") if parsed <= base else (None, None)
+        except ValueError:
+            return None, None
+    normalized = re.sub(r"^(?:수정됨|edited)\s*[:·-]?\s*", "", value, flags=re.I)
+    normalized = re.sub(r"\s*[·(]?\s*(?:수정됨|edited)\)?$", "", normalized, flags=re.I)
+    normalized = re.sub(r"^한\s*(주|달|개월|년|시간|분|초)\s*전$", r"1\1 전", normalized)
+    if normalized in ("어제", "하루 전"):
+        age = 1
+    elif normalized == "방금":
+        age = 0
+    else:
+        age = production.relative_review_age_days(normalized)
+    if age is None or age < 0 or age > 36500:
+        return None, None
+    return (base - timedelta(days=age)).isoformat(), "estimated"
+
+
+def adapt_local_records(records, store_name, base, production):
+    """Map transient visible records into the existing engine's candidate shape.
+
+    Only for offline reconciliation. Store display name is diagnostic scope,
+    never a substitute for an immutable DB store ID during a real rollout.
+    """
+    candidates, seen = [], set()
+    gaps = dict(invalid_metadata=0, missing_source=0, duplicate_source=0)
+    for raw in records:
+        source = production.hash_google_source_review_id(store_name, raw.get("source_id"))
+        if not source:
+            gaps["missing_source"] += 1
+            continue
+        if source in seen:
+            gaps["duplicate_source"] += 1
+            continue
+        seen.add(source)
+        author = production.normalize_spaces(raw.get("author") or "")
+        rating = raw.get("rating")
+        review_date, date_source = local_date_value(raw.get("date_label"), base, production)
+        if not author or author.casefold() in {"anonymous", "unknown"} or type(rating) is not int or not 1 <= rating <= 5 or not review_date:
+            gaps["invalid_metadata"] += 1
+            continue
+        body = raw.get("body") or ""
+        candidates.append(dict(store_name=store_name, author=author, rating=rating,
+                               text=body, has_text=bool(body.strip()),
+                               date=raw["date_label"], review_date=review_date,
+                               review_date_source=date_source,
+                               collected_at=base.isoformat(), google_source_id_hash=source))
+    return candidates, gaps
+
+
+def integration_sample(page, store_key, observed_unique):
+    """Run the existing pure dedupe planner against synthetic historical rows.
+
+    No actual database access; no credentials; no writes or raw review output.
+    The sample uses visible text and must never authorize persistence.
+    """
+    import scraper as production
+    metrics, records = audit_loaded_fields(page, observed_unique, include_records=True)
+    candidates, gaps = adapt_local_records(
+        records, STORE_CONFIG[store_key]["name"], production.now_kst().date(), production
+    )
+    # Synthetic replay of a candidate tests the legacy exact-match pathway.
+    historical = [dict(candidates[0])] if candidates else []
+    replay = production.plan_safe_review_append(historical, historical)
+    plan = production.plan_safe_review_append(historical, candidates)
+    unique = len(plan["unique_candidates"])
+    matched = plan["already_matched"]
+    ready, held = len(plan["ready"]), len(plan["held"])
+    passed = (
+        len(candidates) == observed_unique and observed_unique >= 6
+        and metrics["status"] == "REQUIRED_FIELDS_PRESENT"
+        and not any(gaps.values())
+        and replay["already_matched"] == 1 and not replay["ready"] and not replay["held"]
+        and matched + ready + held == unique
+    )
+    return {
+        "status": "LOCAL_ADAPTER_SAMPLE_PASSED" if passed else "LOCAL_ADAPTER_SAMPLE_GAPS",
+        "observed_unique": observed_unique, "adapted_candidates": len(candidates),
+        "metadata_gaps": gaps, "legacy_unique_candidates": unique,
+        "legacy_key_collapses": len(candidates) - unique,
+        "synthetic_history_rows": len(historical), "synthetic_matched": matched,
+        "synthetic_ready": ready, "synthetic_held": held,
+        "synthetic_held_reasons": plan["held_reasons"],
+        "synthetic_replay_matched": replay["already_matched"],
+        "synthetic_replay_new": len(replay["ready"]),
+        "actual_database_compared": False, "database_writes": False,
+        "full_text_verified": False, "write_approved": False,
+    }
+
+
 def coverage_status(count, expected, blocked=False):
     """Compare against the user-observed count, not proof of an API snapshot."""
     if blocked:
@@ -549,7 +658,7 @@ def coverage_status(count, expected, blocked=False):
     return "EXPECTED_COUNT_NOT_REACHED"
 
 
-def run_once(context, expected_total=None, store_key="thailand", auto_total=False, scroll_mode="baseline", audit_fields=False, field_sample=False, body_sample=False):
+def run_once(context, expected_total=None, store_key="thailand", auto_total=False, scroll_mode="baseline", audit_fields=False, field_sample=False, body_sample=False, adapter_sample=False):
     report = {"status": "NOT_STARTED", "phase": "select_startup_tab",
               "overview_selected": False,
               "reviews_selected": False, "initial_unique": 0,
@@ -676,7 +785,7 @@ def run_once(context, expected_total=None, store_key="thailand", auto_total=Fals
         report["phase"] = "observe_initial_reviews"
         report["initial_unique"], _ = observe(page, seen, id_cache)
         report["observed_unique"] = len(seen)
-        if field_sample or body_sample:
+        if field_sample or body_sample or adapter_sample:
             report["phase"] = "initial_field_sample"
             report["field_audit"] = audit_loaded_fields(page, len(seen))
             report["status"] = (
@@ -684,6 +793,10 @@ def run_once(context, expected_total=None, store_key="thailand", auto_total=Fals
                 if len(seen) >= 6 and report["field_audit"]["status"] == "REQUIRED_FIELDS_PRESENT"
                 else "FIELD_SAMPLE_GAPS"
             )
+            if adapter_sample and report["status"] == "FIELD_SAMPLE_VERIFIED":
+                report["phase"] = "local_adapter_sample"
+                report["integration_sample"] = integration_sample(page, store_key, len(seen))
+                report["status"] = report["integration_sample"]["status"]
             if body_sample and report["status"] == "FIELD_SAMPLE_VERIFIED":
                 report["phase"] = "body_sample"
                 report["body_sample"] = audit_body_sample(page, store_key, reviews)
@@ -856,7 +969,19 @@ def self_test():
     assert body_sample_status(dict(sample, context_lost=True)) == "BODY_SAMPLE_CONTEXT_LOST"
     assert body_sample_status(dict(sample, click_errors=1)) == "BODY_SAMPLE_GAPS"
     assert body_sample_status(dict(sample, original_confirmed=1)) == "BODY_SAMPLE_GAPS"
-    print("SELF_TEST_PASS: 47 checks")
+    class FakeProduction:
+        @staticmethod
+        def relative_review_age_days(label):
+            return {"2개월 전": 60, "1달 전": 30}.get(label)
+    base = date(2026, 11, 24)
+    assert local_date_value("2026.11.20", base, FakeProduction) == ("2026-11-20", "displayed")
+    assert local_date_value("2026.02.30", base, FakeProduction) == (None, None)
+    assert local_date_value("2027.01.01", base, FakeProduction) == (None, None)
+    assert local_date_value("2개월 전", base, FakeProduction) == ("2026-09-25", "estimated")
+    assert local_date_value("수정됨: 어제", base, FakeProduction) == ("2026-11-23", "estimated")
+    assert local_date_value("한 달 전", base, FakeProduction) == ("2026-10-25", "estimated")
+    assert local_date_value("unknown", base, FakeProduction) == (None, None)
+    print("SELF_TEST_PASS: 54 checks")
 
 
 def main():
@@ -879,7 +1004,11 @@ def main():
                         help="Audit initially loaded cards only; no scrolling or full-store rescan.")
     parser.add_argument("--body-sample", action="store_true",
                         help="Check More and Original controls on up to ten initial cards; aggregate only.")
+    parser.add_argument("--adapter-sample", action="store_true",
+                        help="Read-only sample mapping and synthetic legacy replay; no database access.")
     args = parser.parse_args()
+    if args.adapter_sample and (args.body_sample or args.field_sample or args.audit_fields or args.auto_total or args.expected_total is not None):
+        parser.error("--adapter-sample is a standalone diagnostic")
     if args.body_sample and (args.field_sample or args.audit_fields or args.auto_total or args.expected_total is not None):
         parser.error("--body-sample is a standalone diagnostic")
     if args.field_sample and (args.audit_fields or args.auto_total or args.expected_total is not None):
@@ -910,10 +1039,12 @@ def main():
     # No export or import of cookies, no synthetic browser identity. Each
     # trial opens and closes the existing dedicated local Chrome normally.
     count_mode = args.auto_total or args.expected_total is not None
-    target_runs = 1 if count_mode or args.field_sample or args.body_sample else args.runs
+    target_runs = 1 if count_mode or args.field_sample or args.body_sample or args.adapter_sample else args.runs
     success_status = "FIELD_SAMPLE_VERIFIED" if args.field_sample else ("EXPECTED_COUNT_MATCHED" if count_mode else "REVIEW_DEPTH_VERIFIED")
     if args.body_sample:
         success_status = "BODY_SAMPLE_CONTROLS_VERIFIED"
+    if args.adapter_sample:
+        success_status = "LOCAL_ADAPTER_SAMPLE_PASSED"
     for attempt in range(1, target_runs + 1):
         context = None
         try:
@@ -923,7 +1054,7 @@ def main():
                     args=["--profile-directory=Default"],
                 )
                 try:
-                    report = run_once(context, args.expected_total, args.store, args.auto_total, args.scroll_mode, args.audit_fields, args.field_sample, args.body_sample)
+                    report = run_once(context, args.expected_total, args.store, args.auto_total, args.scroll_mode, args.audit_fields, args.field_sample, args.body_sample, args.adapter_sample)
                     # Snapshot unexpected lifecycle events BEFORE our intentional
                     # cleanup, so closing Chrome normally is not a false failure.
                     report["lifecycle"] = dict(report["lifecycle"])
@@ -958,6 +1089,8 @@ def main():
         final_status = "LOCAL_FIELD_SAMPLE_PASSED" if passed else "LOCAL_FIELD_SAMPLE_GAPS"
     if args.body_sample:
         final_status = "LOCAL_BODY_SAMPLE_PASSED" if passed else "LOCAL_BODY_SAMPLE_GAPS"
+    if args.adapter_sample:
+        final_status = "LOCAL_ADAPTER_SAMPLE_PASSED" if passed else "LOCAL_ADAPTER_SAMPLE_GAPS"
     print("LOCAL_REVIEW_FINAL: " + json.dumps({
         "status": final_status,
         "attempts": len(reports), "database_writes": False,
@@ -969,6 +1102,7 @@ def main():
         "elapsed_scroll_seconds": reports[-1].get("elapsed_scroll_seconds") if reports else None,
         "field_audit": reports[-1].get("field_audit") if reports else None,
         "body_sample": reports[-1].get("body_sample") if reports else None,
+        "integration_sample": reports[-1].get("integration_sample") if reports else None,
         "full_coverage_verified": False,
     }), flush=True)
     return 0 if passed else 2
