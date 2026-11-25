@@ -16,6 +16,8 @@ SUITES = {
     "preflight": ("review_append_preflight.py", []),
     "snapshot": ("review_append_snapshot.py", []),
     "writer": ("review_append_execution_qa.py", []),
+    "source_identity": ("review_source_identity.py", []),
+    "source_append_replay": ("review_source_append_preview.py", []),
 }
 
 

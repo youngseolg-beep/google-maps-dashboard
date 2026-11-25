@@ -1102,6 +1102,7 @@ def source_identity_preview(records, history, store_id, production):
 def compare_db_sample(page, store_key, observed_unique, *, expected_seen=None):
     import scraper as production
     from review_append_preflight import preview_append
+    from review_source_append_preview import simulate_append_replay
     from review_audit_invariants import candidate_partition_ok, preview_partition_ok, diagnostic_partition
     is_count_audit = expected_seen is not None
     metrics, records = audit_loaded_fields(page, observed_unique, include_records=True)
@@ -1155,6 +1156,7 @@ def compare_db_sample(page, store_key, observed_unique, *, expected_seen=None):
         "diagnostic_partition": partition,
         "match_evidence": match_evidence(records, historical, production),
         "source_identity_preview": source_identity_preview(records, historical, store["id"], production),
+        "source_append_replay_simulation": simulate_append_replay(store, saved, candidates, production),
         "body_absence_evidence": metrics["body_absence_evidence"],
         "unverified_body_structure": metrics["unverified_body_structure"],
         "actual_database_compared": True, "database_writes": False,
