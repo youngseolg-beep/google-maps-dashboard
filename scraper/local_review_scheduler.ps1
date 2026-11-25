@@ -2,7 +2,7 @@
 # Default is read-only Plan; explicit RegisterDisabled creates a disabled task.
 [CmdletBinding()]
 param(
-    [ValidateSet('Plan','RegisterDisabled','Status','ManualQA','RunScheduled')]
+    [ValidateSet('Plan','RegisterDisabled','Status','Health','ManualQA','RunScheduled')]
     [string]$Action = 'Plan'
 )
 $ErrorActionPreference = 'Stop'
@@ -132,6 +132,11 @@ switch ($Action) {
         $status | ConvertTo-Json -Depth 6
         exit 0
     }
+    'Health' {
+        $python = (Get-Command python.exe -CommandType Application).Source
+        & $python (Join-Path $PSScriptRoot 'local_review_health.py')
+        exit $LASTEXITCODE
+    }
     'ManualQA' {
         # Offline self-tests followed by a bounded two-store adapter sample.
         # This is not the final all-store or production-write acceptance test.
@@ -145,6 +150,9 @@ switch ($Action) {
             $stage = 'offline_batch_tests'
             & $python $Batch --self-test
             if ($LASTEXITCODE -ne 0) { throw 'BATCH_SELF_TEST_FAILED' }
+            $stage = 'offline_health_tests'
+            & $python (Join-Path $PSScriptRoot 'local_review_health.py') --self-test
+            if ($LASTEXITCODE -ne 0) { throw 'HEALTH_SELF_TEST_FAILED' }
             $stage = 'offline_audit_invariants_tests'
             & $python (Join-Path $PSScriptRoot 'review_audit_invariants.py')
             if ($LASTEXITCODE -ne 0) { throw 'AUDIT_INVARIANTS_SELF_TEST_FAILED' }
