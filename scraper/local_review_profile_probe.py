@@ -376,7 +376,14 @@ def audit_loaded_fields(page, observed_unique, *, include_records=False):
                 records.push({source_id:id, author:txt(card.querySelector('.d4r55')),
                     rating:ratings.size === 1 ? [...ratings][0] : null,
                     date_label:dates.size === 1 ? [...dates][0] : null,
-                    body:scoped.text, body_scope:scoped.kind});
+                    body:scoped.text, body_scope:scoped.kind,
+                    // Diagnostic only: replicate the previous extractor's first
+                    // match per selector and longest normalized text. Never use
+                    // this broad text as a candidate payload.
+                    legacy_body_probe:['.wiI7pd','.MyEned'].map(sel => {
+                        const el = card.querySelector(sel);
+                        return (el?.innerText || '').replace(/\s+/g,' ').trim();
+                    }).sort((a,b) => b.length - a.length)[0] || ""});
             }
             if (body) out.body_present++;
             else out.body_not_detected++;
@@ -410,7 +417,7 @@ MAIN_BODY_JS = r"""card => {
     const bodies = [...card.querySelectorAll('.wiI7pd')].filter(el => visible(el) && beforeOwner(el));
     const unique = bodies.filter(el => !bodies.some(other => other !== el && el.contains(other)));
     if (unique.length === 1) return {kind:"PRIMARY", text:(unique[0].innerText || '').trim()};
-    if (unique.length > 1) return {kind:"AMBIGUOUS", text:""};
+    if (unique.length > 1) return {kind:"AMBIGUOUS", text:"", reason:"MULTIPLE_SCOPED_NODES"};
     const fallback = [...card.querySelectorAll('.MyEned')].some(el => visible(el) && beforeOwner(el) && (el.innerText || '').trim());
     const broad = [...card.querySelectorAll('.wiI7pd,.MyEned')];
     const hasText = el => !!(el.innerText || el.textContent || '').trim();
@@ -974,7 +981,10 @@ def match_evidence(records, history, production):
     by_author = defaultdict(list)
     for row in history:
         by_author[norm(row.get("author"))].append(row)
+    live_pairs = Counter((norm(r.get("author")), r.get("rating")) for r in records)
     counts = Counter()
+    legacy_counts = Counter()
+    legacy_scripts = Counter()
     live_scripts = Counter()
     saved_scripts = Counter(script(row.get("text")) for row in history)
     for raw in records:
@@ -993,8 +1003,27 @@ def match_evidence(records, history, production):
             counts["unique_author_rating_candidate"] += 1
         else:
             counts["multiple_author_rating_candidates"] += 1
+        if len(same_rating) == 1 and live_pairs[(norm(raw.get("author")), raw.get("rating"))] == 1:
+            counts["one_to_one_author_rating_candidate"] += 1
         if same_rating and not scoped:
             counts["author_rating_body_unverified"] += 1
+        legacy = raw.get("legacy_body_probe") or ""
+        if legacy:
+            legacy_scripts[script(legacy)] += 1
+        if legacy and same_author:
+            exact = [row for row in same_author if norm(row.get("text")) == norm(legacy)]
+            if exact:
+                legacy_counts["broad_exact_author_body"] += 1
+                if any(row.get("rating") == raw.get("rating") for row in exact):
+                    legacy_counts["broad_exact_author_rating_body"] += 1
+                if not scoped or norm(legacy) != norm(body):
+                    legacy_counts["broad_match_not_same_as_scoped"] += 1
+            elif same_rating and any(
+                production.normalized_review_text_for_match(row.get("text")) and
+                production.normalized_review_text_for_match(row.get("text")) == production.normalized_review_text_for_match(legacy)
+                for row in same_rating
+            ):
+                legacy_counts["broad_punctuation_insensitive_candidate"] += 1
         if same_rating and scoped:
             if any(norm(row.get("text")) == norm(body) for row in same_rating):
                 counts["author_rating_exact_body"] += 1
@@ -1004,6 +1033,9 @@ def match_evidence(records, history, production):
                     counts["different_script_group"] += 1
     return {"counts": dict(counts), "live_scoped_body_scripts": dict(live_scripts),
             "history_body_scripts": dict(saved_scripts),
+            "legacy_extractor_shadow_counts": dict(legacy_counts),
+            "legacy_extractor_shadow_scripts": dict(legacy_scripts),
+            "legacy_shadow_is_diagnostic_only": True,
             "history_canonical_key_matches": sum(row.get("review_key") == production.canonical_review_hash(row) for row in history),
             "history_rows": len(history), "identity_confirmed_by_metadata": False,
             "write_approved": False}
@@ -1553,7 +1585,34 @@ def self_test():
         raise AssertionError("conflict must be rejected")
     except ValueError as exc:
         assert str(exc) == "AUDIT_HISTORY_FIELD_CONFLICT"
-    print("SELF_TEST_PASS: 79 checks")
+    class MatchFixtureProduction:
+        @staticmethod
+        def normalize_spaces(value):
+            return " ".join(value.split())
+        @staticmethod
+        def normalized_review_text_for_match(value):
+            return re.sub(r"[^\w]+", "", " ".join((value or "").split()).casefold())
+        @staticmethod
+        def canonical_review_hash(row):
+            return "fixture-key"
+    history = [{"author":"A", "rating":5, "text":"Old English text", "review_key":"fixture-key"},
+               {"author":"B", "rating":4, "text":"Same!", "review_key":"fixture-key"}]
+    live = [{"author":"A", "rating":5, "body":"다른 언어", "body_scope":"PRIMARY", "legacy_body_probe":"Old English text"},
+            {"author":"B", "rating":4, "body":"Same!", "body_scope":"PRIMARY", "legacy_body_probe":"Same!"},
+            {"author":"A", "rating":5, "body":"", "body_scope":"NOT_DETECTED", "legacy_body_probe":"Old English text"},
+            {"author":"C", "rating":3, "body":"New", "body_scope":"PRIMARY"}]
+    evidence = match_evidence(live, history, MatchFixtureProduction)
+    assert evidence["counts"]["observed"] == 4
+    assert evidence["counts"]["one_to_one_author_rating_candidate"] == 1
+    assert evidence["counts"]["author_rating_exact_body"] == 1
+    assert evidence["counts"]["author_rating_different_body"] == 1
+    assert evidence["counts"]["author_rating_body_unverified"] == 1
+    assert evidence["counts"]["no_author_match"] == 1
+    assert evidence["legacy_extractor_shadow_counts"]["broad_exact_author_rating_body"] == 3
+    assert evidence["legacy_extractor_shadow_counts"]["broad_match_not_same_as_scoped"] == 2
+    assert evidence["history_canonical_key_matches"] == 2
+    assert evidence["write_approved"] is False and evidence["identity_confirmed_by_metadata"] is False
+    print("SELF_TEST_PASS: 89 checks")
 
 
 def main():
