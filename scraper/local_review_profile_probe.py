@@ -938,9 +938,11 @@ def run_once(context, expected_total=None, store_key="thailand", auto_total=Fals
               "scroll_verified": False, "database_writes": False,
               "full_coverage_verified": False}
     report["store"] = STORE_CONFIG[store_key]["name"]
-    if count_body_audit and (not count_db_audit or expected_total is None
-                             or not 1 <= expected_total <= MAX_COUNT_BODY_AUDIT):
+    if count_body_audit and (expected_total is None or not 1 <= expected_total <= MAX_COUNT_BODY_AUDIT
+                             or auto_total or field_sample or body_sample or adapter_sample or db_sample):
         raise ValueError("COUNT_BODY_AUDIT_SCOPE_INVALID")
+    if count_body_audit:
+        audit_fields = True
     if count_db_audit and (store_key not in {"thailand", "taiwan"} or expected_total is None
                            or not 1 <= expected_total <= MAX_COUNT_DB_AUDIT
                            or auto_total or field_sample or body_sample or adapter_sample or db_sample):
@@ -1189,7 +1191,7 @@ def run_once(context, expected_total=None, store_key="thailand", auto_total=Fals
             if report["field_audit"]["status"] != "REQUIRED_FIELDS_PRESENT":
                 report["status"] = "COUNT_MATCHED_FIELD_GAPS"
             report["phase"] = "final_field_audit"
-        if count_db_audit and report["status"] == "EXPECTED_COUNT_MATCHED":
+        if (count_db_audit or count_body_audit) and report["status"] == "EXPECTED_COUNT_MATCHED":
             report["phase"] = "count_matched_db_audit"
             if blocked(page) or not same_place(page.url, store_key) or not selected(reviews):
                 report["status"] = "COUNT_DB_AUDIT_CONTEXT_UNVERIFIED"
@@ -1203,7 +1205,7 @@ def run_once(context, expected_total=None, store_key="thailand", auto_total=Fals
                 same_set = verified_record_set(before_records, seen)
                 del before_records
                 if not same_set:
-                    report["status"] = "COUNT_DB_AUDIT_CARD_SET_UNVERIFIED"
+                    report["status"] = "COUNT_BODY_AUDIT_CARD_SET_UNVERIFIED"
                     return report
                 report["body_sample"] = audit_body_sample(
                     page, store_key, reviews, limit=len(seen),
@@ -1216,7 +1218,20 @@ def run_once(context, expected_total=None, store_key="thailand", auto_total=Fals
                     return report
                 if (evidence in {"COUNT_BODY_CONTEXT_LOST", "COUNT_BODY_INCOMPLETE"}
                         or not same_place(page.url, store_key) or not selected(reviews)):
-                    report["status"] = "COUNT_BODY_DB_AUDIT_INCOMPLETE"
+                    report["status"] = "COUNT_BODY_AUDIT_INCOMPLETE"
+                    return report
+                after_fields, after_records = audit_loaded_fields(page, len(seen), include_records=True)
+                report["post_body_field_audit"] = after_fields
+                report["post_body_same_card_set"] = verified_record_set(after_records, seen)
+                del after_records
+                if (not report["post_body_same_card_set"] or after_fields["duplicate_cards"]
+                        or after_fields["status"] != "REQUIRED_FIELDS_PRESENT"):
+                    report["status"] = "COUNT_BODY_AUDIT_CARD_OR_FIELD_GAPS"
+                    return report
+                if not count_db_audit:
+                    report["status"] = ("LOCAL_COUNT_BODY_CONTROLS_CHECKED"
+                                        if evidence == "COUNT_BODY_CONTROLS_CHECKED"
+                                        else "LOCAL_COUNT_BODY_EVIDENCE_LIMITED")
                     return report
             report["phase"] = "count_matched_db_audit"
             report["db_sample"] = compare_db_sample(page, store_key, len(seen), expected_seen=seen)
@@ -1380,11 +1395,13 @@ def main():
     parser.add_argument("--count-db-audit", action="store_true",
                         help="GET-only comparison of the count-matched card set; bounded pilot, no write approval.")
     parser.add_argument("--count-body-audit", action="store_true",
-                        help="Bounded body-control audit before count-matched DB comparison.")
+                        help="Bounded body-control audit after count match; DB comparison is optional.")
     args = parser.parse_args()
-    if args.count_body_audit and (not args.count_db_audit or args.expected_total is None
-                                 or not 1 <= args.expected_total <= MAX_COUNT_BODY_AUDIT):
-        parser.error("--count-body-audit requires --count-db-audit and explicit total <= 250")
+    if args.count_body_audit:
+        if (args.expected_total is None or not 1 <= args.expected_total <= MAX_COUNT_BODY_AUDIT
+                or args.auto_total or args.field_sample or args.body_sample or args.adapter_sample or args.db_sample):
+            parser.error("--count-body-audit requires explicit total <= 250 and no sample mode")
+        args.audit_fields = True
     if args.count_db_audit:
         if (args.expected_total is None or not 1 <= args.expected_total <= MAX_COUNT_DB_AUDIT
                 or args.auto_total or args.field_sample or args.body_sample or args.adapter_sample or args.db_sample):
@@ -1445,6 +1462,8 @@ def main():
         success_status = "LOCAL_ADAPTER_SAMPLE_PASSED"
     if args.db_sample:
         success_status = "LOCAL_DB_SAMPLE_COMPARED"
+    if args.count_body_audit:
+        success_status = "LOCAL_COUNT_BODY_CONTROLS_CHECKED"
     if args.count_db_audit:
         success_status = "LOCAL_COUNT_BODY_DB_COMPARED" if args.count_body_audit else "LOCAL_COUNT_DB_COMPARED"
     for attempt in range(1, target_runs + 1):
@@ -1495,7 +1514,9 @@ def main():
         final_status = "LOCAL_ADAPTER_SAMPLE_PASSED" if passed else "LOCAL_ADAPTER_SAMPLE_GAPS"
     if args.db_sample:
         final_status = "LOCAL_DB_SAMPLE_COMPARED" if passed else "LOCAL_DB_SAMPLE_GAPS"
-    if args.count_db_audit:
+    if args.count_body_audit:
+        final_status = success_status if passed else reports[-1].get("status", "LOCAL_COUNT_BODY_GAPS")
+    elif args.count_db_audit:
         final_status = success_status if passed else "LOCAL_COUNT_DB_GAPS"
     print("LOCAL_REVIEW_FINAL: " + json.dumps({
         "status": final_status,
@@ -1513,6 +1534,8 @@ def main():
         "field_audit": reports[-1].get("field_audit") if reports else None,
         "body_sample": reports[-1].get("body_sample") if reports else None,
         "count_body_evidence": reports[-1].get("count_body_evidence") if reports else None,
+        "post_body_field_audit": reports[-1].get("post_body_field_audit") if reports else None,
+        "post_body_same_card_set": reports[-1].get("post_body_same_card_set") if reports else None,
         "integration_sample": reports[-1].get("integration_sample") if reports else None,
         "db_sample": reports[-1].get("db_sample") if reports else None,
         "full_coverage_verified": False,
