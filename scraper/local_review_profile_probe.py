@@ -287,6 +287,7 @@ def audit_loaded_fields(page, observed_unique, *, include_records=False):
             scoped_body_fallback_unverified: 0, scoped_body_ambiguous: 0, scoped_body_not_detected: 0,
             unverified_body_structure: {},
             unverified_with_owner_header: 0,
+            body_absence_evidence: {},
             rating_distribution: {"1":0,"2":0,"3":0,"4":0,"5":0}
         };
         const seen = new Set();
@@ -373,12 +374,15 @@ def audit_loaded_fields(page, observed_unique, *, include_records=False):
                 const reason = scoped.reason || "PRIMARY_BLANK";
                 out.unverified_body_structure[reason] = (out.unverified_body_structure[reason] || 0) + 1;
                 if (scoped.owner_header_visible) out.unverified_with_owner_header++;
+                const absence = scoped.absence_evidence || "OTHER_UNVERIFIED";
+                out.body_absence_evidence[absence] = (out.body_absence_evidence[absence] || 0) + 1;
             }
             if (includeRecords) {
                 records.push({source_id:id, author:txt(card.querySelector('.d4r55')),
                     rating:ratings.size === 1 ? [...ratings][0] : null,
                     date_label:dates.size === 1 ? [...dates][0] : null,
                     body:scoped.text, body_scope:scoped.kind,
+                    body_absence_evidence:scoped.absence_evidence || null,
                     // Diagnostic only: replicate the previous extractor's first
                     // match per selector and longest normalized text. Never use
                     // this broad text as a candidate payload.
@@ -429,7 +433,16 @@ MAIN_BODY_JS = r"""card => {
         broad.some(el => visible(el) && hasText(el) && !beforeOwner(el)) ? "AFTER_OWNER_HEADER" :
         broad.some(el => !visible(el) && hasText(el)) ? "HIDDEN_TEXT_NODE" :
         broad.length ? "BLANK_OR_NO_SCOPED_NODE" : "NO_KNOWN_BODY_NODE";
-    return {kind:fallback ? "FALLBACK_UNVERIFIED" : "NOT_DETECTED", text:"", reason, owner_header_visible: !!owner && visible(owner)};
+    // Distinguish structural absence from an excluded or hidden customer body.
+    // A visible owner-only section is evidence, not proof of a rating-only review.
+    const customerNodes = broad.filter(el => !el.closest('.CDe7pd') &&
+        (!owner || !!(el.compareDocumentPosition(owner) & Node.DOCUMENT_POSITION_FOLLOWING)));
+    const ownerNodes = broad.filter(el => el.closest('.CDe7pd') && visible(el) && hasText(el));
+    const absence = customerNodes.length ? "CUSTOMER_NODE_PRESENT_UNVERIFIED" :
+        owner && visible(owner) && ownerNodes.length ? "OWNER_ONLY_KNOWN_NODES" :
+        broad.length === 0 ? "NO_KNOWN_TEXT_NODES" : "OTHER_UNVERIFIED";
+    return {kind:fallback ? "FALLBACK_UNVERIFIED" : "NOT_DETECTED", text:"", reason,
+        owner_header_visible: !!owner && visible(owner), absence_evidence: absence};
 }"""
 
 
@@ -1043,6 +1056,49 @@ def match_evidence(records, history, production):
             "write_approved": False}
 
 
+def source_identity_preview(records, history, store_id, production):
+    """One-to-one exact-text linkage proposal only, without persisting identifiers.
+
+    A Google source hash does not exist on historical rows. Exact scoped text,
+    author and rating offer linkage evidence, not proof of identity. Reject
+    duplicate source IDs and shared historical targets across all live cards.
+    """
+    from collections import Counter, defaultdict
+    def normalized(value):
+        return production.normalize_spaces(value or "").casefold()
+    def key(author, rating, body):
+        return normalized(author), rating, normalized(body)
+    saved = defaultdict(list)
+    for row in history:
+        k = key(row.get("author"), row.get("rating"), row.get("text"))
+        if k[0] and k[0] not in {"anonymous","unknown"} and k[2] and row.get("id"):
+            saved[k].append(row["id"])
+    sources = [production.hash_google_source_review_id(str(store_id), r.get("source_id")) for r in records]
+    source_counts = Counter(sources)
+    possibilities = []
+    categories = Counter()
+    for raw, source in zip(records, sources):
+        if not source or source_counts[source] != 1:
+            categories["invalid_or_duplicate_source"] += 1
+            continue
+        if raw.get("body_scope") != "PRIMARY" or not normalized(raw.get("body")):
+            categories["body_unverified"] += 1
+            continue
+        k = key(raw.get("author"), raw.get("rating"), raw.get("body"))
+        targets = saved.get(k, [])
+        if len(targets) != 1:
+            categories["no_exact_target" if not targets else "multiple_exact_targets"] += 1
+            continue
+        possibilities.append(targets[0])
+    target_counts = Counter(possibilities)
+    for target in possibilities:
+        categories["one_to_one_exact_proposal" if target_counts[target] == 1 else "shared_target_held"] += 1
+    return {"counts": dict(categories), "observed": len(records),
+            "classified": sum(categories.values()), "balanced": sum(categories.values()) == len(records),
+            "stable_source_id_available_in_dom": sum(bool(source) for source in sources),
+            "identity_verified": False, "links_persisted": 0, "write_approved": False}
+
+
 def compare_db_sample(page, store_key, observed_unique, *, expected_seen=None):
     import scraper as production
     from review_append_preflight import preview_append
@@ -1098,6 +1154,8 @@ def compare_db_sample(page, store_key, observed_unique, *, expected_seen=None):
         "append_preview": append_preview,
         "diagnostic_partition": partition,
         "match_evidence": match_evidence(records, historical, production),
+        "source_identity_preview": source_identity_preview(records, historical, store["id"], production),
+        "body_absence_evidence": metrics["body_absence_evidence"],
         "unverified_body_structure": metrics["unverified_body_structure"],
         "actual_database_compared": True, "database_writes": False,
         "history_visibility": "CALLER_VISIBLE_ONLY",
@@ -1647,7 +1705,28 @@ def self_test():
     assert parse_qsl(urlsplit(english_url).query).count(("hl", "en")) == 1
     assert parse_qsl(urlsplit(maps_language_url(english_url + "&hl=ko", "en")).query).count(("hl", "en")) == 1
     assert not any(k == "hl" and v != "en" for k,v in parse_qsl(urlsplit(maps_language_url(english_url + "&hl=ko", "en")).query))
-    print("SELF_TEST_PASS: 94 checks")
+    class IdentityFixtureProduction(MatchFixtureProduction):
+        @staticmethod
+        def hash_google_source_review_id(store_id, source_id):
+            return hashlib.sha256((store_id + ":" + source_id).encode()).hexdigest() if source_id else None
+    old = [{"id":"1","author":"A","rating":5,"text":"Exact"},
+           {"id":"2","author":"B","rating":4,"text":"Shared"}]
+    current = [{"source_id":"a","author":"A","rating":5,"body":"Exact","body_scope":"PRIMARY"},
+               {"source_id":"b","author":"B","rating":4,"body":"Shared","body_scope":"PRIMARY"},
+               {"source_id":"c","author":"B","rating":4,"body":"Shared","body_scope":"PRIMARY"},
+               {"source_id":"d","author":"D","rating":5,"body":"","body_scope":"NOT_DETECTED"},
+               {"source_id":"e","author":"E","rating":5,"body":"New","body_scope":"PRIMARY"}]
+    p = source_identity_preview(current, old, "store", IdentityFixtureProduction)
+    assert p["balanced"] and p["classified"] == 5
+    assert p["counts"]["one_to_one_exact_proposal"] == 1
+    assert p["counts"]["shared_target_held"] == 2
+    assert p["counts"]["body_unverified"] == 1
+    assert p["counts"]["no_exact_target"] == 1
+    assert p["links_persisted"] == 0 and p["write_approved"] is False
+    p = source_identity_preview(current + [current[0]], old, "store", IdentityFixtureProduction)
+    assert p["counts"]["invalid_or_duplicate_source"] == 2
+    assert p["balanced"] and p["counts"].get("one_to_one_exact_proposal", 0) == 0
+    print("SELF_TEST_PASS: 102 checks")
 
 
 def main():
