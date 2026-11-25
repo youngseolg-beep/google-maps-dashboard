@@ -1726,7 +1726,9 @@ def self_test():
     p = source_identity_preview(current + [current[0]], old, "store", IdentityFixtureProduction)
     assert p["counts"]["invalid_or_duplicate_source"] == 2
     assert p["balanced"] and p["counts"].get("one_to_one_exact_proposal", 0) == 0
-    print("SELF_TEST_PASS: 102 checks")
+    from review_source_identity import self_test as source_replay_self_test
+    source_replay_self_test()
+    print("SELF_TEST_PASS: 102 checks plus source replay suite")
 
 
 def main():
