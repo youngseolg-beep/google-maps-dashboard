@@ -13,7 +13,7 @@ import re
 import sys
 import time
 from datetime import date, timedelta
-from urllib.parse import urlsplit
+from urllib.parse import urlsplit, urlunsplit, parse_qsl, urlencode
 
 STORE = "Saemaeul Central Eastville"
 PLACE_URL = (
@@ -286,6 +286,7 @@ def audit_loaded_fields(page, observed_unique, *, include_records=False):
             scoped_primary_body_present: 0, scoped_primary_body_blank: 0,
             scoped_body_fallback_unverified: 0, scoped_body_ambiguous: 0, scoped_body_not_detected: 0,
             unverified_body_structure: {},
+            unverified_with_owner_header: 0,
             rating_distribution: {"1":0,"2":0,"3":0,"4":0,"5":0}
         };
         const seen = new Set();
@@ -371,6 +372,7 @@ def audit_loaded_fields(page, observed_unique, *, include_records=False):
             if (scoped.kind !== "PRIMARY" || !scoped.text) {
                 const reason = scoped.reason || "PRIMARY_BLANK";
                 out.unverified_body_structure[reason] = (out.unverified_body_structure[reason] || 0) + 1;
+                if (scoped.owner_header_visible) out.unverified_with_owner_header++;
             }
             if (includeRecords) {
                 records.push({source_id:id, author:txt(card.querySelector('.d4r55')),
@@ -427,7 +429,7 @@ MAIN_BODY_JS = r"""card => {
         broad.some(el => visible(el) && hasText(el) && !beforeOwner(el)) ? "AFTER_OWNER_HEADER" :
         broad.some(el => !visible(el) && hasText(el)) ? "HIDDEN_TEXT_NODE" :
         broad.length ? "BLANK_OR_NO_SCOPED_NODE" : "NO_KNOWN_BODY_NODE";
-    return {kind:fallback ? "FALLBACK_UNVERIFIED" : "NOT_DETECTED", text:"", reason};
+    return {kind:fallback ? "FALLBACK_UNVERIFIED" : "NOT_DETECTED", text:"", reason, owner_header_visible: !!owner && visible(owner)};
 }"""
 
 
@@ -1129,7 +1131,19 @@ def count_budget_status(rounds, elapsed, round_limit, second_limit):
     return None
 
 
-def run_once(context, expected_total=None, store_key="thailand", auto_total=False, scroll_mode="baseline", audit_fields=False, field_sample=False, body_sample=False, adapter_sample=False, db_sample=False, count_round_limit=240, count_second_limit=600, count_db_audit=False, count_body_audit=False):
+def maps_language_url(url, language):
+    """Use the ordinary Maps display-language parameter, preserving place path."""
+    if language == "profile":
+        return url
+    if language != "en":
+        raise ValueError("MAPS_LANGUAGE_UNSUPPORTED")
+    p = urlsplit(url)
+    query = [(k, v) for k, v in parse_qsl(p.query, keep_blank_values=True) if k != "hl"]
+    query.append(("hl", "en"))
+    return urlunsplit((p.scheme, p.netloc, p.path, urlencode(query), p.fragment))
+
+
+def run_once(context, expected_total=None, store_key="thailand", auto_total=False, scroll_mode="baseline", audit_fields=False, field_sample=False, body_sample=False, adapter_sample=False, db_sample=False, count_round_limit=240, count_second_limit=600, count_db_audit=False, count_body_audit=False, maps_language="profile"):
     report = {"status": "NOT_STARTED", "phase": "select_startup_tab",
               "overview_selected": False,
               "reviews_selected": False, "initial_unique": 0,
@@ -1137,6 +1151,10 @@ def run_once(context, expected_total=None, store_key="thailand", auto_total=Fals
               "scroll_verified": False, "database_writes": False,
               "full_coverage_verified": False}
     report["store"] = STORE_CONFIG[store_key]["name"]
+    report["maps_language_requested"] = maps_language
+    report["maps_ui_language"] = "UNVERIFIED"
+    if maps_language not in {"profile", "en"} or (maps_language == "en" and auto_total):
+        raise ValueError("MAPS_LANGUAGE_SCOPE_INVALID")
     if count_body_audit and (expected_total is None or not 1 <= expected_total <= MAX_COUNT_BODY_AUDIT
                              or auto_total or field_sample or body_sample or adapter_sample or db_sample):
         raise ValueError("COUNT_BODY_AUDIT_SCOPE_INVALID")
@@ -1188,7 +1206,7 @@ def run_once(context, expected_total=None, store_key="thailand", auto_total=Fals
         else:
             report["phase"] = "open_configured_store"
             report["entry_method"] = "repository_store_url"
-            page.goto(STORE_CONFIG[store_key]["url"], wait_until="domcontentloaded", timeout=45000)
+            page.goto(maps_language_url(STORE_CONFIG[store_key]["url"], maps_language), wait_until="domcontentloaded", timeout=45000)
             for _ in range(20):
                 page.wait_for_timeout(1000)
                 if blocked(page):
@@ -1205,6 +1223,17 @@ def run_once(context, expected_total=None, store_key="thailand", auto_total=Fals
         report["phase"] = "find_reviews_tab"
         reviews = find_visible_tab(page, REVIEW_TAB)
         report["phase"] = "verify_selected_tab"
+        overview_label = overview.inner_text().strip()
+        reviews_label = reviews.inner_text().strip()
+        if overview_label.casefold() == "overview" and re.fullmatch(r"reviews(?:\s*\(?[\d,]+\)?)?", reviews_label, re.I):
+            report["maps_ui_language"] = "ENGLISH"
+        elif overview_label == "개요" and re.fullmatch(r"리뷰(?:\s*\(?[\d,]+\)?)?", reviews_label):
+            report["maps_ui_language"] = "KOREAN"
+        else:
+            report["maps_ui_language"] = "MIXED_OR_UNVERIFIED"
+        if maps_language == "en" and report["maps_ui_language"] != "ENGLISH":
+            report["status"] = "REQUESTED_MAPS_LANGUAGE_NOT_VERIFIED"
+            return report
         report["overview_selected"] = selected(overview)
         report["reviews_selected_at_entry"] = selected(reviews)
         if blocked(page):
@@ -1612,12 +1641,19 @@ def self_test():
     assert evidence["legacy_extractor_shadow_counts"]["broad_match_not_same_as_scoped"] == 2
     assert evidence["history_canonical_key_matches"] == 2
     assert evidence["write_approved"] is False and evidence["identity_confirmed_by_metadata"] is False
-    print("SELF_TEST_PASS: 89 checks")
+    assert maps_language_url(PLACE_URL, "profile") == PLACE_URL
+    english_url = maps_language_url(PLACE_URL, "en")
+    assert exact_place_pair(english_url) == exact_place_pair(PLACE_URL)
+    assert parse_qsl(urlsplit(english_url).query).count(("hl", "en")) == 1
+    assert parse_qsl(urlsplit(maps_language_url(english_url + "&hl=ko", "en")).query).count(("hl", "en")) == 1
+    assert not any(k == "hl" and v != "en" for k,v in parse_qsl(urlsplit(maps_language_url(english_url + "&hl=ko", "en")).query))
+    print("SELF_TEST_PASS: 94 checks")
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--self-test", action="store_true")
+    parser.add_argument("--maps-language", choices=("profile", "en"), default="profile", help="Request English Maps display for a diagnostic; no account setting change.")
     parser.add_argument("--db-read-preflight", action="store_true", help="Verify DB read access and history without opening Chrome.")
     parser.add_argument("--inspect-on-failure", action="store_true",
                         help="Keep the visible Chrome window open after a failed check until Enter.")
@@ -1649,6 +1685,8 @@ def main():
     parser.add_argument("--count-body-audit", action="store_true",
                         help="Bounded body-control audit after count match; DB comparison is optional.")
     args = parser.parse_args()
+    if args.maps_language == "en" and (args.auto_total or args.db_read_preflight or args.self_test):
+        parser.error("--maps-language en is for direct place diagnostics only")
     if args.db_read_preflight:
         if args.self_test or args.count_body_audit or args.count_db_audit or args.expected_total is not None or args.auto_total or args.field_sample or args.body_sample or args.adapter_sample or args.db_sample or args.audit_fields:
             parser.error("--db-read-preflight is standalone")
@@ -1735,9 +1773,10 @@ def main():
                 context = p.chromium.launch_persistent_context(
                     user_data_dir=str(profile), channel="chrome", headless=False,
                     args=["--profile-directory=Default"],
+                    **({"locale": "en-US"} if args.maps_language == "en" else {}),
                 )
                 try:
-                    report = run_once(context, args.expected_total, args.store, args.auto_total, args.scroll_mode, args.audit_fields, args.field_sample, args.body_sample, args.adapter_sample, args.db_sample, args.count_round_limit, args.count_second_limit, args.count_db_audit, args.count_body_audit)
+                    report = run_once(context, args.expected_total, args.store, args.auto_total, args.scroll_mode, args.audit_fields, args.field_sample, args.body_sample, args.adapter_sample, args.db_sample, args.count_round_limit, args.count_second_limit, args.count_db_audit, args.count_body_audit, maps_language=args.maps_language)
                     # Snapshot unexpected lifecycle events BEFORE our intentional
                     # cleanup, so closing Chrome normally is not a false failure.
                     report["lifecycle"] = dict(report["lifecycle"])
@@ -1789,6 +1828,8 @@ def main():
         "initial_unique": reports[-1].get("initial_unique", 0) if reports else 0,
         "additional_unique": reports[-1].get("additional_unique", 0) if reports else 0,
         "scroll_mode": args.scroll_mode,
+        "maps_language_requested": args.maps_language,
+        "maps_ui_language": reports[-1].get("maps_ui_language", "UNVERIFIED") if reports else "UNVERIFIED",
         "scroll_rounds": reports[-1].get("scroll_rounds", 0) if reports else 0,
         "stop_reason": reports[-1].get("stop_reason") if reports else None,
         "count_gap": reports[-1].get("count_gap") if reports else None,
