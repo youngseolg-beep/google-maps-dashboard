@@ -88,6 +88,8 @@ def expect_failed_batch(transport, rows):
 
 
 def run_tests():
+    from datetime import timedelta
+    assert production.now_kst().utcoffset() == timedelta(hours=9)
     old = candidate("Synthetic A", "Historical original review.")
     new = candidate("Synthetic B", "New fixture review.")
     later = candidate("Synthetic C", "Second fixture review.")

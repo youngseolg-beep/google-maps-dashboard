@@ -8,8 +8,8 @@ from pathlib import Path
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode, urlsplit, urlunsplit
 from urllib.request import Request, urlopen
-from datetime import datetime, timedelta
-from zoneinfo import ZoneInfo
+from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from playwright.sync_api import sync_playwright
 
 SUPABASE_URL = os.environ.get("SUPABASE_URL", "").rstrip("/")
@@ -43,7 +43,13 @@ RECENT_ONLY_MAX_ROUNDS = 3
 RECENT_ONLY_MIN_SCROLL_ROUNDS = 2
 MIN_EXPANSION_TEXT_LENGTH = 24
 
-KST = ZoneInfo("Asia/Seoul")
+# The crawler uses KST for current operational timestamps only.
+# Windows may have neither an IANA timezone database nor the tzdata wheel.
+# Preserve IANA behavior when available; current South Korea is UTC+09:00.
+try:
+    KST = ZoneInfo("Asia/Seoul")
+except ZoneInfoNotFoundError:
+    KST = timezone(timedelta(hours=9), "KST")
 
 
 
@@ -368,7 +374,7 @@ def open_all_reviews_control(page):
     """
     selector = "button, [role='button'], a[href]"
     try:
-        index = page.evaluate("""(selector) => {
+        index = page.evaluate(r"""(selector) => {
             const rx = /more reviews|see (all|more) reviews|view (all|more) reviews|리뷰 더보기|모든 리뷰|전체 리뷰|meer recensies|semua ulasan/i;
             const nodes = [...document.querySelectorAll(selector)];
             for (let i=0; i<nodes.length; i++) {
