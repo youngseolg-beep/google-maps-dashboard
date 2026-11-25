@@ -274,6 +274,7 @@ def audit_loaded_fields(page, observed_unique, *, include_records=False):
     Do not replace missing dates/ratings with guessed values.
     """
     result = page.locator(".jftiEf[data-review-id]").evaluate_all(r"""(cards, includeRecords) => {
+        const mainBody = """ + MAIN_BODY_JS + r""";
         const out = {
             unique_cards: 0, duplicate_cards: 0, author_present: 0,
             rating_valid: 0, date_present: 0, relative_date_label: 0,
@@ -282,6 +283,8 @@ def audit_loaded_fields(page, observed_unique, *, include_records=False):
             date_missing_label_shapes: {},
             unmatched_rating_labels: 0,
             body_present: 0, body_not_detected: 0, possible_collapsed_body: 0,
+            scoped_primary_body_present: 0, scoped_primary_body_blank: 0,
+            scoped_body_fallback_unverified: 0, scoped_body_ambiguous: 0, scoped_body_not_detected: 0,
             rating_distribution: {"1":0,"2":0,"3":0,"4":0,"5":0}
         };
         const seen = new Set();
@@ -357,13 +360,18 @@ def audit_loaded_fields(page, observed_unique, *, include_records=False):
                 out.rating_distribution[String(rating)]++;
             }
             const body = [...card.querySelectorAll('.wiI7pd,.MyEned')].some(el => !!txt(el));
+            const scoped = mainBody(card);
+            if (scoped.kind === "PRIMARY") {
+                if (scoped.text) out.scoped_primary_body_present++;
+                else out.scoped_primary_body_blank++;
+            } else if (scoped.kind === "FALLBACK_UNVERIFIED") out.scoped_body_fallback_unverified++;
+            else if (scoped.kind === "AMBIGUOUS") out.scoped_body_ambiguous++;
+            else out.scoped_body_not_detected++;
             if (includeRecords) {
-                const primary = [...card.querySelectorAll('.wiI7pd')].find(el => el.getClientRects().length)
-                    || [...card.querySelectorAll('.MyEned')].find(el => el.getClientRects().length);
                 records.push({source_id:id, author:txt(card.querySelector('.d4r55')),
                     rating:ratings.size === 1 ? [...ratings][0] : null,
                     date_label:dates.size === 1 ? [...dates][0] : null,
-                    body:txt(primary)});
+                    body:scoped.text, body_scope:scoped.kind});
             }
             if (body) out.body_present++;
             else out.body_not_detected++;
@@ -385,32 +393,38 @@ MORE_LABEL = re.compile(r"^(?:자세히 보기|더보기|더 보기|more|read mo
 ORIGINAL_LABEL = re.compile(r"^(?:원문 보기|원본 보기|See original|Show original|View original)(?:\s*\([^()\r\n]{1,40}\))?$", re.I)
 
 
-def body_fingerprint(card):
-    """Transient exact-text fingerprint of the visible main body.
+# Shared selection rule used in extraction, body measurement and fingerprinting.
+# A broad .MyEned container may contain controls, details or owner text.
+# Only an identifiable visible main .wiI7pd body is considered authoritative.
+MAIN_BODY_JS = r"""card => {
+    const visible = el => !!el.getClientRects().length;
+    const owner = [...card.querySelectorAll('span,div')].find(el =>
+        !el.children.length && /^(?:업체 대표 응답|소유자 답변|Response from the owner|Owner response)$/i.test((el.innerText || '').trim()));
+    const beforeOwner = el => !el.closest('.CDe7pd,.RfnDt') &&
+        (!owner || !!(el.compareDocumentPosition(owner) & Node.DOCUMENT_POSITION_FOLLOWING));
+    const bodies = [...card.querySelectorAll('.wiI7pd')].filter(el => visible(el) && beforeOwner(el));
+    const unique = bodies.filter(el => !bodies.some(other => other !== el && el.contains(other)));
+    if (unique.length === 1) return {kind:"PRIMARY", text:(unique[0].innerText || '').trim()};
+    if (unique.length > 1) return {kind:"AMBIGUOUS", text:""};
+    const fallback = [...card.querySelectorAll('.MyEned')].some(el => visible(el) && beforeOwner(el) && (el.innerText || '').trim());
+    return {kind:fallback ? "FALLBACK_UNVERIFIED" : "NOT_DETECTED", text:""};
+}"""
 
-    Distinguishes same-length changes without reporting review text or hashes.
-    A changed fingerprint is not proof of original language or complete text.
-    """
-    value = card.evaluate(r"""card => {
-        const visible = el => !!el.getClientRects().length;
-        const owner = [...card.querySelectorAll('span,div')].find(el =>
-            !el.children.length && /^(?:업체 대표 응답|소유자 답변|Response from the owner|Owner response)$/i.test((el.innerText || '').trim()));
-        const beforeOwner = el => !el.closest('.CDe7pd') &&
-            (!owner || !!(el.compareDocumentPosition(owner) & Node.DOCUMENT_POSITION_FOLLOWING));
-        const primary = [...card.querySelectorAll('.wiI7pd')].find(el => visible(el) && beforeOwner(el));
-        return primary ? (primary.innerText || '').trim() : null;
-    }""")
-    return hashlib.sha256(value.encode("utf-8")).digest() if value else None
+
+def body_snapshot(card):
+    """Measure and fingerprint exactly the same scoped primary text."""
+    result = card.evaluate(MAIN_BODY_JS)
+    value = result["text"]
+    return (len(value), hashlib.sha256(value.encode("utf-8")).digest() if value else None,
+            result["kind"])
+
+
+def body_fingerprint(card):
+    return body_snapshot(card)[1]
 
 
 def body_measure(card):
-    # Measure the main review only, not the owner's reply or extra fields.
-    return card.evaluate(r"""card => {
-        const visible = el => !!el.getClientRects().length;
-        const primary = [...card.querySelectorAll('.wiI7pd')].find(visible)
-            || [...card.querySelectorAll('.MyEned')].find(visible);
-        return primary ? (primary.innerText || '').trim().length : 0;
-    }""")
+    return body_snapshot(card)[0]
 
 
 def detail_measure(card):
@@ -510,6 +524,7 @@ def audit_body_sample(page, store_key, reviews, limit=10, deadline=None):
                    more_text_changed=0, more_same_length_text_changed=0,
                    original_text_changed=0, original_same_length_text_changed=0,
                    primary_fingerprint_unavailable=0,
+                   initial_scope_counts={}, final_scope_counts={},
                    body_missing_after=0, identity_mismatch=0,
                    context_lost=False, click_errors=0,
                    excluded_nonreview_more=0, excluded_nonreview_original=0)
@@ -525,10 +540,10 @@ def audit_body_sample(page, store_key, reviews, limit=10, deadline=None):
         if i >= len(initial_ids) or not identity or identity != initial_ids[i]:
             metrics["identity_mismatch"] += 1
             break
-        before = body_measure(card)
+        before, before_fingerprint, before_scope = body_snapshot(card)
+        metrics["initial_scope_counts"][before_scope] = metrics["initial_scope_counts"].get(before_scope, 0) + 1
         if not before:
             metrics["initial_body_not_detected"] += 1
-        before_fingerprint = body_fingerprint(card)
         if before_fingerprint is None:
             metrics["primary_fingerprint_unavailable"] += 1
         before_details = detail_measure(card)
@@ -555,8 +570,7 @@ def audit_body_sample(page, store_key, reviews, limit=10, deadline=None):
                             break
                     if metrics["context_lost"] or metrics["identity_mismatch"]:
                         break
-                    after = body_measure(card)
-                    after_fingerprint = body_fingerprint(card)
+                    after, after_fingerprint, _ = body_snapshot(card)
                     if before_fingerprint is not None and after_fingerprint is not None and before_fingerprint != after_fingerprint:
                         metrics["more_text_changed"] += 1
                         if after == before:
@@ -588,8 +602,7 @@ def audit_body_sample(page, store_key, reviews, limit=10, deadline=None):
             metrics["original_candidates"] += 1
             if original is not None:
                 try:
-                    before_original = body_measure(card)
-                    original_before_fingerprint = body_fingerprint(card)
+                    before_original, original_before_fingerprint, _ = body_snapshot(card)
                     original.click(timeout=2500)
                     page.wait_for_timeout(350)
                     if blocked(page) or not same_place(page.url, store_key) or not selected(reviews):
@@ -598,8 +611,7 @@ def audit_body_sample(page, store_key, reviews, limit=10, deadline=None):
                     if card.get_attribute("data-review-id") != identity:
                         metrics["identity_mismatch"] += 1
                         break
-                    after_original = body_measure(card)
-                    original_after_fingerprint = body_fingerprint(card)
+                    after_original, original_after_fingerprint, _ = body_snapshot(card)
                     if original_before_fingerprint is not None and original_after_fingerprint is not None and original_before_fingerprint != original_after_fingerprint:
                         metrics["original_text_changed"] += 1
                         if after_original == before_original:
@@ -614,7 +626,9 @@ def audit_body_sample(page, store_key, reviews, limit=10, deadline=None):
         if card.get_attribute("data-review-id") != identity:
             metrics["identity_mismatch"] += 1
             break
-        if not body_measure(card):
+        final_length, _, final_scope = body_snapshot(card)
+        metrics["final_scope_counts"][final_scope] = metrics["final_scope_counts"].get(final_scope, 0) + 1
+        if not final_length:
             metrics["body_missing_after"] += 1
             if before:
                 metrics["previously_present_body_lost"] += 1
@@ -671,7 +685,7 @@ def adapt_local_records(records, store_name, base, production, *, store_id=None)
     never a substitute for an immutable DB store ID during a real rollout.
     """
     candidates, seen = [], set()
-    gaps = dict(invalid_metadata=0, missing_source=0, duplicate_source=0)
+    gaps = dict(invalid_metadata=0, missing_source=0, duplicate_source=0, unverified_body_scope=0)
     for raw in records:
         source = production.hash_google_source_review_id(str(store_id or store_name), raw.get("source_id"))
         if not source:
@@ -686,6 +700,9 @@ def adapt_local_records(records, store_name, base, production, *, store_id=None)
         review_date, date_source = local_date_value(raw.get("date_label"), base, production)
         if not author or author.casefold() in {"anonymous", "unknown"} or type(rating) is not int or not 1 <= rating <= 5 or not review_date:
             gaps["invalid_metadata"] += 1
+            continue
+        if raw.get("body_scope") in {"FALLBACK_UNVERIFIED", "AMBIGUOUS", "NOT_DETECTED"} or (raw.get("body_scope") == "PRIMARY" and not raw.get("body")):
+            gaps["unverified_body_scope"] += 1
             continue
         body = raw.get("body") or ""
         candidates.append(dict(store_name=store_name, author=author, rating=rating,
@@ -1276,7 +1293,8 @@ def run_once(context, expected_total=None, store_key="thailand", auto_total=Fals
                 if not count_db_audit:
                     report["status"] = ("LOCAL_COUNT_BODY_CONTROLS_CHECKED"
                                         if evidence == "COUNT_BODY_CONTROLS_CHECKED"
-                                        else "LOCAL_COUNT_BODY_EVIDENCE_LIMITED")
+                                        else ("LOCAL_COUNT_BODY_CONTROL_GAPS" if evidence == "COUNT_BODY_CONTROL_GAPS"
+                                              else "LOCAL_COUNT_BODY_EVIDENCE_LIMITED"))
                     return report
             report["phase"] = "count_matched_db_audit"
             report["db_sample"] = compare_db_sample(page, store_key, len(seen), expected_seen=seen)
