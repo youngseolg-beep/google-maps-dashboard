@@ -285,6 +285,7 @@ def audit_loaded_fields(page, observed_unique, *, include_records=False):
             body_present: 0, body_not_detected: 0, possible_collapsed_body: 0,
             scoped_primary_body_present: 0, scoped_primary_body_blank: 0,
             scoped_body_fallback_unverified: 0, scoped_body_ambiguous: 0, scoped_body_not_detected: 0,
+            unverified_body_structure: {},
             rating_distribution: {"1":0,"2":0,"3":0,"4":0,"5":0}
         };
         const seen = new Set();
@@ -367,6 +368,10 @@ def audit_loaded_fields(page, observed_unique, *, include_records=False):
             } else if (scoped.kind === "FALLBACK_UNVERIFIED") out.scoped_body_fallback_unverified++;
             else if (scoped.kind === "AMBIGUOUS") out.scoped_body_ambiguous++;
             else out.scoped_body_not_detected++;
+            if (scoped.kind !== "PRIMARY" || !scoped.text) {
+                const reason = scoped.reason || "PRIMARY_BLANK";
+                out.unverified_body_structure[reason] = (out.unverified_body_structure[reason] || 0) + 1;
+            }
             if (includeRecords) {
                 records.push({source_id:id, author:txt(card.querySelector('.d4r55')),
                     rating:ratings.size === 1 ? [...ratings][0] : null,
@@ -407,7 +412,15 @@ MAIN_BODY_JS = r"""card => {
     if (unique.length === 1) return {kind:"PRIMARY", text:(unique[0].innerText || '').trim()};
     if (unique.length > 1) return {kind:"AMBIGUOUS", text:""};
     const fallback = [...card.querySelectorAll('.MyEned')].some(el => visible(el) && beforeOwner(el) && (el.innerText || '').trim());
-    return {kind:fallback ? "FALLBACK_UNVERIFIED" : "NOT_DETECTED", text:""};
+    const broad = [...card.querySelectorAll('.wiI7pd,.MyEned')];
+    const hasText = el => !!(el.innerText || el.textContent || '').trim();
+    const reason = fallback ? "BROAD_CONTAINER_ONLY" :
+        broad.some(el => visible(el) && hasText(el) && el.closest('.RfnDt') && !el.closest('.CDe7pd')) ? "EXCLUDED_RFNDT_ANCESTOR" :
+        broad.some(el => visible(el) && hasText(el) && el.closest('.CDe7pd')) ? "EXCLUDED_OWNER_CONTAINER" :
+        broad.some(el => visible(el) && hasText(el) && !beforeOwner(el)) ? "AFTER_OWNER_HEADER" :
+        broad.some(el => !visible(el) && hasText(el)) ? "HIDDEN_TEXT_NODE" :
+        broad.length ? "BLANK_OR_NO_SCOPED_NODE" : "NO_KNOWN_BODY_NODE";
+    return {kind:fallback ? "FALLBACK_UNVERIFIED" : "NOT_DETECTED", text:"", reason};
 }"""
 
 
@@ -945,6 +958,57 @@ def verified_record_set(records, expected_seen):
     return len(ids) == len(digests) == len(expected_seen) and digests == expected_seen
 
 
+def match_evidence(records, history, production):
+    """Aggregate-only diagnosis, not a replacement matcher or write approval."""
+    from collections import Counter, defaultdict
+    import unicodedata
+    def norm(value):
+        return production.normalize_spaces(value or "").casefold()
+    def script(value):
+        if not value:
+            return "EMPTY"
+        has_thai = any("\u0e00" <= c <= "\u0e7f" for c in value)
+        has_hangul = any("\uac00" <= c <= "\ud7a3" for c in value)
+        has_latin = any("LATIN" in unicodedata.name(c, "") for c in value)
+        return "+".join(k for k, v in (("THAI",has_thai),("HANGUL",has_hangul),("LATIN",has_latin)) if v) or "OTHER"
+    by_author = defaultdict(list)
+    for row in history:
+        by_author[norm(row.get("author"))].append(row)
+    counts = Counter()
+    live_scripts = Counter()
+    saved_scripts = Counter(script(row.get("text")) for row in history)
+    for raw in records:
+        body = raw.get("body") or ""
+        scoped = raw.get("body_scope") == "PRIMARY" and bool(body.strip())
+        if scoped:
+            live_scripts[script(body)] += 1
+        same_author = by_author.get(norm(raw.get("author")), [])
+        same_rating = [row for row in same_author if row.get("rating") == raw.get("rating")]
+        counts["observed"] += 1
+        if not same_author:
+            counts["no_author_match"] += 1
+        elif not same_rating:
+            counts["author_only"] += 1
+        elif len(same_rating) == 1:
+            counts["unique_author_rating_candidate"] += 1
+        else:
+            counts["multiple_author_rating_candidates"] += 1
+        if same_rating and not scoped:
+            counts["author_rating_body_unverified"] += 1
+        if same_rating and scoped:
+            if any(norm(row.get("text")) == norm(body) for row in same_rating):
+                counts["author_rating_exact_body"] += 1
+            else:
+                counts["author_rating_different_body"] += 1
+                if all(script(row.get("text")) != script(body) for row in same_rating):
+                    counts["different_script_group"] += 1
+    return {"counts": dict(counts), "live_scoped_body_scripts": dict(live_scripts),
+            "history_body_scripts": dict(saved_scripts),
+            "history_canonical_key_matches": sum(row.get("review_key") == production.canonical_review_hash(row) for row in history),
+            "history_rows": len(history), "identity_confirmed_by_metadata": False,
+            "write_approved": False}
+
+
 def compare_db_sample(page, store_key, observed_unique, *, expected_seen=None):
     import scraper as production
     from review_append_preflight import preview_append
@@ -999,6 +1063,8 @@ def compare_db_sample(page, store_key, observed_unique, *, expected_seen=None):
         "held_for_review": held, "held_reasons": plan["held_reasons"],
         "append_preview": append_preview,
         "diagnostic_partition": partition,
+        "match_evidence": match_evidence(records, historical, production),
+        "unverified_body_structure": metrics["unverified_body_structure"],
         "actual_database_compared": True, "database_writes": False,
         "history_visibility": "CALLER_VISIBLE_ONLY",
         "transactional_snapshot_verified": False,
