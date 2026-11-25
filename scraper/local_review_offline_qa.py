@@ -18,6 +18,7 @@ SUITES = {
     "writer": ("review_append_execution_qa.py", []),
     "source_identity": ("review_source_identity.py", []),
     "source_append_replay": ("review_source_append_preview.py", []),
+    "source_storage_fixture": ("review_source_storage_qa.py", []),
 }
 
 
