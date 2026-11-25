@@ -172,6 +172,11 @@ def result_status(count, blocked=False, scroll_verified=False):
     return "REVIEW_DEPTH_UNVERIFIED"
 
 
+def fresh_depth_status(initial, observed, restricted=False):
+    """Require new unique review IDs, not just movement within initial cards."""
+    return result_status(observed, restricted, observed > initial)
+
+
 def blocked(page):
     return page.evaluate("""() => {
         if (location.hostname === 'accounts.google.com' ||
@@ -929,7 +934,7 @@ def run_once(context, expected_total=None, store_key="thailand", auto_total=Fals
     report = {"status": "NOT_STARTED", "phase": "select_startup_tab",
               "overview_selected": False,
               "reviews_selected": False, "initial_unique": 0,
-              "observed_unique": 0, "scroll_rounds": 0,
+              "observed_unique": 0, "additional_unique": 0, "scroll_rounds": 0,
               "scroll_verified": False, "database_writes": False,
               "full_coverage_verified": False}
     report["store"] = STORE_CONFIG[store_key]["name"]
@@ -1137,6 +1142,7 @@ def run_once(context, expected_total=None, store_key="thailand", auto_total=Fals
             report["scroll_rounds"] = i
             report["observed_unique"], retained = observe(page, seen, id_cache)
             report["append_only_retained"] = report["append_only_retained"] and retained
+            report["additional_unique"] = len(seen) - report["initial_unique"]
             after_pane = review_pane(page)
             after_top = after_pane.evaluate("(el) => el.scrollTop") if after_pane else before_top
             advanced = after_top > before_top or len(seen) > before
@@ -1155,7 +1161,7 @@ def run_once(context, expected_total=None, store_key="thailand", auto_total=Fals
                 if len(seen) >= expected_total:
                     report["stop_reason"] = "EXPECTED_TOTAL_REACHED" if len(seen) == expected_total else "EXPECTED_TOTAL_EXCEEDED"
                     break
-            elif len(seen) >= 6 and report["scroll_verified"]:
+            elif fresh_depth_status(report["initial_unique"], len(seen)) == "REVIEW_DEPTH_VERIFIED":
                 break
             idle = 0 if advanced else idle + 1
             if idle >= (4 if expected_total is not None else 3):
@@ -1171,8 +1177,8 @@ def run_once(context, expected_total=None, store_key="thailand", auto_total=Fals
             report["count_evidence"] = "USER_OR_UI_TOTAL_COMPARISON_ONLY"
             report["expected_count_matched"] = report["status"] == "EXPECTED_COUNT_MATCHED"
         else:
-            report["status"] = result_status(
-                len(seen), blocked(page), report["scroll_verified"]
+            report["status"] = fresh_depth_status(
+                report["initial_unique"], len(seen), blocked(page)
             )
         if audit_fields and report["status"] == "EXPECTED_COUNT_MATCHED":
             report["phase"] = "audit_loaded_fields"
@@ -1337,7 +1343,10 @@ def self_test():
     assert count_body_evidence(dict(body, body_missing_after=1), 2) == "COUNT_BODY_EVIDENCE_LIMITED"
     assert count_body_evidence(dict(body, processed_cards=1), 2) == "COUNT_BODY_INCOMPLETE"
     assert count_body_evidence(dict(body, click_errors=1), 2) == "COUNT_BODY_CONTROL_GAPS"
-    print("SELF_TEST_PASS: 67 checks")
+    assert fresh_depth_status(8, 8) == "REVIEW_DEPTH_UNVERIFIED"
+    assert fresh_depth_status(5, 6) == "REVIEW_DEPTH_VERIFIED"
+    assert fresh_depth_status(8, 9, True) == "ACCESS_RESTRICTED_STOPPED"
+    print("SELF_TEST_PASS: 70 checks")
 
 
 def main():
@@ -1494,6 +1503,8 @@ def main():
         "store": STORE_CONFIG[args.store]["name"],
         "expected_total_user_observed": reports[-1].get("expected_total_user_observed") if reports else args.expected_total,
         "observed_unique": reports[-1].get("observed_unique", 0) if reports else 0,
+        "initial_unique": reports[-1].get("initial_unique", 0) if reports else 0,
+        "additional_unique": reports[-1].get("additional_unique", 0) if reports else 0,
         "scroll_mode": args.scroll_mode,
         "scroll_rounds": reports[-1].get("scroll_rounds", 0) if reports else 0,
         "stop_reason": reports[-1].get("stop_reason") if reports else None,
