@@ -202,8 +202,15 @@ def run_batch(tasks, launch, mode, persist):
               "mode": mode, "stores": [], "database_writes": False,
               "full_coverage_verified": False, "write_approved": False}
     stopped = None
+    report.update(run_state="RUNNING", active_store=None,
+                  planned_stores=[safe_task_row(t) for t in tasks],
+                  summary=summarize([], len(tasks), mode),
+                  stop_reason=None, manual_retry_plan=[])
+    persist(report)
     for task in tasks:
         row = safe_task_row(task)
+        report["active_store"] = dict(row)
+        persist(report)
         if task["hold_reason"]:
             row.update(outcome="HELD", reason=task["hold_reason"])
         elif stopped:
@@ -235,11 +242,13 @@ def run_batch(tasks, launch, mode, persist):
                 # Infrastructure/launch failure may affect every store.
                 stopped = "BROWSER_OR_BATCH_ERROR"
         report["stores"].append(row)
+        report["active_store"] = None
         report["summary"] = summarize(report["stores"], len(tasks), mode)
         report["stop_reason"] = stopped
         report["manual_retry_plan"] = retry_plan(report["stores"])
         persist(report)
         print("LOCAL_BATCH_STORE: " + json.dumps(row, ensure_ascii=False), flush=True)
+    report["run_state"] = "FINISHED"
     report["finished_at"] = datetime.now(timezone.utc).isoformat()
     report["summary"] = summarize(report["stores"], len(tasks), mode)
     persist(report)
@@ -346,7 +355,21 @@ def self_test():
     assert classify({"status": "BODY_SAMPLE_CONTROLS_VERIFIED"}, "body") == "SAMPLE_PASSED"
     assert classify({"status": "LOCAL_COUNT_BODY_DB_COMPARED"}, "count-body-db") == "COUNT_DB_COMPARED"
     assert classify({"status": "LOCAL_COUNT_BODY_DB_EVIDENCE_LIMITED", "observed_unique": 167}, "count-body-db") == "PARTIAL_SAMPLE"
-    print("BATCH_SELF_TEST_PASS: 27 checks")
+    from copy import deepcopy
+    snapshots = []
+    def interrupted(task, mode):
+        raise KeyboardInterrupt()
+    try:
+        run_batch(known, interrupted, "fields", lambda value: snapshots.append(deepcopy(value)))
+    except KeyboardInterrupt:
+        pass
+    assert snapshots[0]["run_state"] == "RUNNING"
+    assert snapshots[0]["active_store"] is None
+    assert snapshots[-1]["active_store"]["task_key"] == known[0]["key"]
+    assert snapshots[-1]["summary"]["not_attempted"] == 2
+    assert "finished_at" not in snapshots[-1]
+    assert report["run_state"] == "FINISHED"
+    print("BATCH_SELF_TEST_PASS: 33 checks")
 
 
 def main():
