@@ -142,29 +142,11 @@ switch ($Action) {
         # This is not the final all-store or production-write acceptance test.
         $python = (Get-Command python.exe -CommandType Application).Source
         $started = [DateTime]::UtcNow.ToString('o')
-        $stage = 'offline_probe_tests'
+        $stage = 'offline_qa_suite'
         $code = 2
         try {
-            & $python $Probe --self-test
-            if ($LASTEXITCODE -ne 0) { throw 'PROBE_SELF_TEST_FAILED' }
-            $stage = 'offline_batch_tests'
-            & $python $Batch --self-test
-            if ($LASTEXITCODE -ne 0) { throw 'BATCH_SELF_TEST_FAILED' }
-            $stage = 'offline_health_tests'
-            & $python (Join-Path $PSScriptRoot 'local_review_health.py') --self-test
-            if ($LASTEXITCODE -ne 0) { throw 'HEALTH_SELF_TEST_FAILED' }
-            $stage = 'offline_audit_invariants_tests'
-            & $python (Join-Path $PSScriptRoot 'review_audit_invariants.py')
-            if ($LASTEXITCODE -ne 0) { throw 'AUDIT_INVARIANTS_SELF_TEST_FAILED' }
-            $stage = 'offline_append_preflight_tests'
-            & $python (Join-Path $PSScriptRoot 'review_append_preflight.py')
-            if ($LASTEXITCODE -ne 0) { throw 'APPEND_PREFLIGHT_SELF_TEST_FAILED' }
-            $stage = 'offline_append_snapshot_tests'
-            & $python (Join-Path $PSScriptRoot 'review_append_snapshot.py')
-            if ($LASTEXITCODE -ne 0) { throw 'APPEND_SNAPSHOT_SELF_TEST_FAILED' }
-            $stage = 'offline_append_execution_tests'
-            & $python (Join-Path $PSScriptRoot 'review_append_execution_qa.py')
-            if ($LASTEXITCODE -ne 0) { throw 'APPEND_EXECUTION_SELF_TEST_FAILED' }
+            & $python (Join-Path $PSScriptRoot 'local_review_offline_qa.py')
+            if ($LASTEXITCODE -ne 0) { throw 'OFFLINE_QA_FAILED' }
             $stage = 'known_store_adapter_samples'
             & $python $Batch --scope known --mode adapter
             $code = $LASTEXITCODE
