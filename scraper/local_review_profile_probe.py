@@ -161,6 +161,17 @@ def displayed_total(page):
             "candidate_counts": values}
 
 
+def stable_overview_total(first, second):
+    """Accept only equal, unambiguous, bounded totals from two observations."""
+    for sample in (first, second):
+        if not isinstance(sample, dict) or sample.get("status") != "UI_DISPLAYED":
+            return None
+        n = sample.get("displayed_total")
+        if type(n) is not int or not 1 <= n <= MAX_EXPECTED_COUNT or sample.get("candidate_counts") != [n]:
+            return None
+    return first["displayed_total"] if first["displayed_total"] == second["displayed_total"] else None
+
+
 def result_status(count, blocked=False, scroll_verified=False):
     if blocked:
         return "ACCESS_RESTRICTED_STOPPED"
@@ -1210,7 +1221,7 @@ def run_once(context, expected_total=None, store_key="thailand", auto_total=Fals
     report["store"] = STORE_CONFIG[store_key]["name"]
     report["maps_language_requested"] = maps_language
     report["maps_ui_language"] = "UNVERIFIED"
-    if maps_language not in {"profile", "en"} or (maps_language == "en" and auto_total):
+    if maps_language not in {"profile", "en"} or (auto_total and expected_total is not None):
         raise ValueError("MAPS_LANGUAGE_SCOPE_INVALID")
     if count_body_audit and (expected_total is None or not 1 <= expected_total <= MAX_COUNT_BODY_AUDIT
                              or auto_total or field_sample or body_sample or adapter_sample or db_sample):
@@ -1255,7 +1266,7 @@ def run_once(context, expected_total=None, store_key="thailand", auto_total=Fals
         # Field/body diagnostics and explicit-count checks do not need
         # Overview navigation. Use the configured place link directly.
         # Preserve the verified Thailand Overview path for auto-total only.
-        if store_key == "thailand" and auto_total:
+        if store_key == "thailand" and auto_total and maps_language == "profile":
             failure = find_store_by_search(page, report)
             if failure:
                 report["status"] = failure
@@ -1300,9 +1311,36 @@ def run_once(context, expected_total=None, store_key="thailand", auto_total=Fals
             report["status"] = "PLACE_NOT_VERIFIED"
             return report
 
+        if auto_total and report["reviews_selected_at_entry"] and not report["overview_selected"]:
+            report["phase"] = "select_overview_for_total"
+            overview.click(timeout=5000)
+            for _ in range(15):
+                if blocked(page):
+                    report["status"] = "ACCESS_RESTRICTED_STOPPED"
+                    return report
+                if selected(overview) and same_place(page.url, store_key):
+                    break
+                page.wait_for_timeout(1000)
+            if not selected(overview) or not same_place(page.url, store_key):
+                report["status"] = "OVERVIEW_NOT_VERIFIED"
+                return report
+            report["overview_selected"] = True
         if report["overview_selected"]:
             report["phase"] = "read_overview_total"
             report["overview_total"] = displayed_total(page)
+            if auto_total:
+                page.wait_for_timeout(1200)
+                if blocked(page):
+                    report["status"] = "ACCESS_RESTRICTED_STOPPED"
+                    return report
+                if not selected(overview) or not same_place(page.url, store_key):
+                    report["status"] = "OVERVIEW_NOT_VERIFIED"
+                    return report
+                second = displayed_total(page)
+                report["overview_total_recheck"] = second
+                if stable_overview_total(report["overview_total"], second) is None:
+                    report["status"] = "DISPLAYED_TOTAL_NOT_VERIFIED_OR_OUT_OF_SCOPE"
+                    return report
             report["phase"] = "select_reviews"
             reviews.click(timeout=5000)
         elif report["reviews_selected_at_entry"]:
@@ -1329,12 +1367,12 @@ def run_once(context, expected_total=None, store_key="thailand", auto_total=Fals
             return report
 
         if auto_total:
-            expected_total = report["overview_total"]["displayed_total"]
+            expected_total = stable_overview_total(report["overview_total"], report.get("overview_total_recheck"))
             if expected_total is None or not 1 <= expected_total <= MAX_EXPECTED_COUNT:
                 report["status"] = "DISPLAYED_TOTAL_NOT_VERIFIED_OR_OUT_OF_SCOPE"
                 return report
             report["expected_total_user_observed"] = expected_total
-            report["expected_total_source"] = "overview_rating_summary"
+            report["expected_total_source"] = "overview_rating_summary_rechecked"
             report["additional_unique"] = 0
             report["stop_reason"] = None
 
@@ -1558,6 +1596,12 @@ def run_once(context, expected_total=None, store_key="thailand", auto_total=Fals
 
 def self_test():
     assert same_place(PLACE_URL)
+    a = {"status":"UI_DISPLAYED","displayed_total":167,"candidate_counts":[167]}
+    assert stable_overview_total(a, a) == 167
+    assert stable_overview_total(a, dict(a, displayed_total=168, candidate_counts=[168])) is None
+    assert stable_overview_total(a, dict(a, status="AMBIGUOUS")) is None
+    assert stable_overview_total(a, None) is None
+    assert stable_overview_total(dict(a, displayed_total=0, candidate_counts=[0]), dict(a, displayed_total=0, candidate_counts=[0])) is None
     assert not same_place("https://example.com/maps/place/" + PLACE_TOKEN)
     assert not same_place("https://www.google.com/maps/search/" + PLACE_TOKEN)
     assert not same_place("https://www.google.com/maps/place/other")
@@ -1771,7 +1815,7 @@ def main():
     parser.add_argument("--count-body-audit", action="store_true",
                         help="Bounded body-control audit after count match; DB comparison is optional.")
     args = parser.parse_args()
-    if args.maps_language == "en" and (args.auto_total or args.db_read_preflight or args.self_test):
+    if args.maps_language == "en" and (args.db_read_preflight or args.self_test):
         parser.error("--maps-language en is for direct place diagnostics only")
     if args.db_read_preflight:
         if args.self_test or args.count_body_audit or args.count_db_audit or args.expected_total is not None or args.auto_total or args.field_sample or args.body_sample or args.adapter_sample or args.db_sample or args.audit_fields:

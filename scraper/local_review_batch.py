@@ -164,6 +164,8 @@ def retry_plan(rows):
             action = "VERIFY_ENGLISH_DISPLAY_BEFORE_FRESH_RUN"
         elif row.get("reason") == "FRESH_COUNT_TARGET_REQUIRED":
             action = "OBSERVE_FRESH_DISPLAYED_TOTAL"
+        elif row.get("status") in {"DISPLAYED_TOTAL_NOT_VERIFIED_OR_OUT_OF_SCOPE", "OVERVIEW_NOT_VERIFIED"}:
+            action = "OBSERVE_FRESH_DISPLAYED_TOTAL"
         elif outcome == "HELD":
             action = "VERIFY_STORE_MAPPING"
         elif row.get("status") == "EXPECTED_COUNT_EXCEEDED_RECHECK_TOTAL":
@@ -261,6 +263,9 @@ def run_batch(tasks, launch, mode, persist, *, maps_language="profile"):
                            observed_unique=result.get("observed_unique", 0),
                            elapsed_seconds=result.get("elapsed_seconds"),
                            expected_total=result.get("expected_total_user_observed"),
+                           expected_total_source=result.get("expected_total_source"),
+                           overview_total=result.get("overview_total"),
+                           overview_total_recheck=result.get("overview_total_recheck"),
                            stop_reason=result.get("stop_reason"),
                            count_gap=result.get("count_gap"),
                            field_audit=result.get("field_audit"),
@@ -268,6 +273,8 @@ def run_batch(tasks, launch, mode, persist, *, maps_language="profile"):
                            body_sample=result.get("body_sample"),
                            count_body_evidence=result.get("count_body_evidence"),
                            db_sample=result.get("db_sample"))
+                if result.get("status") in {"DISPLAYED_TOTAL_NOT_VERIFIED_OR_OUT_OF_SCOPE", "OVERVIEW_NOT_VERIFIED"}:
+                    row["outcome"] = "HELD"
                 if restriction or result.get("status") == "ACCESS_RESTRICTED_STOPPED":
                     row["outcome"] = "FAILED"
                     stopped = "ACCESS_RESTRICTED_STOPPED"
@@ -320,6 +327,7 @@ def live_launcher(profile, count_round_limit=240, count_second_limit=600, *, map
                         adapter_sample=mode == "adapter", db_sample=mode == "db",
                         body_sample=mode == "body",
                         expected_total=task.get("expected_total") if mode in {"count", "count-db", "count-body-db"} else None,
+                        auto_total=mode == "count" and task.get("auto_total") is True,
                         scroll_mode="adaptive" if mode in {"count", "count-db", "count-body-db"} else "baseline",
                         audit_fields=mode in {"count", "count-db", "count-body-db"},
                         count_db_audit=mode in {"count-db", "count-body-db"},
@@ -446,7 +454,15 @@ def self_test():
     assert report["summary"]["count_matched"] == 1
     assert report["summary"]["held"] == 3 and report["summary"]["status"] == "PARTIAL_OR_FAILED"
     assert retry_plan([dict(task_key=key,store="D",outcome="HELD",reason="FRESH_COUNT_TARGET_REQUIRED")])[0]["action"] == "OBSERVE_FRESH_DISPLAYED_TOTAL"
-    print("BATCH_SELF_TEST_PASS: language and registered count gates")
+    auto = [dict(t, auto_total=True) for t in known]
+    def auto_result(task, mode):
+        assert task["auto_total"] and task.get("expected_total") is None
+        return ({"status":"DISPLAYED_TOTAL_NOT_VERIFIED_OR_OUT_OF_SCOPE","maps_ui_language":"ENGLISH"},False) if task["key"] == "thailand" else ({"status":"EXPECTED_COUNT_MATCHED","observed_unique":167,"expected_total_user_observed":167,"expected_total_source":"overview_rating_summary_rechecked","maps_ui_language":"ENGLISH"},False)
+    report = run_batch(auto, auto_result, "count", lambda _: None, maps_language="en")
+    assert report["summary"]["held"] == 1 and report["summary"]["count_matched"] == 1
+    assert report["manual_retry_plan"][0]["action"] == "OBSERVE_FRESH_DISPLAYED_TOTAL"
+    assert report["stores"][1]["expected_total_source"] == "overview_rating_summary_rechecked"
+    print("BATCH_SELF_TEST_PASS: language, registered count and auto-total gates")
 
 
 def main():
@@ -457,6 +473,7 @@ def main():
                         help="English display required by default; profile is a diagnostic opt-out.")
     parser.add_argument("--store", choices=("thailand", "taiwan"), action="append")
     parser.add_argument("--plan-only", action="store_true")
+    parser.add_argument("--auto-total", action="store_true", help="Read and recheck the Overview total for each count-only store.")
     parser.add_argument("--self-test", action="store_true")
     parser.add_argument("--expected", action="append", default=[],
                         metavar="STORE=COUNT", help="Fresh observed total keyed by known store or registered task key.")
@@ -465,6 +482,8 @@ def main():
     args = parser.parse_args()
     if not 1 <= args.count_round_limit <= probe.MAX_COUNT_ROUNDS or not 1 <= args.count_second_limit <= probe.MAX_COUNT_SECONDS:
         parser.error("count budget outside diagnostic limits")
+    if args.auto_total and (args.mode != "count" or args.expected or args.maps_language != "en"):
+        parser.error("--auto-total requires count mode, English display, and no manual totals")
     if args.expected and args.mode not in {"count", "count-db", "count-body-db"}:
         parser.error("--expected is only for count mode")
     if args.self_test:
@@ -476,14 +495,16 @@ def main():
         if args.scope == "registered":
             tasks = build_registered_plan(load_active_stores(probe.read_only_db_config()))
             if args.mode == "count":
-                tasks = registered_count_plan(tasks, args.expected)
+                tasks = [dict(t, auto_total=True) for t in tasks] if args.auto_total else registered_count_plan(tasks, args.expected)
                 if not args.plan_only and not any(not t["hold_reason"] for t in tasks):
                     raise ValueError("NO_REGISTERED_COUNT_TARGET_READY")
         else:
             tasks = known_plan(list(dict.fromkeys(args.store or ["thailand", "taiwan"])))
             if args.mode in {"db", "count-db", "count-body-db"} and not args.plan_only:
                 probe.read_only_db_config()
-            if args.mode in {"count", "count-db", "count-body-db"}:
+            if args.auto_total:
+                tasks = [dict(t, auto_total=True) for t in tasks]
+            elif args.mode in {"count", "count-db", "count-body-db"}:
                 targets = count_targets(args.expected, [t["key"] for t in tasks])
                 if args.mode in {"count-db", "count-body-db"} and any(n > (probe.MAX_COUNT_BODY_AUDIT if args.mode == "count-body-db" else probe.MAX_COUNT_DB_AUDIT) for n in targets.values()):
                     raise ValueError("COUNT_DB_AUDIT_PILOT_LIMIT")
@@ -496,6 +517,7 @@ def main():
         print("LOCAL_BATCH_PLAN: " + json.dumps({
             "scope": args.scope, "mode": args.mode, "requested": len(tasks),
             "maps_language_requested": args.maps_language,
+            "automatic_total_requested": args.auto_total,
             "history_visibility": "CALLER_VISIBLE_ONLY" if args.scope == "registered" else "NOT_READ",
             "stores": [dict(safe_task_row(t), hold_reason=t["hold_reason"], expected_total=t.get("expected_total")) for t in tasks],
             "database_writes": False, "write_approved": False,
