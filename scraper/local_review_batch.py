@@ -162,6 +162,8 @@ def retry_plan(rows):
             action = "STOP_AND_REVIEW_ACCESS"
         elif row.get("status") == "REQUESTED_MAPS_LANGUAGE_NOT_VERIFIED" or row.get("reason") == "REQUESTED_MAPS_LANGUAGE_NOT_VERIFIED":
             action = "VERIFY_ENGLISH_DISPLAY_BEFORE_FRESH_RUN"
+        elif row.get("reason") == "FRESH_COUNT_TARGET_REQUIRED":
+            action = "OBSERVE_FRESH_DISPLAYED_TOTAL"
         elif outcome == "HELD":
             action = "VERIFY_STORE_MAPPING"
         elif row.get("status") == "EXPECTED_COUNT_EXCEEDED_RECHECK_TOTAL":
@@ -191,6 +193,33 @@ def count_targets(values, keys):
     return targets
 
 
+def registered_count_plan(tasks, values):
+    """Bind explicit operator-observed totals to stable registered task keys.
+
+    Missing counts are held, not silently skipped or inferred from history.
+    A target for a held mapping is rejected. Preserve all registered stores in
+    the report so an eligible subset cannot look like complete store coverage.
+    """
+    by_key = {t["key"]: t for t in tasks}
+    if len(by_key) != len(tasks):
+        raise ValueError("REGISTERED_TASK_KEY_CONFLICT")
+    targets = {}
+    for value in values:
+        key, sep, count = value.partition("=")
+        if not sep or key not in by_key or key in targets or by_key[key]["hold_reason"]:
+            raise ValueError("REGISTERED_COUNT_TARGET_INVALID")
+        if not re.fullmatch(r"[0-9]{1,5}", count):
+            raise ValueError("REGISTERED_COUNT_TARGET_INVALID")
+        number = int(count)
+        if not 1 <= number <= probe.MAX_EXPECTED_COUNT:
+            raise ValueError("COUNT_TARGET_OUT_OF_SCOPE")
+        targets[key] = number
+    return [dict(t, expected_total=targets.get(t["key"]),
+                 hold_reason=t["hold_reason"] or
+                 (None if t["key"] in targets else "FRESH_COUNT_TARGET_REQUIRED"))
+            for t in tasks]
+
+
 def checkpoint(path, report):
     """Atomic aggregate-only local log; no source IDs, credentials or bodies."""
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -215,7 +244,7 @@ def run_batch(tasks, launch, mode, persist, *, maps_language="profile"):
         report["active_store"] = dict(row)
         persist(report)
         if task["hold_reason"]:
-            row.update(outcome="HELD", reason=task["hold_reason"])
+            row.update(outcome="HELD", reason=task["hold_reason"], expected_total=task.get("expected_total"))
         elif stopped:
             row.update(outcome="NOT_ATTEMPTED", reason=stopped)
         else:
@@ -395,7 +424,29 @@ def self_test():
                        "fields", lambda _: None, maps_language="en")
     assert report["summary"]["sample_passed"] == 2
     assert report["summary"]["write_approved"] is False
-    print("BATCH_SELF_TEST_PASS: language gate and existing checks")
+    plan = registered_count_plan(tasks, [])
+    assert len(plan) == len(tasks)
+    assert plan[3]["hold_reason"] == "FRESH_COUNT_TARGET_REQUIRED"
+    assert plan[0]["hold_reason"] == "DUPLICATE_PLACE_MAPPING"
+    key = tasks[3]["key"]
+    plan = registered_count_plan(tasks, [key+"=167"])
+    assert plan[3]["expected_total"] == 167 and plan[3]["hold_reason"] is None
+    assert tasks[3].get("expected_total") is None
+    for invalid in (["unknown=5"], [key+"=0"], [key+"=10001"], [key+"=5",key+"=6"], [tasks[0]["key"]+"=5"], [key+"=+5"]):
+        try:
+            registered_count_plan(tasks, invalid)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError("INVALID_REGISTERED_TARGET_ACCEPTED")
+    def counted(task, mode):
+        assert task["key"] == key and task["expected_total"] == 167
+        return {"status":"EXPECTED_COUNT_MATCHED","observed_unique":167,"maps_ui_language":"ENGLISH"}, False
+    report = run_batch(plan, counted, "count", lambda _: None, maps_language="en")
+    assert report["summary"]["count_matched"] == 1
+    assert report["summary"]["held"] == 3 and report["summary"]["status"] == "PARTIAL_OR_FAILED"
+    assert retry_plan([dict(task_key=key,store="D",outcome="HELD",reason="FRESH_COUNT_TARGET_REQUIRED")])[0]["action"] == "OBSERVE_FRESH_DISPLAYED_TOTAL"
+    print("BATCH_SELF_TEST_PASS: language and registered count gates")
 
 
 def main():
@@ -408,7 +459,7 @@ def main():
     parser.add_argument("--plan-only", action="store_true")
     parser.add_argument("--self-test", action="store_true")
     parser.add_argument("--expected", action="append", default=[],
-                        metavar="STORE=COUNT", help="Fresh observed target for each known store in count mode.")
+                        metavar="STORE=COUNT", help="Fresh observed total keyed by known store or registered task key.")
     parser.add_argument("--count-round-limit", type=int, default=240)
     parser.add_argument("--count-second-limit", type=int, default=600)
     args = parser.parse_args()
@@ -419,11 +470,15 @@ def main():
     if args.self_test:
         self_test()
         return 0
-    if args.scope == "registered" and (args.store or args.mode in {"count", "count-db", "count-body-db"}):
-        parser.error("registered scope supports field/body/adapter/DB samples only")
+    if args.scope == "registered" and (args.store or args.mode in {"count-db", "count-body-db"}):
+        parser.error("registered scope supports count-only and existing sample modes; full DB audit remains limited to known stores")
     try:
         if args.scope == "registered":
             tasks = build_registered_plan(load_active_stores(probe.read_only_db_config()))
+            if args.mode == "count":
+                tasks = registered_count_plan(tasks, args.expected)
+                if not args.plan_only and not any(not t["hold_reason"] for t in tasks):
+                    raise ValueError("NO_REGISTERED_COUNT_TARGET_READY")
         else:
             tasks = known_plan(list(dict.fromkeys(args.store or ["thailand", "taiwan"])))
             if args.mode in {"db", "count-db", "count-body-db"} and not args.plan_only:
