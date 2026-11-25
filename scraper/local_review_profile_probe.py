@@ -278,6 +278,8 @@ def audit_loaded_fields(page, observed_unique, *, include_records=False):
             unique_cards: 0, duplicate_cards: 0, author_present: 0,
             rating_valid: 0, date_present: 0, relative_date_label: 0,
             ambiguous_date: 0, ambiguous_rating: 0, rating_label_candidates: 0,
+            date_missing_dedicated_node: 0, date_missing_nested_node: 0,
+            date_missing_label_shapes: {},
             unmatched_rating_labels: 0,
             body_present: 0, body_not_detected: 0, possible_collapsed_body: 0,
             rating_distribution: {"1":0,"2":0,"3":0,"4":0,"5":0}
@@ -297,13 +299,38 @@ def audit_loaded_fields(page, observed_unique, *, include_records=False):
             const isMetadata = el => !el.closest(
                 '.wiI7pd,.MyEned,.d4r55,.CDe7pd,.RfnDt,button,a,[role="button"]'
             );
-            const relative = /^(?:(?:수정됨|edited)\s*[:·-]?\s*)?(?:(?:\d+|한|하루|어제)\s*(?:초|분|시간|일|주|개월|달|년)?\s*전|어제|방금|(?:\d+|a|an|one)\s+(?:seconds?|minutes?|hours?|days?|weeks?|months?|years?)\s+ago)(?:\s*[·(]?\s*(?:수정됨|edited)\)?)?$/i;
+            const edited = /(?:수정(?:됨|일)?|edited|updated)/i;
+            const cleanDate = value => value.replace(/\s+/g, ' ').trim()
+                .replace(/^(?:수정(?:됨|일)?|edited|updated)\s*[:：·-]?\s*/i, '')
+                .replace(/\s*[·(]?\s*(?:수정(?:됨|일)?|edited|updated)\)?$/i, '').trim();
+            const relative = /^(?:(?:\d+|한)\s*(?:초|분|시간|일|주|개월|달|년)\s*전|일주일\s*전|하루\s*전|어제|방금|(?:\d+|a|an|one)\s+(?:seconds?|minutes?|hours?|days?|weeks?|months?|years?)\s+ago)$/i;
             const absolute = /^(?:\d{4}[.\-/]\s*\d{1,2}[.\-/]\s*\d{1,2}\.?|\d{4}년\s*\d{1,2}월\s*\d{1,2}일)$/;
             const dates = new Set();
-            for (const el of card.querySelectorAll('.rsqaof,.xRkPPb,span,time')) {
-                if (!isMetadata(el) || el.children.length) continue;
-                const value = txt(el);
+            const dedicated = [...card.querySelectorAll('.rsqaof,.xRkPPb')].filter(isMetadata);
+            // A dedicated date element can wrap its visible date in child spans.
+            // Other metadata candidates must remain leaf nodes.
+            const dateNodes = [...new Set([...dedicated, ...card.querySelectorAll('span,time')])];
+            for (const el of dateNodes) {
+                if (!isMetadata(el) || !el.getClientRects().length ||
+                    (el.children.length && !dedicated.includes(el))) continue;
+                const value = cleanDate(txt(el));
                 if (relative.test(value) || absolute.test(value)) dates.add(value);
+            }
+            if (!dates.size) {
+                if (!dedicated.length) out.date_missing_dedicated_node++;
+                if (dedicated.some(el => el.children.length)) out.date_missing_nested_node++;
+                // Report aggregate structural/date-token patterns only, never raw
+                // dates, usernames, review IDs or arbitrary text.
+                const shapes = new Set(dedicated.map(el => {
+                    const v = txt(el);
+                    const tokens = v.match(/수정됨|수정일|수정|일주일|하루|어제|방금|개월|시간|초|분|일|주|달|년|전|\b(?:edited|updated|ago|seconds?|minutes?|hours?|days?|weeks?|months?|years?|a|an|one)\b|\d+|[:：·().\/-]/gi) || [];
+                    const safe = tokens.slice(0,12).map(t => /^\d+$/.test(t) ? "#" : t.toLowerCase()).join(" ");
+                    return (safe || "NO_DATE_TOKENS") + (edited.test(v) ? " [EDIT_MARKER]" : "");
+                }));
+                for (const shape of shapes) {
+                    if (!(shape in out.date_missing_label_shapes) && Object.keys(out.date_missing_label_shapes).length >= 20) continue;
+                    out.date_missing_label_shapes[shape] = (out.date_missing_label_shapes[shape] || 0) + 1;
+                }
             }
             if (dates.size === 1) {
                 out.date_present++;
@@ -469,6 +496,7 @@ def audit_body_sample(page, store_key, reviews, limit=10, deadline=None):
     """Bounded ordinary UI check on initially loaded cards, aggregate only."""
     cards = page.locator(".jftiEf[data-review-id]")
     n = min(cards.count(), limit)
+    initial_ids = cards.evaluate_all("(cards) => cards.map(c => c.getAttribute('data-review-id'))")[:n]
     metrics = dict(sample_cards=n, processed_cards=0, time_budget_reached=False,
                    initial_body_not_detected=0, initial_body_missing_after=0,
                    previously_present_body_lost=0,
@@ -494,6 +522,9 @@ def audit_body_sample(page, store_key, reviews, limit=10, deadline=None):
             break
         card = cards.nth(i)
         identity = card.get_attribute("data-review-id")
+        if i >= len(initial_ids) or not identity or identity != initial_ids[i]:
+            metrics["identity_mismatch"] += 1
+            break
         before = body_measure(card)
         if not before:
             metrics["initial_body_not_detected"] += 1
@@ -590,6 +621,8 @@ def audit_body_sample(page, store_key, reviews, limit=10, deadline=None):
             else:
                 metrics["initial_body_missing_after"] += 1
         metrics["processed_cards"] += 1
+        if deadline is not None and (metrics["processed_cards"] % 25 == 0 or metrics["processed_cards"] == n):
+            print("LOCAL_BODY_PROGRESS: " + json.dumps({"processed_cards": metrics["processed_cards"], "target_cards": n}), flush=True)
     metrics["status"] = ("BODY_SAMPLE_TIME_BUDGET_REACHED" if metrics["time_budget_reached"] else body_sample_status(metrics))
     metrics["original_control_evidence"] = (
         "NOT_OBSERVED" if metrics["original_candidates"] == 0 else
@@ -615,11 +648,13 @@ def local_date_value(label, base, production):
             return (parsed.isoformat(), "displayed") if parsed <= base else (None, None)
         except ValueError:
             return None, None
-    normalized = re.sub(r"^(?:수정됨|edited)\s*[:·-]?\s*", "", value, flags=re.I)
-    normalized = re.sub(r"\s*[·(]?\s*(?:수정됨|edited)\)?$", "", normalized, flags=re.I)
+    normalized = re.sub(r"^(?:수정(?:됨|일)?|edited|updated)\s*[:：·-]?\s*", "", value, flags=re.I)
+    normalized = re.sub(r"\s*[·(]?\s*(?:수정(?:됨|일)?|edited|updated)\)?$", "", normalized, flags=re.I)
     normalized = re.sub(r"^한\s*(주|달|개월|년|시간|분|초)\s*전$", r"1\1 전", normalized)
     if normalized in ("어제", "하루 전"):
         age = 1
+    elif re.fullmatch(r"일주일\s*전", normalized):
+        age = 7
     elif normalized == "방금":
         age = 0
     else:
@@ -1171,7 +1206,11 @@ def run_once(context, expected_total=None, store_key="thailand", auto_total=Fals
                     report["stop_reason"] = "NO_FURTHER_SCROLL_OR_NEW_IDS"
                 break
 
+        report["elapsed_scroll_seconds"] = round(time.monotonic() - scroll_started, 1)
         report["phase"] = "final_depth_check"
+        if blocked(page) or not same_place(page.url, store_key) or not selected(reviews):
+            report["status"] = "ACCESS_RESTRICTED_STOPPED" if blocked(page) else "REVIEW_CONTEXT_LOST"
+            return report
         if expected_total is not None:
             report["stop_reason"] = report["stop_reason"] or "ROUND_LIMIT"
             report["status"] = coverage_status(len(seen), expected_total, blocked(page))
@@ -1191,7 +1230,13 @@ def run_once(context, expected_total=None, store_key="thailand", auto_total=Fals
             if report["field_audit"]["status"] != "REQUIRED_FIELDS_PRESENT":
                 report["status"] = "COUNT_MATCHED_FIELD_GAPS"
             report["phase"] = "final_field_audit"
-        if (count_db_audit or count_body_audit) and report["status"] == "EXPECTED_COUNT_MATCHED":
+        diagnostic_date_gaps = (count_body_audit and not count_db_audit
+                                and report["status"] == "COUNT_MATCHED_FIELD_GAPS"
+                                and report["field_audit"]["author_present"] == len(seen)
+                                and report["field_audit"]["rating_valid"] == len(seen)
+                                and report["field_audit"]["unique_cards"] == len(seen)
+                                and not report["field_audit"]["duplicate_cards"])
+        if (count_db_audit or count_body_audit) and (report["status"] == "EXPECTED_COUNT_MATCHED" or diagnostic_date_gaps):
             report["phase"] = "count_matched_db_audit"
             if blocked(page) or not same_place(page.url, store_key) or not selected(reviews):
                 report["status"] = "COUNT_DB_AUDIT_CONTEXT_UNVERIFIED"
@@ -1250,8 +1295,9 @@ def run_once(context, expected_total=None, store_key="thailand", auto_total=Fals
         return report
     finally:
         report["elapsed_seconds"] = round(time.monotonic() - started, 1)
-        report["elapsed_scroll_seconds"] = (round(time.monotonic() - scroll_started, 1)
-                                            if scroll_started is not None else None)
+        if "elapsed_scroll_seconds" not in report:
+            report["elapsed_scroll_seconds"] = (round(time.monotonic() - scroll_started, 1)
+                                                if scroll_started is not None else None)
         if page is not None and not page.is_closed():
             try:
                 report["ui_summary"] = page_summary(page)
@@ -1361,7 +1407,9 @@ def self_test():
     assert fresh_depth_status(8, 8) == "REVIEW_DEPTH_UNVERIFIED"
     assert fresh_depth_status(5, 6) == "REVIEW_DEPTH_VERIFIED"
     assert fresh_depth_status(8, 9, True) == "ACCESS_RESTRICTED_STOPPED"
-    print("SELF_TEST_PASS: 70 checks")
+    assert local_date_value("수정: 어제", base, FakeProduction) == ("2026-11-23", "estimated")
+    assert local_date_value("일주일 전", base, FakeProduction) == ("2026-11-17", "estimated")
+    print("SELF_TEST_PASS: 72 checks")
 
 
 def main():
