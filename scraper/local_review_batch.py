@@ -116,8 +116,10 @@ def known_plan(keys):
 
 
 def safe_task_row(task):
+    pair = task.get("pair")
     return {"store": task["name"], "country": task["country"],
-            "task_key": task["key"]}
+            "task_key": task["key"],
+            "place_fingerprint": hashlib.sha256(pair.encode()).hexdigest() if pair else None}
 
 
 def classify(result, mode):
@@ -222,6 +224,54 @@ def registered_count_plan(tasks, values):
             for t in tasks]
 
 
+def select_retry_tasks(tasks, previous):
+    """Manual retry of completed automatic-count diagnostics only.
+
+    Rebuild current store mappings before selection. No saved scroll cursor,
+    review contents, old counts or unrestricted error retries.
+    """
+    if (not isinstance(previous, dict) or previous.get("report_version") != 2
+            or previous.get("run_state") != "FINISHED" or previous.get("mode") != "count"
+            or previous.get("maps_language_requested") != "en"
+            or previous.get("automatic_total_requested") is not True
+            or previous.get("database_writes") is not False
+            or previous.get("write_approved") is not False
+            or previous.get("stop_reason") is not None):
+        raise ValueError("RETRY_REPORT_NOT_ELIGIBLE")
+    planned, rows = previous.get("planned_stores"), previous.get("stores")
+    if (not isinstance(planned, list) or not isinstance(rows, list)
+            or not 1 <= len(rows) == len(planned) <= 2000
+            or any(not isinstance(r, dict) for r in planned + rows)):
+        raise ValueError("RETRY_REPORT_INCOMPLETE")
+    keys = [r.get("task_key") for r in planned]
+    if (any(not isinstance(k, str) or not k for k in keys)
+            or len(set(keys)) != len(keys)
+            or keys != [r.get("task_key") for r in rows]
+            or any(r.get("outcome") not in {"COUNT_MATCHED","PARTIAL_SAMPLE","FAILED","HELD"} for r in rows)):
+        raise ValueError("RETRY_REPORT_INCOMPLETE")
+    current = {t["key"]: t for t in tasks}
+    if len(current) != len(tasks):
+        raise ValueError("RETRY_CURRENT_MAPPING_CONFLICT")
+    selected, held = [], []
+    for plan, row in zip(planned, rows):
+        if any(plan.get(k) != row.get(k) for k in ("task_key","store","country","place_fingerprint")):
+            raise ValueError("RETRY_REPORT_IDENTITY_CONFLICT")
+        if row["outcome"] == "COUNT_MATCHED":
+            continue
+        key = row["task_key"]
+        t = current.get(key)
+        if not t or t.get("hold_reason") or safe_task_row(t) != plan:
+            held.append({"task_key":key,"reason":"CURRENT_MAPPING_NOT_VERIFIED"})
+        elif (row["outcome"] == "PARTIAL_SAMPLE"
+              and row.get("status") == "EXPECTED_COUNT_NOT_REACHED"
+              and row.get("stop_reason") in {"ROUND_LIMIT","TIME_BUDGET_REACHED","NO_FURTHER_SCROLL_OR_NEW_IDS"}
+              and row.get("maps_ui_language") == "ENGLISH"):
+            selected.append(dict(t, auto_total=True))
+        else:
+            held.append({"task_key":key,"reason":"MANUAL_DIAGNOSIS_REQUIRED"})
+    return selected, held
+
+
 def checkpoint(path, report):
     """Atomic aggregate-only local log; no source IDs, credentials or bodies."""
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -230,8 +280,11 @@ def checkpoint(path, report):
     os.replace(temporary, path)
 
 
-def run_batch(tasks, launch, mode, persist, *, maps_language="profile"):
-    report = {"started_at": datetime.now(timezone.utc).isoformat(),
+def run_batch(tasks, launch, mode, persist, *, maps_language="profile", retry_metadata=None):
+    report = {"report_version": 2,
+              "automatic_total_requested": bool(tasks) and all(t.get("auto_total") is True for t in tasks),
+              "retry_metadata": retry_metadata,
+              "started_at": datetime.now(timezone.utc).isoformat(),
               "mode": mode, "maps_language_requested": maps_language,
               "stores": [], "database_writes": False,
               "full_coverage_verified": False, "write_approved": False}
@@ -466,7 +519,24 @@ def self_test():
     assert report["summary"]["held"] == 1 and report["summary"]["count_matched"] == 1
     assert report["manual_retry_plan"][0]["action"] == "OBSERVE_FRESH_DISPLAYED_TOTAL"
     assert report["stores"][1]["expected_total_source"] == "overview_rating_summary_rechecked"
-    print("BATCH_SELF_TEST_PASS: language, registered count and auto-total gates")
+    def partial(task, mode):
+        return ({"status":"EXPECTED_COUNT_NOT_REACHED","observed_unique":100,
+                 "stop_reason":"TIME_BUDGET_REACHED","maps_ui_language":"ENGLISH"},False) if task["key"] == "thailand" else ({"status":"EXPECTED_COUNT_MATCHED","observed_unique":167,"maps_ui_language":"ENGLISH"},False)
+    prior = run_batch(auto, partial, "count", lambda _: None, maps_language="en")
+    selected, held = select_retry_tasks(auto, prior)
+    assert [t["key"] for t in selected] == ["thailand"] and not held
+    assert selected[0]["auto_total"] and selected[0].get("expected_total") is None
+    changed = [dict(t,pair="0x1:0x2") if t["key"]=="thailand" else t for t in auto]
+    selected, held = select_retry_tasks(changed, prior)
+    assert not selected and held[0]["reason"] == "CURRENT_MAPPING_NOT_VERIFIED"
+    for bad in (dict(prior,run_state="RUNNING"),dict(prior,stop_reason="ACCESS_RESTRICTED_STOPPED"),dict(prior,stores=prior["stores"][:1]),dict(prior,report_version=1)):
+        try:
+            select_retry_tasks(auto,bad)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError("UNSAFE_RETRY_REPORT_ACCEPTED")
+    print("BATCH_SELF_TEST_PASS: language, count and manual retry gates")
 
 
 def main():
@@ -477,6 +547,7 @@ def main():
                         help="English display required by default; profile is a diagnostic opt-out.")
     parser.add_argument("--store", choices=("thailand", "taiwan"), action="append")
     parser.add_argument("--plan-only", action="store_true")
+    parser.add_argument("--retry-report", type=Path, help="Explicit completed automatic-count report; select eligible partial stores only.")
     parser.add_argument("--auto-total", action="store_true", help="Read and recheck the Overview total for each count-only store.")
     parser.add_argument("--self-test", action="store_true")
     parser.add_argument("--expected", action="append", default=[],
@@ -487,6 +558,8 @@ def main():
     args = parser.parse_args()
     if not 1 <= args.count_round_limit <= probe.MAX_COUNT_ROUNDS or not 1 <= args.count_second_limit <= probe.MAX_COUNT_SECONDS:
         parser.error("count budget outside diagnostic limits")
+    if args.retry_report and (args.mode != "count" or not args.auto_total or args.expected or args.store):
+        parser.error("--retry-report requires count --auto-total, no manual stores or totals")
     if args.scale_count_budget and args.mode != "count":
         parser.error("--scale-count-budget requires count-only mode")
     if args.auto_total and (args.mode != "count" or args.expected or args.maps_language != "en"):
@@ -498,6 +571,7 @@ def main():
         return 0
     if args.scope == "registered" and (args.store or args.mode in {"count-db", "count-body-db"}):
         parser.error("registered scope supports count-only and existing sample modes; full DB audit remains limited to known stores")
+    retry_metadata = None
     try:
         if args.scope == "registered":
             tasks = build_registered_plan(load_active_stores(probe.read_only_db_config()))
@@ -517,6 +591,14 @@ def main():
                     raise ValueError("COUNT_DB_AUDIT_PILOT_LIMIT")
                 for task in tasks:
                     task["expected_total"] = targets[task["key"]]
+        if args.retry_report:
+            if args.retry_report.stat().st_size > 16 * 1024 * 1024:
+                raise ValueError("RETRY_REPORT_TOO_LARGE")
+            previous = json.loads(args.retry_report.read_text(encoding="utf-8"))
+            tasks, held = select_retry_tasks(tasks, previous)
+            retry_metadata = {"selected": len(tasks), "held": held, "subset_only": True}
+            if not tasks and not args.plan_only:
+                raise ValueError("NO_RETRY_ELIGIBLE_STORES")
     except Exception as exc:
         print("LOCAL_BATCH_PREFLIGHT_FAILED: " + type(exc).__name__)
         return 2
@@ -525,6 +607,7 @@ def main():
             "scope": args.scope, "mode": args.mode, "requested": len(tasks),
             "maps_language_requested": args.maps_language,
             "automatic_total_requested": args.auto_total,
+            "retry_metadata": retry_metadata,
             "scale_count_budget_requested": args.scale_count_budget,
             "history_visibility": "CALLER_VISIBLE_ONLY" if args.scope == "registered" else "NOT_READ",
             "stores": [dict(safe_task_row(t), hold_reason=t["hold_reason"], expected_total=t.get("expected_total")) for t in tasks],
@@ -558,7 +641,8 @@ def main():
             path = root / "reports" / ("sample-" + stamp + "-" + uuid4().hex[:8] + ".json")
             report = run_batch(tasks, live_launcher(profile, args.count_round_limit, args.count_second_limit,
                                                      maps_language=args.maps_language, scale_count_budget=args.scale_count_budget), args.mode,
-                               lambda data: checkpoint(path, data), maps_language=args.maps_language)
+                               lambda data: checkpoint(path, data), maps_language=args.maps_language,
+                               retry_metadata=retry_metadata)
             print("LOCAL_BATCH_FINAL: " + json.dumps(report["summary"], ensure_ascii=False))
             print("LOCAL_BATCH_REPORT: " + str(path))
             return 0 if report["summary"]["status"] in {"ALL_SAMPLES_PASSED", "ALL_EXPECTED_COUNTS_MATCHED", "ALL_COUNT_DB_COMPARED"} else 2
