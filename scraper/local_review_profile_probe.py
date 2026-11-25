@@ -948,7 +948,7 @@ def verified_record_set(records, expected_seen):
 def compare_db_sample(page, store_key, observed_unique, *, expected_seen=None):
     import scraper as production
     from review_append_preflight import preview_append
-    from review_audit_invariants import candidate_partition_ok, preview_partition_ok
+    from review_audit_invariants import candidate_partition_ok, preview_partition_ok, diagnostic_partition
     is_count_audit = expected_seen is not None
     metrics, records = audit_loaded_fields(page, observed_unique, include_records=True)
     if is_count_audit and (not 1 <= observed_unique <= MAX_COUNT_DB_AUDIT
@@ -972,6 +972,7 @@ def compare_db_sample(page, store_key, observed_unique, *, expected_seen=None):
     historical = [dict(row, store_name=store["store_name"], text=row.get("text") or "") for row in saved]
     plan = production.plan_safe_review_append(historical, candidates)
     append_preview = preview_append(store, saved, candidates, production)
+    partition = diagnostic_partition(observed_unique, len(candidates), gaps, append_preview)
     unique = len(plan["unique_candidates"])
     matched = plan["already_matched"]
     ready, held = len(plan["ready"]), len(plan["held"])
@@ -981,6 +982,7 @@ def compare_db_sample(page, store_key, observed_unique, *, expected_seen=None):
         and not metrics["duplicate_cards"]
         and candidate_partition_ok(observed_unique, len(candidates), unique, matched, ready, held, gaps)
         and preview_partition_ok(append_preview)
+        and partition["status"] == "PARTITION_BALANCED"
     )
     return {
         "status": ("LOCAL_COUNT_DB_COMPARED" if consistent else "LOCAL_COUNT_DB_GAPS")
@@ -996,6 +998,7 @@ def compare_db_sample(page, store_key, observed_unique, *, expected_seen=None):
         "matched_existing": matched, "potential_new_unapproved": ready,
         "held_for_review": held, "held_reasons": plan["held_reasons"],
         "append_preview": append_preview,
+        "diagnostic_partition": partition,
         "actual_database_compared": True, "database_writes": False,
         "history_visibility": "CALLER_VISIBLE_ONLY",
         "transactional_snapshot_verified": False,
