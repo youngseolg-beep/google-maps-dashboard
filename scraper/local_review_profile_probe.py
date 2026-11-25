@@ -764,8 +764,12 @@ def read_only_db_config():
     if (p.scheme != "https" or not p.hostname or p.username or p.password
             or p.path or p.query or p.fragment or p.port is not None):
         raise ValueError("AUDIT_DATABASE_URL_INVALID")
-    if key.startswith("sb_secret_"):
+    if key.startswith("sb_secret_") or token.startswith("sb_secret_"):
         raise ValueError("AUDIT_PRIVILEGED_KEY_NOT_ALLOWED")
+    if not key.startswith("sb_publishable_") and key.count(".") != 2:
+        raise ValueError("AUDIT_KEY_FORMAT_UNVERIFIED")
+    if token and token.count(".") != 2:
+        raise ValueError("AUDIT_TOKEN_FORMAT_UNVERIFIED")
     # A legacy JWT service_role key is also disallowed. This check is a
     # credential hygiene guard, not a replacement for actual DB grants/RLS.
     import base64
@@ -809,6 +813,20 @@ def audit_db_get(config, table, params):
     return rows, int(match.group(1))
 
 
+def exact_place_pair(url):
+    """Strict DB mapping identity; do not accept a substring or another place."""
+    from urllib.parse import unquote
+    try:
+        p = urlsplit(url)
+        if (p.scheme != "https" or p.hostname not in {"www.google.com", "google.com", "maps.google.com"}
+                or p.username or p.password or p.port is not None or not p.path.startswith("/maps/place/")):
+            return None
+        pairs = set(re.findall(r"!1s(0x[0-9a-f]+:0x[0-9a-f]+)(?=!|/|$)", unquote(p.path).lower()))
+        return next(iter(pairs)) if len(pairs) == 1 else None
+    except (TypeError, ValueError):
+        return None
+
+
 def verified_db_store(config, store_key):
     names = {"thailand": ("Saemaeul Central Eastville", "Thailand"),
              "taiwan": ("Bornga Dunnan Store", "Taiwan")}
@@ -835,7 +853,8 @@ def verified_db_store(config, store_key):
             or (registered is not None and str(row.get("id")) != registered["id"])
             or row.get("is_active") is not True
             or not isinstance(row.get("google_maps_url"), str)
-            or not same_place(row["google_maps_url"], store_key)):
+            or not exact_place_pair(STORE_CONFIG[store_key]["url"])
+            or exact_place_pair(row["google_maps_url"]) != exact_place_pair(STORE_CONFIG[store_key]["url"])):
         raise ValueError("AUDIT_STORE_IDENTITY_MISMATCH")
     return row
 
@@ -848,7 +867,7 @@ def load_visible_history(config, store):
     rows, ids, expected = [], set(), None
     while True:
         batch, total = audit_db_get(config, "reviews", {
-            "select": "id,store_id,store_name,author,rating,text,date,review_date,review_key,has_text",
+            "select": "id,store_id,store_name,author,rating,text,review_text,date,relative_date,review_date,review_key,has_text",
             "store_id": "eq." + str(store["id"]), "order": "id.asc",
             "limit": "500", "offset": str(len(rows)),
         })
@@ -861,11 +880,38 @@ def load_visible_history(config, store):
             if not row_id or row_id in ids or row.get("store_id") != store["id"]:
                 raise ValueError("AUDIT_HISTORY_IDENTITY_MISMATCH")
             ids.add(row_id)
-            rows.append(row)
+            rows.append(normalize_history_row(row))
         if len(rows) == expected:
             return rows
         if not batch or len(rows) > expected:
             raise ValueError("AUDIT_HISTORY_INCOMPLETE")
+
+
+def normalize_history_row(row):
+    """Preserve legacy text in memory; reject conflicting dual fields."""
+    normalized = dict(row)
+    for current, legacy in (("text", "review_text"), ("date", "relative_date")):
+        a, b = row.get(current), row.get(legacy)
+        if any(value is not None and not isinstance(value, str) for value in (a, b)):
+            raise ValueError("AUDIT_HISTORY_FIELD_TYPE_INVALID")
+        if a and a.strip() and b and b.strip() and a.strip() != b.strip():
+            raise ValueError("AUDIT_HISTORY_FIELD_CONFLICT")
+        normalized[current] = a if a and a.strip() else (b or "")
+    return normalized
+
+
+def db_read_preflight(store_key):
+    config = read_only_db_config()
+    store = verified_db_store(config, store_key)
+    rows = load_visible_history(config, store)
+    keys = [row.get("review_key") for row in rows]
+    if any(not isinstance(key, str) or not key for key in keys) or len(set(keys)) != len(keys):
+        raise ValueError("AUDIT_HISTORY_KEY_UNVERIFIED")
+    return {"status": "DB_READ_PREFLIGHT_PASSED", "store": store["store_name"],
+            "visible_existing_rows": len(rows), "distinct_keys": len(set(keys)),
+            "body_present": sum(bool(row["text"].strip()) for row in rows),
+            "history_visibility": "CALLER_VISIBLE_ONLY", "database_writes": False,
+            "production_ready": False}
 
 
 MAX_COUNT_DB_AUDIT = 1000
@@ -1427,12 +1473,24 @@ def self_test():
     assert fresh_depth_status(8, 9, True) == "ACCESS_RESTRICTED_STOPPED"
     assert local_date_value("수정: 어제", base, FakeProduction) == ("2026-11-23", "estimated")
     assert local_date_value("일주일 전", base, FakeProduction) == ("2026-11-17", "estimated")
-    print("SELF_TEST_PASS: 72 checks")
+    assert exact_place_pair(PLACE_URL) == "0x30e29df2eeea54a1:0x484a32408c147d14"
+    assert exact_place_pair(STORE_CONFIG["taiwan"]["url"]) == "0x3442ab0779763169:0x584a72379db46e23"
+    assert exact_place_pair("https://example.com/maps/place/a/!1s0x1:0x2") is None
+    assert exact_place_pair("https://www.google.com/maps/place/a/!1s0x1:0x2!1s0x3:0x4") is None
+    assert normalize_history_row({"text": "", "review_text": "fixture"})["text"] == "fixture"
+    assert normalize_history_row({"date": "2 days ago", "relative_date": None})["date"] == "2 days ago"
+    try:
+        normalize_history_row({"text": "fixture A", "review_text": "fixture B"})
+        raise AssertionError("conflict must be rejected")
+    except ValueError as exc:
+        assert str(exc) == "AUDIT_HISTORY_FIELD_CONFLICT"
+    print("SELF_TEST_PASS: 79 checks")
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--self-test", action="store_true")
+    parser.add_argument("--db-read-preflight", action="store_true", help="Verify DB read access and history without opening Chrome.")
     parser.add_argument("--inspect-on-failure", action="store_true",
                         help="Keep the visible Chrome window open after a failed check until Enter.")
     parser.add_argument("--expected-total", type=int,
@@ -1463,6 +1521,16 @@ def main():
     parser.add_argument("--count-body-audit", action="store_true",
                         help="Bounded body-control audit after count match; DB comparison is optional.")
     args = parser.parse_args()
+    if args.db_read_preflight:
+        if args.self_test or args.count_body_audit or args.count_db_audit or args.expected_total is not None or args.auto_total or args.field_sample or args.body_sample or args.adapter_sample or args.db_sample or args.audit_fields:
+            parser.error("--db-read-preflight is standalone")
+        try:
+            result = db_read_preflight(args.store)
+        except Exception as exc:
+            print("LOCAL_DB_READ_PREFLIGHT: " + json.dumps({"status": "DB_READ_PREFLIGHT_FAILED", "error_type": type(exc).__name__, "reason": str(exc) if type(exc) is ValueError and str(exc).startswith("AUDIT_") else None, "database_writes": False}))
+            return 2
+        print("LOCAL_DB_READ_PREFLIGHT: " + json.dumps(result, ensure_ascii=False))
+        return 0
     if args.count_body_audit:
         if (args.expected_total is None or not 1 <= args.expected_total <= MAX_COUNT_BODY_AUDIT
                 or args.auto_total or args.field_sample or args.body_sample or args.adapter_sample or args.db_sample):
