@@ -129,12 +129,9 @@ def find_store_by_search(page, report):
 
 
 def same_place(url, store_key="thailand"):
-    p = urlsplit(url)
-    from urllib.parse import unquote
-    path = unquote(p.path).lower()
-    return (p.scheme == "https" and p.hostname in ("www.google.com", "google.com", "maps.google.com")
-            and path.startswith("/maps/place/")
-            and any(token in path for token in STORE_CONFIG[store_key]["tokens"]))
+    """Require the same complete canonical place ID, not a matching substring."""
+    expected = exact_place_pair(STORE_CONFIG[store_key]["url"])
+    return expected is not None and exact_place_pair(url) == expected
 
 
 def displayed_total(page):
@@ -1582,6 +1579,12 @@ def self_test():
     assert same_place(STORE_CONFIG["taiwan"]["url"], "taiwan")
     assert not same_place(STORE_CONFIG["taiwan"]["url"], "thailand")
     assert not same_place(PLACE_URL, "taiwan")
+    assert not same_place("https://www.google.com/maps/place/other/!1s0x123:0x484a32408c147d14")
+    assert not same_place("https://www.google.com/maps/place/other/!1s0x123:0x484a32408c147d140")
+    assert not same_place("https://www.google.com/maps/place/other/" + PLACE_TOKEN)
+    assert not same_place(PLACE_URL.replace("www.google.com", "user@www.google.com"))
+    assert not same_place(PLACE_URL.replace("www.google.com", "www.google.com:443"))
+    assert same_place(maps_language_url(PLACE_URL, "en"))
     assert wheel_step("baseline", True, 800) == 900
     assert wheel_step("adaptive", False, 800) == 900
     assert wheel_step("adaptive", True, 700) == 1400

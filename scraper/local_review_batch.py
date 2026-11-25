@@ -160,6 +160,8 @@ def retry_plan(rows):
             continue
         if row.get("status") == "ACCESS_RESTRICTED_STOPPED" or row.get("reason") == "ACCESS_RESTRICTED_STOPPED":
             action = "STOP_AND_REVIEW_ACCESS"
+        elif row.get("status") == "REQUESTED_MAPS_LANGUAGE_NOT_VERIFIED" or row.get("reason") == "REQUESTED_MAPS_LANGUAGE_NOT_VERIFIED":
+            action = "VERIFY_ENGLISH_DISPLAY_BEFORE_FRESH_RUN"
         elif outcome == "HELD":
             action = "VERIFY_STORE_MAPPING"
         elif row.get("status") == "EXPECTED_COUNT_EXCEEDED_RECHECK_TOTAL":
@@ -197,9 +199,10 @@ def checkpoint(path, report):
     os.replace(temporary, path)
 
 
-def run_batch(tasks, launch, mode, persist):
+def run_batch(tasks, launch, mode, persist, *, maps_language="profile"):
     report = {"started_at": datetime.now(timezone.utc).isoformat(),
-              "mode": mode, "stores": [], "database_writes": False,
+              "mode": mode, "maps_language_requested": maps_language,
+              "stores": [], "database_writes": False,
               "full_coverage_verified": False, "write_approved": False}
     stopped = None
     report.update(run_state="RUNNING", active_store=None,
@@ -220,7 +223,10 @@ def run_batch(tasks, launch, mode, persist):
             # local profile. Do not run concurrent profile sessions.
             try:
                 result, restriction = launch(task, mode)
+                if maps_language == "en" and result.get("maps_ui_language") != "ENGLISH" and not restriction and result.get("status") not in {"ACCESS_RESTRICTED_STOPPED", "PLACE_NOT_VERIFIED"}:
+                    result = dict(result, status="REQUESTED_MAPS_LANGUAGE_NOT_VERIFIED")
                 row.update(outcome=classify(result, mode),
+                           maps_ui_language=result.get("maps_ui_language", "UNVERIFIED"),
                            status=result.get("status", "UNKNOWN"),
                            phase=result.get("phase"),
                            observed_unique=result.get("observed_unique", 0),
@@ -236,6 +242,9 @@ def run_batch(tasks, launch, mode, persist):
                 if restriction or result.get("status") == "ACCESS_RESTRICTED_STOPPED":
                     row["outcome"] = "FAILED"
                     stopped = "ACCESS_RESTRICTED_STOPPED"
+                elif result.get("status") == "REQUESTED_MAPS_LANGUAGE_NOT_VERIFIED":
+                    row["outcome"] = "FAILED"
+                    stopped = "REQUESTED_MAPS_LANGUAGE_NOT_VERIFIED"
             except Exception as exc:
                 row.update(outcome="FAILED", reason="BROWSER_OR_BATCH_ERROR",
                            error_type=type(exc).__name__)
@@ -255,7 +264,7 @@ def run_batch(tasks, launch, mode, persist):
     return report
 
 
-def live_launcher(profile, count_round_limit=240, count_second_limit=600):
+def live_launcher(profile, count_round_limit=240, count_second_limit=600, *, maps_language="profile"):
     from playwright.sync_api import sync_playwright
 
     def launch(task, mode):
@@ -274,6 +283,7 @@ def live_launcher(profile, count_round_limit=240, count_second_limit=600):
                 context = p.chromium.launch_persistent_context(
                     user_data_dir=str(profile), channel="chrome", headless=False,
                     args=["--profile-directory=Default"],
+                    **({"locale": "en-US"} if maps_language == "en" else {}),
                 )
                 try:
                     result = probe.run_once(
@@ -286,6 +296,7 @@ def live_launcher(profile, count_round_limit=240, count_second_limit=600):
                         count_db_audit=mode in {"count-db", "count-body-db"},
                         count_body_audit=mode == "count-body-db",
                         count_round_limit=count_round_limit, count_second_limit=count_second_limit,
+                        maps_language=maps_language,
                     )
                     # Stop the entire batch if a challenge is visible even
                     # when the inner diagnostic returned a generic error.
@@ -369,13 +380,30 @@ def self_test():
     assert snapshots[-1]["summary"]["not_attempted"] == 2
     assert "finished_at" not in snapshots[-1]
     assert report["run_state"] == "FINISHED"
-    print("BATCH_SELF_TEST_PASS: 33 checks")
+    calls.clear()
+    def wrong_language(task, mode):
+        calls.append(task["key"])
+        return {"status":"FIELD_SAMPLE_VERIFIED", "observed_unique":8, "maps_ui_language":"KOREAN"}, False
+    report = run_batch(known, wrong_language, "fields", lambda _: None, maps_language="en")
+    assert len(calls) == 1
+    assert report["maps_language_requested"] == "en"
+    assert report["stores"][0]["maps_ui_language"] == "KOREAN"
+    assert report["stores"][0]["status"] == "REQUESTED_MAPS_LANGUAGE_NOT_VERIFIED"
+    assert report["summary"]["failed"] == 1 and report["summary"]["not_attempted"] == 1
+    assert report["manual_retry_plan"][0]["action"] == "VERIFY_ENGLISH_DISPLAY_BEFORE_FRESH_RUN"
+    report = run_batch(known, lambda t,m: ({"status":"FIELD_SAMPLE_VERIFIED","observed_unique":8,"maps_ui_language":"ENGLISH"},False),
+                       "fields", lambda _: None, maps_language="en")
+    assert report["summary"]["sample_passed"] == 2
+    assert report["summary"]["write_approved"] is False
+    print("BATCH_SELF_TEST_PASS: language gate and existing checks")
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--scope", choices=("known", "registered"), default="known")
     parser.add_argument("--mode", choices=tuple(SAMPLE_STATUS), default="fields")
+    parser.add_argument("--maps-language", choices=("en", "profile"), default="en",
+                        help="English display required by default; profile is a diagnostic opt-out.")
     parser.add_argument("--store", choices=("thailand", "taiwan"), action="append")
     parser.add_argument("--plan-only", action="store_true")
     parser.add_argument("--self-test", action="store_true")
@@ -412,6 +440,7 @@ def main():
     if args.plan_only:
         print("LOCAL_BATCH_PLAN: " + json.dumps({
             "scope": args.scope, "mode": args.mode, "requested": len(tasks),
+            "maps_language_requested": args.maps_language,
             "history_visibility": "CALLER_VISIBLE_ONLY" if args.scope == "registered" else "NOT_READ",
             "stores": [dict(safe_task_row(t), hold_reason=t["hold_reason"], expected_total=t.get("expected_total")) for t in tasks],
             "database_writes": False, "write_approved": False,
@@ -442,8 +471,9 @@ def main():
         try:
             stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
             path = root / "reports" / ("sample-" + stamp + "-" + uuid4().hex[:8] + ".json")
-            report = run_batch(tasks, live_launcher(profile, args.count_round_limit, args.count_second_limit), args.mode,
-                               lambda data: checkpoint(path, data))
+            report = run_batch(tasks, live_launcher(profile, args.count_round_limit, args.count_second_limit,
+                                                     maps_language=args.maps_language), args.mode,
+                               lambda data: checkpoint(path, data), maps_language=args.maps_language)
             print("LOCAL_BATCH_FINAL: " + json.dumps(report["summary"], ensure_ascii=False))
             print("LOCAL_BATCH_REPORT: " + str(path))
             return 0 if report["summary"]["status"] in {"ALL_SAMPLES_PASSED", "ALL_EXPECTED_COUNTS_MATCHED", "ALL_COUNT_DB_COMPARED"} else 2
