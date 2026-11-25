@@ -264,6 +264,10 @@ def run_batch(tasks, launch, mode, persist, *, maps_language="profile"):
                            elapsed_seconds=result.get("elapsed_seconds"),
                            expected_total=result.get("expected_total_user_observed"),
                            expected_total_source=result.get("expected_total_source"),
+                           count_round_limit=result.get("count_round_limit"),
+                           count_second_limit=result.get("count_second_limit"),
+                           elapsed_scroll_seconds=result.get("elapsed_scroll_seconds"),
+                           scroll_rounds=result.get("scroll_rounds"),
                            overview_total=result.get("overview_total"),
                            overview_total_recheck=result.get("overview_total_recheck"),
                            stop_reason=result.get("stop_reason"),
@@ -300,7 +304,7 @@ def run_batch(tasks, launch, mode, persist, *, maps_language="profile"):
     return report
 
 
-def live_launcher(profile, count_round_limit=240, count_second_limit=600, *, maps_language="profile"):
+def live_launcher(profile, count_round_limit=240, count_second_limit=600, *, maps_language="profile", scale_count_budget=False):
     from playwright.sync_api import sync_playwright
 
     def launch(task, mode):
@@ -333,7 +337,7 @@ def live_launcher(profile, count_round_limit=240, count_second_limit=600, *, map
                         count_db_audit=mode in {"count-db", "count-body-db"},
                         count_body_audit=mode == "count-body-db",
                         count_round_limit=count_round_limit, count_second_limit=count_second_limit,
-                        maps_language=maps_language,
+                        maps_language=maps_language, scale_count_budget=scale_count_budget,
                     )
                     # Stop the entire batch if a challenge is visible even
                     # when the inner diagnostic returned a generic error.
@@ -477,11 +481,14 @@ def main():
     parser.add_argument("--self-test", action="store_true")
     parser.add_argument("--expected", action="append", default=[],
                         metavar="STORE=COUNT", help="Fresh observed total keyed by known store or registered task key.")
+    parser.add_argument("--scale-count-budget", action="store_true", help="Opt into bounded size-based count-only scroll budgets.")
     parser.add_argument("--count-round-limit", type=int, default=240)
     parser.add_argument("--count-second-limit", type=int, default=600)
     args = parser.parse_args()
     if not 1 <= args.count_round_limit <= probe.MAX_COUNT_ROUNDS or not 1 <= args.count_second_limit <= probe.MAX_COUNT_SECONDS:
         parser.error("count budget outside diagnostic limits")
+    if args.scale_count_budget and args.mode != "count":
+        parser.error("--scale-count-budget requires count-only mode")
     if args.auto_total and (args.mode != "count" or args.expected or args.maps_language != "en"):
         parser.error("--auto-total requires count mode, English display, and no manual totals")
     if args.expected and args.mode not in {"count", "count-db", "count-body-db"}:
@@ -518,6 +525,7 @@ def main():
             "scope": args.scope, "mode": args.mode, "requested": len(tasks),
             "maps_language_requested": args.maps_language,
             "automatic_total_requested": args.auto_total,
+            "scale_count_budget_requested": args.scale_count_budget,
             "history_visibility": "CALLER_VISIBLE_ONLY" if args.scope == "registered" else "NOT_READ",
             "stores": [dict(safe_task_row(t), hold_reason=t["hold_reason"], expected_total=t.get("expected_total")) for t in tasks],
             "database_writes": False, "write_approved": False,
@@ -549,7 +557,7 @@ def main():
             stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
             path = root / "reports" / ("sample-" + stamp + "-" + uuid4().hex[:8] + ".json")
             report = run_batch(tasks, live_launcher(profile, args.count_round_limit, args.count_second_limit,
-                                                     maps_language=args.maps_language), args.mode,
+                                                     maps_language=args.maps_language, scale_count_budget=args.scale_count_budget), args.mode,
                                lambda data: checkpoint(path, data), maps_language=args.maps_language)
             print("LOCAL_BATCH_FINAL: " + json.dumps(report["summary"], ensure_ascii=False))
             print("LOCAL_BATCH_REPORT: " + str(path))

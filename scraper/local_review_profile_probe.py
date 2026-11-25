@@ -253,14 +253,18 @@ def review_pane(page):
     cards = page.locator(".jftiEf[data-review-id]")
     if cards.count() == 0:
         return None
-    return cards.first.evaluate_handle("""card => {
+    handle = cards.first.evaluate_handle("""card => {
         for (let el=card.parentElement; el && el!==document.body; el=el.parentElement) {
             const r=el.getBoundingClientRect(), css=getComputedStyle(el);
             if (r.width>0 && r.height>0 && ['auto','scroll'].includes(css.overflowY)
                 && el.scrollHeight>el.clientHeight+30) return el;
         }
         return null;
-    }""").as_element()
+    }""")
+    element = handle.as_element()
+    if element is None:
+        handle.dispose()
+    return element
 
 
 def field_audit_status(metrics, observed_unique):
@@ -1191,6 +1195,20 @@ MAX_COUNT_ROUNDS = 5000
 MAX_COUNT_SECONDS = 10800
 
 
+def scaled_count_budget(total, rounds, seconds, enabled=False):
+    """Optional conservative planning estimate; never increases scroll cadence."""
+    if (type(total) is not int or not 1 <= total <= MAX_EXPECTED_COUNT
+            or not 1 <= rounds <= MAX_COUNT_ROUNDS
+            or not 1 <= seconds <= MAX_COUNT_SECONDS):
+        raise ValueError("COUNT_BUDGET_OUT_OF_SCOPE")
+    if not enabled:
+        return rounds, seconds
+    # Plan for only two new IDs per scroll round, with startup/no-growth margin.
+    estimated = (total + 1) // 2 + 40
+    return (min(MAX_COUNT_ROUNDS, max(rounds, estimated)),
+            min(MAX_COUNT_SECONDS, max(seconds, estimated * 4)))
+
+
 def count_budget_status(rounds, elapsed, round_limit, second_limit):
     if elapsed >= second_limit:
         return "TIME_BUDGET_REACHED"
@@ -1211,7 +1229,7 @@ def maps_language_url(url, language):
     return urlunsplit((p.scheme, p.netloc, p.path, urlencode(query), p.fragment))
 
 
-def run_once(context, expected_total=None, store_key="thailand", auto_total=False, scroll_mode="baseline", audit_fields=False, field_sample=False, body_sample=False, adapter_sample=False, db_sample=False, count_round_limit=240, count_second_limit=600, count_db_audit=False, count_body_audit=False, maps_language="profile"):
+def run_once(context, expected_total=None, store_key="thailand", auto_total=False, scroll_mode="baseline", audit_fields=False, field_sample=False, body_sample=False, adapter_sample=False, db_sample=False, count_round_limit=240, count_second_limit=600, count_db_audit=False, count_body_audit=False, maps_language="profile", scale_count_budget=False):
     report = {"status": "NOT_STARTED", "phase": "select_startup_tab",
               "overview_selected": False,
               "reviews_selected": False, "initial_unique": 0,
@@ -1223,6 +1241,8 @@ def run_once(context, expected_total=None, store_key="thailand", auto_total=Fals
     report["maps_ui_language"] = "UNVERIFIED"
     if maps_language not in {"profile", "en"} or (auto_total and expected_total is not None):
         raise ValueError("MAPS_LANGUAGE_SCOPE_INVALID")
+    if scale_count_budget and (not (auto_total or expected_total is not None) or count_db_audit or count_body_audit):
+        raise ValueError("SCALED_BUDGET_COUNT_ONLY")
     if count_body_audit and (expected_total is None or not 1 <= expected_total <= MAX_COUNT_BODY_AUDIT
                              or auto_total or field_sample or body_sample or adapter_sample or db_sample):
         raise ValueError("COUNT_BODY_AUDIT_SCOPE_INVALID")
@@ -1243,6 +1263,7 @@ def run_once(context, expected_total=None, store_key="thailand", auto_total=Fals
             raise ValueError("EXPECTED_COUNT_OUT_OF_SCOPE")
         report["count_round_limit"] = count_round_limit
         report["count_second_limit"] = count_second_limit
+    report["scale_count_budget_requested"] = scale_count_budget
     report["scroll_mode"] = scroll_mode
     report["larger_wheel_rounds"] = 0
     report["append_only_retained"] = True
@@ -1420,6 +1441,10 @@ def run_once(context, expected_total=None, store_key="thailand", auto_total=Fals
                 report["body_sample"] = audit_body_sample(page, store_key, reviews)
                 report["status"] = report["body_sample"]["status"]
             return report
+        if expected_total is not None:
+            count_round_limit, count_second_limit = scaled_count_budget(expected_total, count_round_limit, count_second_limit, scale_count_budget)
+            report["count_round_limit"] = count_round_limit
+            report["count_second_limit"] = count_second_limit
         # Count IDs only in memory. Do not extract or save review contents.
         # The count check is bounded and never circumvents a restriction.
         idle = 0
@@ -1447,13 +1472,16 @@ def run_once(context, expected_total=None, store_key="thailand", auto_total=Fals
                 if expected_total is not None:
                     report["stop_reason"] = "NO_REVIEW_SCROLL_PANE"
                 break
-            box = pane.bounding_box()
-            if not box:
-                if expected_total is not None:
-                    report["stop_reason"] = "NO_REVIEW_PANE_BOUNDS"
-                break
+            try:
+                box = pane.bounding_box()
+                if not box:
+                    if expected_total is not None:
+                        report["stop_reason"] = "NO_REVIEW_PANE_BOUNDS"
+                    break
+                before_top = pane.evaluate("(el) => el.scrollTop")
+            finally:
+                pane.dispose()
             # Use the ordinary visible review list and normal mouse scrolling.
-            before_top = pane.evaluate("(el) => el.scrollTop")
             before = len(seen)
             page.mouse.move(box["x"] + box["width"]/2, box["y"] + box["height"]/2)
             step = wheel_step(
@@ -1465,11 +1493,21 @@ def run_once(context, expected_total=None, store_key="thailand", auto_total=Fals
             # Preserve the validated wait; no increased request cadence.
             page.wait_for_timeout(1800)
             report["scroll_rounds"] = i
+            if blocked(page):
+                report["status"] = "ACCESS_RESTRICTED_STOPPED"
+                return report
+            if not same_place(page.url, store_key) or not selected(reviews):
+                report["status"] = "REVIEW_CONTEXT_LOST"
+                return report
             report["observed_unique"], retained = observe(page, seen, id_cache)
             report["append_only_retained"] = report["append_only_retained"] and retained
             report["additional_unique"] = len(seen) - report["initial_unique"]
             after_pane = review_pane(page)
-            after_top = after_pane.evaluate("(el) => el.scrollTop") if after_pane else before_top
+            try:
+                after_top = after_pane.evaluate("(el) => el.scrollTop") if after_pane else before_top
+            finally:
+                if after_pane is not None:
+                    after_pane.dispose()
             advanced = after_top > before_top or len(seen) > before
             report["scroll_verified"] = report["scroll_verified"] or advanced
             if blocked(page):
@@ -1598,6 +1636,11 @@ def self_test():
     assert same_place(PLACE_URL)
     a = {"status":"UI_DISPLAYED","displayed_total":167,"candidate_counts":[167]}
     assert stable_overview_total(a, a) == 167
+    assert scaled_count_budget(167, 240, 600, True) == (240, 600)
+    assert scaled_count_budget(6332, 240, 600, False) == (240, 600)
+    assert scaled_count_budget(6332, 240, 600, True) == (3206, 10800)
+    assert scaled_count_budget(10000, 240, 600, True) == (5000, 10800)
+    assert scaled_count_budget(167, 500, 1000, True) == (500, 1000)
     assert stable_overview_total(a, dict(a, displayed_total=168, candidate_counts=[168])) is None
     assert stable_overview_total(a, dict(a, status="AMBIGUOUS")) is None
     assert stable_overview_total(a, None) is None
