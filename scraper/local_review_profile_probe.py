@@ -161,6 +161,52 @@ def displayed_total(page):
             "candidate_counts": values}
 
 
+def displayed_reviews_total(page):
+    """Read the place rating summary before Sort in the selected Reviews panel.
+
+    Only explicit review-count labels and a separate rating value qualify.
+    Never use author counts, keyword chips, cards, or arbitrary page numbers.
+    """
+    evidence = page.evaluate(r"""() => {
+        const visible = e => {
+            const r=e.getBoundingClientRect(), s=getComputedStyle(e);
+            return r.width>0 && r.height>0 && s.visibility!=='hidden' && s.display!=='none';
+        };
+        const sortLabel = /^(?:sort(?: reviews)?|정렬)$/i;
+        const sorts = [...document.querySelectorAll('button,[role="button"]')]
+            .filter(e => visible(e) && !e.closest('[data-review-id],.jftiEf') &&
+                [e.innerText||'',e.getAttribute('aria-label')||''].some(v=>sortLabel.test(v.trim())));
+        if (sorts.length!==1) return {candidate_counts:[], reason:'SORT_ANCHOR_UNVERIFIED'};
+        const sort=sorts[0];
+        const countLabel=/^((?:\d{1,3}(?:,\d{3})+|\d+))\s+reviews?$/i;
+        const ratingLabel=/^(?:[1-4](?:\.\d)?|5(?:\.0)?)$/;
+        for(let root=sort.parentElement;root && root!==document.body;root=root.parentElement){
+            const found=new Set();
+            let rating=false;
+            for(const e of root.querySelectorAll('span,div,button,[role="button"]')){
+                if(e===sort || e.contains(sort) || !visible(e) ||
+                    e.closest('[data-review-id],.jftiEf') ||
+                    !(sort.compareDocumentPosition(e)&Node.DOCUMENT_POSITION_PRECEDING)) continue;
+                for(const value of [e.innerText||'',e.getAttribute('aria-label')||'']){
+                    const v=value.trim();
+                    const m=v.match(countLabel);
+                    if(m){
+                        const n=Number(m[1].replace(/,/g,''));
+                        if(Number.isSafeInteger(n)) found.add(n);
+                    }
+                    if(ratingLabel.test(v) && v.includes('.')) rating=true;
+                }
+            }
+            if(found.size && rating) return {candidate_counts:[...found].sort((a,b)=>a-b),reason:'RATING_SUMMARY_BEFORE_SORT'};
+        }
+        return {candidate_counts:[],reason:'RATING_SUMMARY_UNVERIFIED'};
+    }""")
+    values = evidence["candidate_counts"]
+    return {"status":"UI_DISPLAYED" if len(values)==1 else ("AMBIGUOUS" if values else "UNKNOWN"),
+            "displayed_total":values[0] if len(values)==1 else None,
+            "candidate_counts":values, "reason":evidence["reason"]}
+
+
 def stable_overview_total(first, second):
     """Accept only equal, unambiguous, bounded totals from two observations."""
     for sample in (first, second):
@@ -1427,21 +1473,14 @@ def run_once(context, expected_total=None, store_key="thailand", auto_total=Fals
             report["status"] = "PLACE_NOT_VERIFIED"
             return report
 
-        if auto_total and report["reviews_selected_at_entry"] and not report["overview_selected"]:
-            report["phase"] = "select_overview_for_total"
-            overview.click(timeout=5000)
-            for _ in range(15):
-                if blocked(page):
-                    report["status"] = "ACCESS_RESTRICTED_STOPPED"
-                    return report
-                if selected(overview) and same_place(page.url, store_key):
-                    break
-                page.wait_for_timeout(1000)
-            if not selected(overview) or not same_place(page.url, store_key):
-                report["status"] = "OVERVIEW_NOT_VERIFIED"
-                return report
-            report["overview_selected"] = True
-        if report["overview_selected"]:
+        # Never leave a verified Reviews tab just to read the count.
+        # Direct links can also finish an asynchronous tab transition.
+        report["overview_total"] = {"status":"NOT_OBSERVED","displayed_total":None,"candidate_counts":[]}
+        overview_target = None
+        if selected(reviews):
+            report["total_entry_path"] = "reviews_direct"
+        elif selected(overview):
+            report["total_entry_path"] = "overview"
             report["phase"] = "read_overview_total"
             report["overview_total"] = displayed_total(page)
             if auto_total:
@@ -1449,22 +1488,19 @@ def run_once(context, expected_total=None, store_key="thailand", auto_total=Fals
                 if blocked(page):
                     report["status"] = "ACCESS_RESTRICTED_STOPPED"
                     return report
-                if not selected(overview) or not same_place(page.url, store_key):
-                    report["status"] = "OVERVIEW_NOT_VERIFIED"
+                if not same_place(page.url, store_key):
+                    report["status"] = "REVIEW_CONTEXT_LOST"
                     return report
-                second = displayed_total(page)
-                report["overview_total_recheck"] = second
-                if stable_overview_total(report["overview_total"], second) is None:
-                    report["status"] = "DISPLAYED_TOTAL_NOT_VERIFIED_OR_OUT_OF_SCOPE"
+                if selected(overview) and not selected(reviews):
+                    second = displayed_total(page)
+                    report["overview_total_recheck"] = second
+                    overview_target = stable_overview_total(report["overview_total"], second)
+            if not selected(reviews):
+                if not selected(overview):
+                    report["status"] = "ENTRY_TAB_NOT_VERIFIED"
                     return report
-            report["phase"] = "select_reviews"
-            reviews.click(timeout=5000)
-        elif report["reviews_selected_at_entry"]:
-            # A canonical place link may open the review tab directly.
-            # Keep that verified state instead of forcing an unnecessary
-            # navigation back to Overview.
-            report["overview_total"] = {"status": "NOT_OBSERVED",
-                                        "displayed_total": None, "candidate_counts": []}
+                report["phase"] = "select_reviews"
+                reviews.click(timeout=5000)
         else:
             report["status"] = "ENTRY_TAB_NOT_VERIFIED"
             return report
@@ -1483,12 +1519,38 @@ def run_once(context, expected_total=None, store_key="thailand", auto_total=Fals
             return report
 
         if auto_total:
-            expected_total = stable_overview_total(report["overview_total"], report.get("overview_total_recheck"))
+            expected_total = overview_target
+            total_source = "overview_rating_summary_rechecked"
+            if expected_total is None:
+                report["phase"] = "read_reviews_total"
+                # Allow the rating summary to settle, without leaving Reviews.
+                for _ in range(8):
+                    if blocked(page):
+                        report["status"] = "ACCESS_RESTRICTED_STOPPED"
+                        return report
+                    if not same_place(page.url, store_key) or not selected(reviews):
+                        report["status"] = "REVIEW_CONTEXT_LOST"
+                        return report
+                    first = displayed_reviews_total(page)
+                    report["reviews_total"] = first
+                    page.wait_for_timeout(1200)
+                    if blocked(page):
+                        report["status"] = "ACCESS_RESTRICTED_STOPPED"
+                        return report
+                    if not same_place(page.url, store_key) or not selected(reviews):
+                        report["status"] = "REVIEW_CONTEXT_LOST"
+                        return report
+                    second = displayed_reviews_total(page)
+                    report["reviews_total_recheck"] = second
+                    expected_total = stable_overview_total(first, second)
+                    if expected_total is not None:
+                        break
+                total_source = "reviews_rating_summary_rechecked"
             if expected_total is None or not 1 <= expected_total <= MAX_EXPECTED_COUNT:
                 report["status"] = "DISPLAYED_TOTAL_NOT_VERIFIED_OR_OUT_OF_SCOPE"
                 return report
             report["expected_total_user_observed"] = expected_total
-            report["expected_total_source"] = "overview_rating_summary_rechecked"
+            report["expected_total_source"] = total_source
             report["additional_unique"] = 0
             report["stop_reason"] = None
 
