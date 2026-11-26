@@ -1465,13 +1465,26 @@ def source_identity_preview(records, history, store_id, production):
             "identity_verified": False, "links_persisted": 0, "write_approved": False}
 
 
-def compare_db_sample(page, store_key, observed_unique, *, expected_seen=None):
+def verified_record_order(records, expected_order):
+    ids = [r.get("source_id") for r in records]
+    if any(not isinstance(i,str) or not i for i in ids):
+        return False
+    digests = [hashlib.sha256(i.encode("utf-8")).hexdigest() for i in ids]
+    return len(digests)==len(set(digests)) and digests==expected_order
+
+
+def compare_db_sample(page, store_key, observed_unique, *, expected_seen=None, expected_order=None):
     import scraper as production
     from review_append_preflight import preview_append
     from review_source_append_preview import simulate_append_replay
     from review_audit_invariants import candidate_partition_ok, preview_partition_ok, diagnostic_partition
     is_count_audit = expected_seen is not None
+    is_order_audit = expected_order is not None
     metrics, records = audit_loaded_fields(page, observed_unique, include_records=True)
+    if is_order_audit and (not is_count_audit or not 30 <= observed_unique <= 300
+                           or not verified_record_order(records, expected_order)):
+        return {"status":"NEWEST_DB_CARD_ORDER_UNVERIFIED","actual_database_compared":False,
+                "database_writes":False,"write_approved":False}
     if is_count_audit and (not 1 <= observed_unique <= MAX_COUNT_DB_AUDIT
                            or not verified_record_set(records, expected_seen)
                            or metrics["duplicate_cards"]
@@ -1508,7 +1521,8 @@ def compare_db_sample(page, store_key, observed_unique, *, expected_seen=None):
     return {
         "status": ("LOCAL_COUNT_DB_COMPARED" if consistent else "LOCAL_COUNT_DB_GAPS")
                   if is_count_audit else ("LOCAL_DB_SAMPLE_COMPARED" if consistent else "LOCAL_DB_SAMPLE_GAPS"),
-        "scope": "COUNT_MATCHED_DOM" if is_count_audit else "INITIAL_SAMPLE",
+        "scope": "NEWEST_ORDERED_DOM" if is_order_audit else ("COUNT_MATCHED_DOM" if is_count_audit else "INITIAL_SAMPLE"),
+        "same_card_order_verified": is_order_audit,
         "same_card_set_verified": is_count_audit,
         "body_unexpanded_possible": metrics["possible_collapsed_body"],
         "store_mapping_verified": True,
@@ -1583,7 +1597,7 @@ def maps_language_url(url, language):
     return urlunsplit((p.scheme, p.netloc, p.path, urlencode(query), p.fragment))
 
 
-def run_once(context, expected_total=None, store_key="thailand", auto_total=False, scroll_mode="baseline", audit_fields=False, field_sample=False, body_sample=False, adapter_sample=False, db_sample=False, count_round_limit=240, count_second_limit=600, count_db_audit=False, count_body_audit=False, maps_language="profile", scale_count_budget=False, newest_heads=None):
+def run_once(context, expected_total=None, store_key="thailand", auto_total=False, scroll_mode="baseline", audit_fields=False, field_sample=False, body_sample=False, adapter_sample=False, db_sample=False, count_round_limit=240, count_second_limit=600, count_db_audit=False, count_body_audit=False, maps_language="profile", scale_count_budget=False, newest_heads=None, newest_db_audit=False):
     report = {"status": "NOT_STARTED", "phase": "select_startup_tab",
               "overview_selected": False,
               "reviews_selected": False, "initial_unique": 0,
@@ -1591,6 +1605,8 @@ def run_once(context, expected_total=None, store_key="thailand", auto_total=Fals
               "scroll_verified": False, "database_writes": False,
               "full_coverage_verified": False}
     report["store"] = STORE_CONFIG[store_key]["name"]
+    if newest_db_audit and newest_heads is None:
+        raise ValueError("NEWEST_DB_AUDIT_REQUIRES_HEAD")
     if newest_heads is not None and (maps_language != "en" or auto_total or expected_total is not None or audit_fields or field_sample or body_sample or adapter_sample or db_sample or count_db_audit or count_body_audit):
         raise ValueError("NEWEST_SAMPLE_SCOPE_INVALID")
     report["maps_language_requested"] = maps_language
@@ -1860,6 +1876,23 @@ def run_once(context, expected_total=None, store_key="thailand", auto_total=Fals
                         report["status"] = "NEWEST_DISPLAYED_ORDER_INCONCLUSIVE"
                         return report
                     newest_heads.append(final[:30])
+                    if newest_db_audit and len(newest_heads)==2 and newest_heads[0]==newest_heads[1]:
+                        report["phase"] = "newest_head_db_preview"
+                        if blocked(page) or not same_place(page.url, store_key) or not selected(reviews):
+                            report["status"] = "ACCESS_RESTRICTED_STOPPED" if blocked(page) else "REVIEW_CONTEXT_LOST"
+                            return report
+                        # Compare all retained cards from the same ordered snapshot
+                        # (may include more than 30), not a separate random sample.
+                        report["newest_db_preview"] = compare_db_sample(
+                            page, store_key, len(dated_head),
+                            expected_seen={bytes.fromhex(h) for h in dated_head},
+                            expected_order=dated_head)
+                        if blocked(page) or not same_place(page.url, store_key) or not selected(reviews):
+                            report["status"] = "ACCESS_RESTRICTED_STOPPED" if blocked(page) else "REVIEW_CONTEXT_LOST"
+                            return report
+                        if ordered_head(page)!=dated_head or report["newest_db_preview"]["status"]!="LOCAL_COUNT_DB_COMPARED":
+                            report["status"] = "NEWEST_DB_PREVIEW_HELD"
+                            return report
                     report["status"] = "NEWEST_HEAD_SAMPLE_VERIFIED"
                     report["newest_head_size"] = 30
                     return report
@@ -2138,6 +2171,11 @@ def run_once(context, expected_total=None, store_key="thailand", auto_total=Fals
 
 def self_test():
     assert same_place(PLACE_URL)
+    order_fixture = [{"source_id":"first"},{"source_id":"second"}]
+    order_hashes = [hashlib.sha256(r["source_id"].encode()).hexdigest() for r in order_fixture]
+    assert verified_record_order(order_fixture, order_hashes)
+    assert not verified_record_order(order_fixture[::-1], order_hashes)
+    assert not verified_record_order(order_fixture+[order_fixture[0]], order_hashes)
     assert displayed_age_evidence(["a week ago","4 months ago"])["displayed_order_consistent"]
     assert displayed_age_evidence(["4 months ago","a week ago"])["clear_inversions"] == 1
     assert not displayed_age_evidence(["a week ago","a week ago"])["displayed_order_consistent"]
@@ -2373,6 +2411,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--self-test", action="store_true")
     parser.add_argument("--newest-head-audit", action="store_true", help="Two independent read-only 30-ID head observations, no ID output.")
+    parser.add_argument("--newest-head-db-audit", action="store_true", help="With newest-head-audit, GET-only legacy comparison after two matching heads.")
     parser.add_argument("--maps-language", choices=("profile", "en"), default="profile", help="Request English Maps display for a diagnostic; no account setting change.")
     parser.add_argument("--db-read-preflight", action="store_true", help="Verify DB read access and history without opening Chrome.")
     parser.add_argument("--inspect-on-failure", action="store_true",
@@ -2405,6 +2444,14 @@ def main():
     parser.add_argument("--count-body-audit", action="store_true",
                         help="Bounded body-control audit after count match; DB comparison is optional.")
     args = parser.parse_args()
+    if args.newest_head_db_audit:
+        if not args.newest_head_audit:
+            parser.error("--newest-head-db-audit requires --newest-head-audit")
+        try:
+            read_only_db_config()
+        except Exception:
+            print("LOCAL_DB_AUDIT_CONFIG_UNAVAILABLE")
+            return 2
     if args.newest_head_audit and (args.maps_language != "en" or args.auto_total or args.expected_total is not None or args.audit_fields or args.field_sample or args.body_sample or args.adapter_sample or args.db_sample or args.count_db_audit or args.count_body_audit or args.db_read_preflight or args.self_test):
         parser.error("--newest-head-audit is a standalone English diagnostic")
     if args.maps_language == "en" and (args.db_read_preflight or args.self_test):
@@ -2502,7 +2549,7 @@ def main():
                     **({"locale": "en-US"} if args.maps_language == "en" else {}),
                 )
                 try:
-                    report = run_once(context, args.expected_total, args.store, args.auto_total, args.scroll_mode, args.audit_fields, args.field_sample, args.body_sample, args.adapter_sample, args.db_sample, args.count_round_limit, args.count_second_limit, args.count_db_audit, args.count_body_audit, maps_language=args.maps_language, newest_heads=newest_heads)
+                    report = run_once(context, args.expected_total, args.store, args.auto_total, args.scroll_mode, args.audit_fields, args.field_sample, args.body_sample, args.adapter_sample, args.db_sample, args.count_round_limit, args.count_second_limit, args.count_db_audit, args.count_body_audit, maps_language=args.maps_language, newest_heads=newest_heads, newest_db_audit=args.newest_head_db_audit)
                     # Snapshot unexpected lifecycle events BEFORE our intentional
                     # cleanup, so closing Chrome normally is not a false failure.
                     report["lifecycle"] = dict(report["lifecycle"])
@@ -2553,6 +2600,14 @@ def main():
         comparison["displayed_order_consistent"] = passed
         comparison["publication_order_verified"] = False
         comparison["stop_authorized"] = False
+        comparison["newest_db_audit_requested"] = args.newest_head_db_audit
+        if args.newest_head_db_audit:
+            db_preview = reports[-1].get("newest_db_preview") if reports else None
+            comparison["newest_db_preview_status"] = db_preview.get("status") if db_preview else "NOT_COMPARED"
+            comparison["baseline_committed"] = False
+            if not passed or comparison["newest_db_preview_status"]!="LOCAL_COUNT_DB_COMPARED":
+                passed = False
+                comparison["status"] = "NEWEST_DB_PREVIEW_HELD"
         if passed and not explicit:
             comparison["status"] = "NEWEST_HEAD_MATCHED_BEHAVIOR_ONLY"
         print("LOCAL_NEWEST_HEAD_FINAL: " + json.dumps(dict(comparison, attempts=len(reports), database_writes=False, full_coverage_verified=False)), flush=True)
