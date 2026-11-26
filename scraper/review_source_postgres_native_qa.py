@@ -7,7 +7,6 @@ production credentials, or production database access.
 import argparse
 import os
 from pathlib import Path
-import re
 import secrets
 import shutil
 import socket
@@ -15,22 +14,9 @@ import subprocess
 import tempfile
 
 from review_source_postgres_qa import run_fixture_checks
+from review_postgres_native_guard import ROLE, sanitized_env, version_is_16, handshake_matches
 
 BIN_NAMES=("initdb","pg_ctl","postgres","psql")
-ROLE="fixture_admin"
-
-
-def sanitized_env(source):
-    allowed={"SYSTEMROOT","WINDIR","COMSPEC","PATH","PATHEXT","TEMP","TMP",
-             "USERPROFILE","APPDATA","LOCALAPPDATA","SYSTEMDRIVE",
-             "PROGRAMFILES","PROGRAMFILES(X86)","PROGRAMDATA"}
-    return {k:v for k,v in source.items() if k.upper() in allowed}
-
-
-def version_is_16(output):
-    return bool(re.search(r"\(PostgreSQL\)\s+16(?:\.\d+)?(?:\s|$)",output))
-
-
 def local_port():
     with socket.socket(socket.AF_INET,socket.SOCK_STREAM) as sock:
         sock.bind(("127.0.0.1",0))
@@ -95,11 +81,8 @@ def main():
         # the actual data directory, endpoint, version and identity match.
         handshake=query("SELECT current_setting('data_directory'),"
                         "current_setting('server_version_num'),"
-                        "inet_server_addr()::text,inet_server_port(),current_user;").strip().split("|")
-        if (len(handshake)!=5 or Path(handshake[0]).resolve()!=cluster.resolve()
-                or not 160000<=int(handshake[1])<170000
-                or handshake[2]!="127.0.0.1/32" and handshake[2]!="127.0.0.1"
-                or int(handshake[3])!=port or handshake[4]!=ROLE):
+                        "inet_server_addr()::text,inet_server_port(),current_user;")
+        if not handshake_matches(handshake,cluster,port):
             raise RuntimeError("FIXTURE_CLUSTER_IDENTITY_UNVERIFIED")
         # Each SQL invocation uses only the verified local endpoint and
         # ephemeral login, never environment-supplied connection settings.

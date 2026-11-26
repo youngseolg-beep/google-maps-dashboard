@@ -26,6 +26,7 @@ SUITES = {
     "incremental_capture": ("review_incremental_capture.py", []),
     "incremental_transaction": ("review_incremental_transaction_qa.py", []),
     "source_reconciliation": ("review_source_reconcile.py", []),
+    "postgres_native_guard": ("review_postgres_native_guard.py", []),
 }
 
 
