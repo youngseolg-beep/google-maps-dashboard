@@ -216,6 +216,44 @@ def selected(locator):
     return locator.get_attribute("aria-selected") == "true"
 
 
+def initial_card_poll(read, wait, seconds=45):
+    """Bounded ordinary UI wait, no reload or repeat navigation.
+
+    read returns aggregate structural evidence and a context status. Check
+    restriction/context before accepting visible cards on every observation.
+    """
+    if type(seconds) is not int or not 1 <= seconds <= 45:
+        raise ValueError("INITIAL_CARD_WAIT_OUT_OF_SCOPE")
+    for tick in range(seconds + 1):
+        status, evidence = read()
+        if status:
+            return status, tick, evidence
+        if evidence["visible_expected_cards"] > 0:
+            return "INITIAL_REVIEW_CARDS_VISIBLE", tick, evidence
+        if tick < seconds:
+            wait()
+    return "INITIAL_REVIEW_CARDS_TIMEOUT", seconds, evidence
+
+
+def initial_card_evidence(page):
+    """Only structural counts; no text, account data, or review IDs."""
+    return page.evaluate("""() => {
+        const visible = e => {
+            const r = e.getBoundingClientRect();
+            const s = getComputedStyle(e);
+            return r.width > 0 && r.height > 0 && s.visibility !== 'hidden' && s.display !== 'none';
+        };
+        const count = sel => [...document.querySelectorAll(sel)].filter(visible).length;
+        return {
+            visible_expected_cards: count('.jftiEf[data-review-id]'),
+            visible_review_id_nodes: count('[data-review-id]'),
+            visible_review_class_nodes: count('.jftiEf'),
+            visible_feeds: count('[role="feed"]'),
+            visible_busy_nodes: count('[aria-busy="true"],[role="progressbar"]')
+        };
+    }""")
+
+
 def observe(page, seen, id_cache):
     """Count unique IDs in memory; track whether old cards remain in the DOM.
 
@@ -1405,13 +1443,29 @@ def run_once(context, expected_total=None, store_key="thailand", auto_total=Fals
             report["status"] = "REVIEW_CONTEXT_LOST"
             return report
 
+        if expected_total is not None:
+            count_round_limit, count_second_limit = scaled_count_budget(expected_total, count_round_limit, count_second_limit, scale_count_budget)
+            report["count_round_limit"] = count_round_limit
+            report["count_second_limit"] = count_second_limit
         report["phase"] = "wait_for_review_cards"
-        try:
-            page.locator(".jftiEf[data-review-id]").first.wait_for(state="visible", timeout=12000)
-        except Exception as exc:
-            if type(exc).__name__ != "TimeoutError":
-                raise
-            report["status"] = result_status(0, blocked(page))
+        def read_initial():
+            if blocked(page):
+                return "ACCESS_RESTRICTED_STOPPED", {}
+            if not same_place(page.url, store_key) or not selected(reviews):
+                return "REVIEW_CONTEXT_LOST", {}
+            return None, initial_card_evidence(page)
+        wait_started = time.monotonic()
+        initial_status, polls_waited, evidence = initial_card_poll(
+            read_initial, lambda: page.wait_for_timeout(1000))
+        report["initial_card_wait"] = {
+            "status": initial_status, "poll_intervals": polls_waited,
+            "elapsed_seconds": round(time.monotonic() - wait_started, 1),
+            "configured_wait_seconds": 45, "evidence": evidence}
+        if initial_status != "INITIAL_REVIEW_CARDS_VISIBLE":
+            report["status"] = initial_status
+            return report
+        if blocked(page) or not same_place(page.url, store_key) or not selected(reviews):
+            report["status"] = "ACCESS_RESTRICTED_STOPPED" if blocked(page) else "REVIEW_CONTEXT_LOST"
             return report
 
         report["phase"] = "observe_initial_reviews"
@@ -1441,10 +1495,6 @@ def run_once(context, expected_total=None, store_key="thailand", auto_total=Fals
                 report["body_sample"] = audit_body_sample(page, store_key, reviews)
                 report["status"] = report["body_sample"]["status"]
             return report
-        if expected_total is not None:
-            count_round_limit, count_second_limit = scaled_count_budget(expected_total, count_round_limit, count_second_limit, scale_count_budget)
-            report["count_round_limit"] = count_round_limit
-            report["count_second_limit"] = count_second_limit
         # Count IDs only in memory. Do not extract or save review contents.
         # The count check is bounded and never circumvents a restriction.
         idle = 0
@@ -1634,6 +1684,16 @@ def run_once(context, expected_total=None, store_key="thailand", auto_total=Fals
 
 def self_test():
     assert same_place(PLACE_URL)
+    waits = []
+    samples = iter([(None, {"visible_expected_cards":0}), (None, {"visible_expected_cards":1})])
+    status, ticks, evidence = initial_card_poll(lambda: next(samples), lambda: waits.append(1), 2)
+    assert status == "INITIAL_REVIEW_CARDS_VISIBLE" and ticks == 1 and len(waits) == 1
+    waits.clear()
+    status, ticks, _ = initial_card_poll(lambda: (None, {"visible_expected_cards":0}), lambda: waits.append(1), 2)
+    assert status == "INITIAL_REVIEW_CARDS_TIMEOUT" and ticks == 2 and len(waits) == 2
+    for failure in ("ACCESS_RESTRICTED_STOPPED", "REVIEW_CONTEXT_LOST"):
+        status, ticks, _ = initial_card_poll(lambda: (failure, {}), lambda: None, 2)
+        assert status == failure and ticks == 0
     a = {"status":"UI_DISPLAYED","displayed_total":167,"candidate_counts":[167]}
     assert stable_overview_total(a, a) == 167
     assert scaled_count_budget(167, 240, 600, True) == (240, 600)

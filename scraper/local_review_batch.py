@@ -170,6 +170,8 @@ def retry_plan(rows):
             action = "OBSERVE_FRESH_DISPLAYED_TOTAL"
         elif outcome == "HELD":
             action = "VERIFY_STORE_MAPPING"
+        elif row.get("status") == "INITIAL_REVIEW_CARDS_TIMEOUT":
+            action = "INSPECT_REVIEW_TAB_INITIAL_LOADING"
         elif row.get("status") == "EXPECTED_COUNT_EXCEEDED_RECHECK_TOTAL":
             action = "RECHECK_DISPLAYED_TOTAL"
         elif row.get("status") == "COUNT_MATCHED_FIELD_GAPS":
@@ -323,6 +325,8 @@ def run_batch(tasks, launch, mode, persist, *, maps_language="profile", retry_me
                            scroll_rounds=result.get("scroll_rounds"),
                            overview_total=result.get("overview_total"),
                            overview_total_recheck=result.get("overview_total_recheck"),
+                           initial_card_wait=result.get("initial_card_wait"),
+                           ui_summary=result.get("ui_summary"),
                            stop_reason=result.get("stop_reason"),
                            count_gap=result.get("count_gap"),
                            field_audit=result.get("field_audit"),
