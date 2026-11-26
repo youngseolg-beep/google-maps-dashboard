@@ -21,6 +21,7 @@ SUITES = {
     "source_storage_fixture": ("review_source_storage_qa.py", []),
     "source_recovery": ("review_source_recovery.py", []),
     "source_attempt_journal": ("review_source_attempt_journal.py", []),
+    "incremental_boundary": ("review_incremental_boundary.py", []),
 }
 
 
