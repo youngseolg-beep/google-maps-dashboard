@@ -1410,9 +1410,10 @@ def supabase_request(method, table, *, query=None, body=None, prefer=None):
 
     headers = {
         "apikey": SUPABASE_SERVICE_ROLE_KEY,
-        "Authorization": f"Bearer {SUPABASE_SERVICE_ROLE_KEY}",
         "Accept": "application/json",
     }
+    if not SUPABASE_SERVICE_ROLE_KEY.startswith("sb_secret_"):
+        headers["Authorization"] = f"Bearer {SUPABASE_SERVICE_ROLE_KEY}"
 
     payload = None
     if body is not None:

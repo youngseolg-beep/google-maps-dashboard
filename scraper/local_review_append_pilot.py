@@ -26,25 +26,52 @@ def backend_config(target):
             or not u.hostname or not u.hostname.endswith(".supabase.co")
             or u.path or u.query or u.fragment or u.username or u.password or u.port):
         raise ValueError("PILOT_BACKEND_TARGET_UNVERIFIED")
-    # Existing backend credential stays in memory only. No secret in CLI,
-    # shell history, files or logs; refuse an echoed-input fallback.
+    # Accept the current secret key or the legacy service_role JWT.
+    # The target's privileged API root independently validates the credential.
     if not key:
         import getpass
         import warnings
         with warnings.catch_warnings():
             warnings.simplefilter("error", getpass.GetPassWarning)
-            key = getpass.getpass("Supabase service_role key (hidden): ").strip()
-    # Current writer expects a legacy backend JWT, never a public audit key.
-    import base64
-    if key.count(".") != 2:
-        raise ValueError("PILOT_BACKEND_ROLE_UNVERIFIED")
-    payload = key.split(".")[1]
-    claims = json.loads(base64.urlsafe_b64decode(payload + "=" * (-len(payload) % 4)))
-    if claims.get("role") != "service_role" or claims.get("ref") != u.hostname.split(".")[0]:
-        raise ValueError("PILOT_BACKEND_ROLE_UNVERIFIED")
+            key = getpass.getpass("Supabase secret key (hidden): ").strip()
+    key = key.strip()
+    if not key:
+        raise ValueError("PILOT_KEY_EMPTY")
+    if key.startswith("sb_secret_"):
+        token = ""
+    elif key.count(".") == 2:
+        import base64
+        try:
+            payload = key.split(".")[1]
+            claims = json.loads(base64.urlsafe_b64decode(payload + "=" * (-len(payload) % 4)))
+        except (ValueError, TypeError):
+            raise ValueError("PILOT_KEY_INVALID_JWT") from None
+        if claims.get("role") != "service_role":
+            raise ValueError("PILOT_KEY_NOT_SERVICE_ROLE")
+        if claims.get("ref") not in (None, u.hostname.split(".")[0]):
+            raise ValueError("PILOT_KEY_PROJECT_MISMATCH")
+        token = key
+    else:
+        raise ValueError("PILOT_KEY_NOT_SECRET_OR_SERVICE_ROLE")
+    from urllib.request import Request, build_opener, HTTPRedirectHandler
+    from urllib.error import HTTPError
+    class NoRedirect(HTTPRedirectHandler):
+        def redirect_request(self, req, fp, code, msg, headers, newurl):
+            return None
+    headers = {"apikey": key, "Accept": "application/openapi+json"}
+    if token:
+        headers["Authorization"] = "Bearer " + token
+    request = Request(base + "/rest/v1/", headers=headers, method="GET")
+    try:
+        with build_opener(NoRedirect()).open(request, timeout=20) as response:
+            if response.status != 200:
+                raise ValueError("PILOT_KEY_SERVER_REJECTED")
+    except HTTPError as exc:
+        raise ValueError("PILOT_KEY_SERVER_HTTP_" + str(exc.code)) from None
     production.SUPABASE_URL = base
     production.SUPABASE_SERVICE_ROLE_KEY = key
-    return base, key, key
+    print("PILOT_BACKEND_AUTH_VERIFIED", flush=True)
+    return base, key, token
 
 
 def history_snapshot(config, store):
