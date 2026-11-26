@@ -3,6 +3,7 @@ BEGIN;
 CREATE ROLE fixture_anon NOLOGIN;
 CREATE ROLE fixture_authenticated NOLOGIN;
 CREATE ROLE fixture_writer NOLOGIN;
+CREATE ROLE fixture_owner NOLOGIN;
 CREATE SCHEMA fixture_private;
 REVOKE ALL ON SCHEMA fixture_private FROM PUBLIC, fixture_anon, fixture_authenticated;
 CREATE TABLE fixture_private.reviews (
@@ -19,19 +20,18 @@ ALTER TABLE fixture_private.reviews ENABLE ROW LEVEL SECURITY;
 ALTER TABLE fixture_private.source_links ENABLE ROW LEVEL SECURITY;
 REVOKE ALL ON ALL TABLES IN SCHEMA fixture_private FROM PUBLIC,fixture_anon,fixture_authenticated;
 GRANT USAGE ON SCHEMA fixture_private TO fixture_writer;
-GRANT SELECT,INSERT ON ALL TABLES IN SCHEMA fixture_private TO fixture_writer;
+GRANT SELECT ON ALL TABLES IN SCHEMA fixture_private TO fixture_writer;
+GRANT USAGE ON SCHEMA fixture_private TO fixture_owner;
 CREATE POLICY writer_read_reviews ON fixture_private.reviews FOR SELECT TO fixture_writer USING (true);
-CREATE POLICY writer_insert_reviews ON fixture_private.reviews FOR INSERT TO fixture_writer WITH CHECK (true);
 CREATE POLICY writer_read_links ON fixture_private.source_links FOR SELECT TO fixture_writer USING (true);
-CREATE POLICY writer_insert_links ON fixture_private.source_links FOR INSERT TO fixture_writer WITH CHECK (true);
 CREATE FUNCTION fixture_private.append_fixture(s uuid, h text, r uuid, k text, b text)
-RETURNS text LANGUAGE plpgsql SECURITY INVOKER SET search_path = pg_catalog AS $$
+RETURNS text LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog AS $
 BEGIN
  IF s IS NULL OR h IS NULL OR h !~ '^[0-9a-f]{64}$' THEN
    RAISE EXCEPTION 'invalid fixture source';
  END IF;
- -- Serialize fixture operations on a store. Legacy writers not using this
- -- lock are not covered; database constraints remain mandatory.
+ -- The writer can insert only through this fixture function; database
+ -- constraints also protect against conflicting administrative operations.
  PERFORM pg_advisory_xact_lock(hashtextextended('fixture-source:' || s::text, 0));
  IF EXISTS(SELECT 1 FROM fixture_private.source_links WHERE store_id=s AND source_hash=h) THEN
    RETURN 'LINKED_NO_INSERT';
@@ -42,6 +42,9 @@ BEGIN
 END $$;
 REVOKE ALL ON FUNCTION fixture_private.append_fixture(uuid,text,uuid,text,text) FROM PUBLIC,fixture_anon,fixture_authenticated;
 GRANT EXECUTE ON FUNCTION fixture_private.append_fixture(uuid,text,uuid,text,text) TO fixture_writer;
+ALTER TABLE fixture_private.reviews OWNER TO fixture_owner;
+ALTER TABLE fixture_private.source_links OWNER TO fixture_owner;
+ALTER FUNCTION fixture_private.append_fixture(uuid,text,uuid,text,text) OWNER TO fixture_owner;
 INSERT INTO fixture_private.reviews VALUES('00000000-0000-0000-0000-000000000001','10000000-0000-0000-0000-000000000001','old-key','unchanged');
 COMMIT;
 DO $$
@@ -52,6 +55,8 @@ BEGIN
  OR has_table_privilege('fixture_authenticated','fixture_private.source_links','INSERT')
  OR has_function_privilege('fixture_anon','fixture_private.append_fixture(uuid,text,uuid,text,text)','EXECUTE')
  OR has_function_privilege('fixture_authenticated','fixture_private.append_fixture(uuid,text,uuid,text,text)','EXECUTE')
+ OR has_table_privilege('fixture_writer','fixture_private.reviews','INSERT')
+ OR has_table_privilege('fixture_writer','fixture_private.source_links','INSERT')
  OR has_table_privilege('fixture_writer','fixture_private.reviews','UPDATE')
  OR has_table_privilege('fixture_writer','fixture_private.source_links','DELETE') THEN
    RAISE EXCEPTION 'fixture grant violation';
@@ -70,13 +75,23 @@ BEGIN
  EXCEPTION WHEN unique_violation THEN NULL;
  END;
  BEGIN
-   INSERT INTO fixture_private.source_links VALUES('10000000-0000-0000-0000-000000000002',repeat('c',64),'00000000-0000-0000-0000-000000000001');
-   RAISE EXCEPTION 'cross-store constraint missing';
- EXCEPTION WHEN foreign_key_violation THEN NULL;
+   INSERT INTO fixture_private.reviews VALUES('00000000-0000-0000-0000-000000000009',s,'forbidden-key','forbidden');
+   RAISE EXCEPTION 'writer direct insert unexpectedly granted';
+ EXCEPTION WHEN insufficient_privilege THEN NULL;
  END;
  BEGIN
    INSERT INTO fixture_private.source_links VALUES(s,repeat('d',64),r);
-   RAISE EXCEPTION 'target constraint missing';
+   RAISE EXCEPTION 'writer direct link unexpectedly granted';
+ EXCEPTION WHEN insufficient_privilege THEN NULL;
+ END;
+ -- A second record collides with a legacy key: the whole enclosing
+ -- subtransaction must roll back the first successful review and link.
+ BEGIN
+   IF fixture_private.append_fixture(s,repeat('b',64),'00000000-0000-0000-0000-000000000006','batch-first','first') <> 'APPENDED' THEN
+     RAISE EXCEPTION 'batch first append failed';
+   END IF;
+   PERFORM fixture_private.append_fixture(s,repeat('c',64),'00000000-0000-0000-0000-000000000007','old-key','collision');
+   RAISE EXCEPTION 'batch second collision missing';
  EXCEPTION WHEN unique_violation THEN NULL;
  END;
  BEGIN
@@ -92,6 +107,20 @@ BEGIN
  END IF;
 END $$;
 RESET ROLE;
+-- Administrative negative tests isolate constraints from writer grants.
+DO $
+BEGIN
+ BEGIN
+   INSERT INTO fixture_private.source_links VALUES('10000000-0000-0000-0000-000000000002',repeat('c',64),'00000000-0000-0000-0000-000000000001');
+   RAISE EXCEPTION 'cross-store constraint missing';
+ EXCEPTION WHEN foreign_key_violation THEN NULL;
+ END;
+ BEGIN
+   INSERT INTO fixture_private.source_links VALUES('10000000-0000-0000-0000-000000000001',repeat('d',64),'00000000-0000-0000-0000-000000000002');
+   RAISE EXCEPTION 'target constraint missing';
+ EXCEPTION WHEN unique_violation THEN NULL;
+ END;
+END $;
 SET ROLE fixture_anon;
 DO $$ BEGIN
  BEGIN
