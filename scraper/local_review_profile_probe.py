@@ -408,6 +408,24 @@ def review_pane(page):
     return element
 
 
+def pane_geometry(pane):
+    if pane is None:
+        return None
+    return pane.evaluate("""el => ({
+        top: Math.round(el.scrollTop), height: Math.round(el.scrollHeight),
+        viewport: Math.round(el.clientHeight),
+        at_bottom: el.scrollTop + el.clientHeight >= el.scrollHeight - 3
+    })""")
+
+
+def stall_evidence_status(geometry, busy_count):
+    if not isinstance(geometry, dict):
+        return "PANE_UNVERIFIED"
+    if busy_count:
+        return "VISIBLE_BUSY_INDICATOR"
+    return "PANE_BOTTOM_NO_VISIBLE_BUSY" if geometry.get("at_bottom") is True else "PANE_NOT_AT_BOTTOM"
+
+
 def field_audit_status(metrics, observed_unique):
     """A DOM field audit is not proof that review values are correct or complete."""
     if metrics["unique_cards"] != observed_unique:
@@ -1622,6 +1640,8 @@ def run_once(context, expected_total=None, store_key="thailand", auto_total=Fals
         # Count IDs only in memory. Do not extract or save review contents.
         # The count check is bounded and never circumvents a restriction.
         idle = 0
+        stall_wait_used = False
+        report["stall_observations"] = []
         scroll_started = time.monotonic()
         report["phase"] = "scroll_review_pane"
         max_rounds = count_round_limit if expected_total is not None else 8
@@ -1678,7 +1698,8 @@ def run_once(context, expected_total=None, store_key="thailand", auto_total=Fals
             report["additional_unique"] = len(seen) - report["initial_unique"]
             after_pane = review_pane(page)
             try:
-                after_top = after_pane.evaluate("(el) => el.scrollTop") if after_pane else before_top
+                geometry = pane_geometry(after_pane)
+                after_top = geometry["top"] if geometry is not None else before_top
             finally:
                 if after_pane is not None:
                     after_pane.dispose()
@@ -1703,6 +1724,45 @@ def run_once(context, expected_total=None, store_key="thailand", auto_total=Fals
             idle = 0 if advanced else idle + 1
             if idle >= (4 if expected_total is not None else 3):
                 if expected_total is not None:
+                    evidence = initial_card_evidence(page)
+                    event = {"round": i, "unique": len(seen), "geometry": geometry,
+                             "ui": evidence, "state": stall_evidence_status(
+                                 geometry, evidence["visible_busy_nodes"]),
+                             "passive_wait_used": False}
+                    report["stall_observations"].append(event)
+                    # One passive observation window for the entire run.
+                    # No reload, filter change, extra wheel, or bypass.
+                    if not stall_wait_used:
+                        stall_wait_used = True
+                        event["passive_wait_used"] = True
+                        stall_before = len(seen)
+                        for _ in range(15):
+                            if count_budget_status(i, time.monotonic()-scroll_started,
+                                                   count_round_limit, count_second_limit):
+                                break
+                            page.wait_for_timeout(1000)
+                            if blocked(page):
+                                report["status"] = "ACCESS_RESTRICTED_STOPPED"
+                                return report
+                            if not same_place(page.url, store_key) or not selected(reviews):
+                                report["status"] = "REVIEW_CONTEXT_LOST"
+                                return report
+                            report["observed_unique"], retained = observe(page, seen, id_cache)
+                            report["append_only_retained"] = report["append_only_retained"] and retained
+                            report["additional_unique"] = len(seen) - report["initial_unique"]
+                            if len(seen) > stall_before:
+                                break
+                        event["after_wait_unique"] = len(seen)
+                        event["after_wait_ui"] = initial_card_evidence(page)
+                        final_pane = review_pane(page)
+                        try:
+                            event["after_wait_geometry"] = pane_geometry(final_pane)
+                        finally:
+                            if final_pane is not None:
+                                final_pane.dispose()
+                        if len(seen) > stall_before:
+                            idle = 0
+                            continue
                     report["stop_reason"] = "NO_FURTHER_SCROLL_OR_NEW_IDS"
                 break
 
@@ -1808,6 +1868,10 @@ def run_once(context, expected_total=None, store_key="thailand", auto_total=Fals
 
 def self_test():
     assert same_place(PLACE_URL)
+    assert stall_evidence_status(None,0) == "PANE_UNVERIFIED"
+    assert stall_evidence_status({"at_bottom":True},1) == "VISIBLE_BUSY_INDICATOR"
+    assert stall_evidence_status({"at_bottom":True},0) == "PANE_BOTTOM_NO_VISIBLE_BUSY"
+    assert stall_evidence_status({"at_bottom":False},0) == "PANE_NOT_AT_BOTTOM"
     waits = []
     samples = iter([(None, {"visible_expected_cards":0}), (None, {"visible_expected_cards":1})])
     status, ticks, evidence = initial_card_poll(lambda: next(samples), lambda: waits.append(1), 2)

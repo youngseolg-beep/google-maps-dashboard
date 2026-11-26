@@ -329,6 +329,7 @@ def run_batch(tasks, launch, mode, persist, *, maps_language="profile", retry_me
                            reviews_total_recheck=result.get("reviews_total_recheck"),
                            total_entry_path=result.get("total_entry_path"),
                            initial_card_wait=result.get("initial_card_wait"),
+                           stall_observations=result.get("stall_observations"),
                            ui_summary=result.get("ui_summary"),
                            stop_reason=result.get("stop_reason"),
                            count_gap=result.get("count_gap"),
