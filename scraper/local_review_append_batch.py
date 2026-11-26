@@ -123,6 +123,11 @@ def main():
     config = pilot.backend_config(args.target_url)
     rows = discovery.load_active_stores(config)
     tasks = discovery.build_registered_plan(rows)
+    # Keep the existing dashboard SV assignment; only aggregate logs are persisted.
+    owners = {row["id"]: row.get("sv", "") for row in production.supabase_request("GET", "stores",
+              query={"select":"id,sv","is_active":"eq.true","limit":"2000"}) or []}
+    for task in tasks:
+        task["sv"] = owners.get(task["store_id"], "")
     # Stable country/name order; immutable place and store ID checks remain.
     tasks.sort(key=lambda t:(t["country"],t["name"],t["key"]))
     countries = set(args.country or [])
