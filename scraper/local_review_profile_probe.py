@@ -650,14 +650,20 @@ def field_audit_status(metrics, observed_unique):
     return "REQUIRED_FIELDS_PRESENT"
 
 
-def audit_loaded_fields(page, observed_unique, *, include_records=False):
+def audit_loaded_fields(page, observed_unique, *, include_records=False, expected_prefix=None):
     """Inspect loaded review cards in one DOM pass; return aggregate counts only.
 
     Never export individual authors, text, dates or review IDs. A blank body
     can be a rating-only review; an unexpanded body is not a full-text review.
     Do not replace missing dates/ratings with guessed values.
     """
-    result = page.locator(".jftiEf[data-review-id]").evaluate_all(r"""(cards, includeRecords) => {
+    # Only the newest-head diagnostic may inspect a frozen prefix. Capture
+    # all ID positions and selected records in the same DOM evaluation.
+    result = page.locator(".jftiEf[data-review-id]").evaluate_all(r"""(cards, options) => {
+        const includeRecords = options.includeRecords;
+        const prefixLimit = options.prefixLimit;
+        const allIds = prefixLimit === null ? null : cards.map(c=>c.getAttribute('data-review-id'));
+        if (prefixLimit !== null) cards = cards.slice(0,prefixLimit);
         const mainBody = """ + MAIN_BODY_JS + r""";
         const readDates = """ + REVIEW_DATE_METADATA_JS + r""";
         const out = {
@@ -764,9 +770,15 @@ def audit_loaded_fields(page, observed_unique, *, include_records=False):
                 out.possible_collapsed_body++;
             }
         }
-        return {metrics:out, records};
-    }""", include_records)
+        return {metrics:out, records, allIds};
+    }""", {"includeRecords":include_records,"prefixLimit":len(expected_prefix) if expected_prefix is not None else None})
     metrics = result["metrics"]
+    if expected_prefix is not None:
+        all_ids=result["allIds"]
+        actual=hash_ordered_ids(all_ids)
+        metrics["prefix_order_verified"]=verified_prefix(expected_prefix,actual)
+        metrics["dom_cards_at_extraction"]=len(all_ids)
+        metrics["excluded_trailing_cards"]=len(all_ids)-len(expected_prefix) if metrics["prefix_order_verified"] else None
     metrics["status"] = field_audit_status(metrics, observed_unique)
     metrics["full_text_verified"] = False
     metrics["absolute_dates_verified"] = False
@@ -1465,6 +1477,21 @@ def source_identity_preview(records, history, store_id, production):
             "identity_verified": False, "links_persisted": 0, "write_approved": False}
 
 
+def hash_ordered_ids(ids):
+    """Bounded full DOM identity list; reject any missing or duplicate ID."""
+    if not isinstance(ids,list) or not 1<=len(ids)<=300 or any(not isinstance(i,str) or not i for i in ids) or len(set(ids))!=len(ids):
+        return None
+    return [hashlib.sha256(i.encode("utf-8")).hexdigest() for i in ids]
+
+
+def verified_prefix(expected, actual):
+    """A frozen sample may gain a tail, but never lose/reorder its prefix."""
+    return (isinstance(expected,list) and isinstance(actual,list)
+            and 1<=len(expected)<=len(actual)<=300
+            and len(set(expected))==len(expected) and len(set(actual))==len(actual)
+            and actual[:len(expected)]==expected)
+
+
 def verified_record_order(records, expected_order):
     ids = [r.get("source_id") for r in records]
     if any(not isinstance(i,str) or not i for i in ids):
@@ -1481,8 +1508,10 @@ def compare_db_sample(page, store_key, observed_unique, *, expected_seen=None, e
     from review_audit_invariants import candidate_partition_ok, preview_partition_ok, diagnostic_partition
     is_count_audit = expected_seen is not None
     is_order_audit = expected_order is not None
-    metrics, records = audit_loaded_fields(page, observed_unique, include_records=True)
+    metrics, records = audit_loaded_fields(page, observed_unique, include_records=True,
+                                          expected_prefix=expected_order)
     if is_order_audit and (not is_count_audit or not 30 <= observed_unique <= 300
+                           or not metrics.get("prefix_order_verified")
                            or not verified_record_order(records, expected_order)):
         return {"status":"NEWEST_DB_CARD_ORDER_UNVERIFIED","actual_database_compared":False,
                 "database_writes":False,"write_approved":False}
@@ -1525,6 +1554,9 @@ def compare_db_sample(page, store_key, observed_unique, *, expected_seen=None, e
         "scope": "NEWEST_ORDERED_DOM" if is_order_audit else ("COUNT_MATCHED_DOM" if is_count_audit else "INITIAL_SAMPLE"),
         "same_card_order_verified": is_order_audit,
         "same_card_set_verified": is_count_audit,
+        "frozen_prefix_only": is_order_audit,
+        "dom_cards_at_extraction": metrics.get("dom_cards_at_extraction", observed_unique),
+        "excluded_trailing_cards": metrics.get("excluded_trailing_cards",0),
         "body_unexpanded_possible": metrics["possible_collapsed_body"],
         "classification_balanced": partition["status"] == "PARTITION_BALANCED",
         "strict_adapter_preflight_passed": consistent,
@@ -1902,12 +1934,17 @@ def run_once(context, expected_total=None, store_key="thailand", auto_total=Fals
                         if blocked(page) or not same_place(page.url,store_key) or not selected(reviews):
                             report["status"] = "ACCESS_RESTRICTED_STOPPED" if blocked(page) else "REVIEW_CONTEXT_LOST"
                             return report
-                        if ordered_head(page)!=dated_head or body_status in {"COUNT_BODY_CONTEXT_LOST","COUNT_BODY_INCOMPLETE"}:
+                        after_body=ordered_head(page)
+                        prefix_ok=verified_prefix(dated_head,after_body)
+                        report["newest_body_prefix_verified"]=prefix_ok
+                        report["newest_body_dom_cards"]=len(after_body) if after_body else None
+                        report["newest_body_extra_cards"]=len(after_body)-len(dated_head) if prefix_ok else None
+                        if not prefix_ok or body_status in {"COUNT_BODY_CONTEXT_LOST","COUNT_BODY_INCOMPLETE"}:
                             report["status"] = "NEWEST_BODY_AUDIT_HELD"
                             return report
                         report["phase"] = "newest_head_db_preview"
-                        # Compare all retained cards from the same ordered snapshot
-                        # (may include more than 30), not a separate random sample.
+                        # Compare the frozen, body-audited prefix only. A unique
+                        # appended tail is not audited and cannot become a candidate.
                         report["newest_db_preview"] = compare_db_sample(
                             page, store_key, len(dated_head),
                             expected_seen={bytes.fromhex(h) for h in dated_head},
@@ -1915,7 +1952,9 @@ def run_once(context, expected_total=None, store_key="thailand", auto_total=Fals
                         if blocked(page) or not same_place(page.url, store_key) or not selected(reviews):
                             report["status"] = "ACCESS_RESTRICTED_STOPPED" if blocked(page) else "REVIEW_CONTEXT_LOST"
                             return report
-                        if ordered_head(page)!=dated_head or report["newest_db_preview"]["status"]!="LOCAL_COUNT_DB_COMPARED":
+                        after_db=ordered_head(page)
+                        report["newest_db_prefix_retained"]=verified_prefix(dated_head,after_db)
+                        if not report["newest_db_prefix_retained"] or report["newest_db_preview"]["status"]!="LOCAL_COUNT_DB_COMPARED":
                             report["status"] = "NEWEST_DB_PREVIEW_HELD"
                             return report
                     report["status"] = "NEWEST_HEAD_SAMPLE_VERIFIED"
@@ -2201,6 +2240,14 @@ def self_test():
     assert verified_record_order(order_fixture, order_hashes)
     assert not verified_record_order(order_fixture[::-1], order_hashes)
     assert not verified_record_order(order_fixture+[order_fixture[0]], order_hashes)
+    extra=hash_ordered_ids(["first","second","third"])
+    assert verified_prefix(order_hashes,extra)
+    assert verified_prefix(order_hashes,order_hashes)
+    assert not verified_prefix(order_hashes,hash_ordered_ids(["first","third","second"]))
+    assert not verified_prefix(order_hashes,hash_ordered_ids(["first"]))
+    assert not verified_prefix(order_hashes,hash_ordered_ids(["first","second","first"]))
+    assert not verified_prefix(order_hashes,hash_ordered_ids(["first","second",None]))
+    assert not verified_prefix(order_hashes,hash_ordered_ids(["first","second"]+[str(i) for i in range(299)]))
     assert displayed_age_evidence(["a week ago","4 months ago"])["displayed_order_consistent"]
     assert displayed_age_evidence(["4 months ago","a week ago"])["clear_inversions"] == 1
     assert not displayed_age_evidence(["a week ago","a week ago"])["displayed_order_consistent"]
