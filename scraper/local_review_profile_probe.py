@@ -919,11 +919,17 @@ def body_sample_status(metrics):
     return "BODY_SAMPLE_CONTROLS_VERIFIED"
 
 
-def audit_body_sample(page, store_key, reviews, limit=10, deadline=None, *, evidence_sink=None):
+def audit_body_sample(page, store_key, reviews, limit=10, deadline=None, *, evidence_sink=None, selected_ids=None):
     """Bounded ordinary UI check on initially loaded cards, aggregate only."""
     cards = page.locator(".jftiEf[data-review-id]")
-    n = min(cards.count(), limit)
-    initial_ids = cards.evaluate_all("(cards) => cards.map(c => c.getAttribute('data-review-id'))")[:n]
+    initial_ids = cards.evaluate_all("(cards) => cards.map(c => c.getAttribute('data-review-id'))")
+    if selected_ids is None:
+        indices = list(range(min(len(initial_ids), limit)))
+    else:
+        if len(set(initial_ids)) != len(initial_ids) or not set(selected_ids).issubset(initial_ids) or len(selected_ids) > limit:
+            raise ValueError("PILOT_BODY_ID_SELECTION_INVALID")
+        indices = [i for i, identity in enumerate(initial_ids) if identity in selected_ids]
+    n = len(indices)
     metrics = dict(sample_cards=n, processed_cards=0, time_budget_reached=False,
                    initial_body_not_detected=0, initial_body_missing_after=0,
                    previously_present_body_lost=0,
@@ -941,7 +947,7 @@ def audit_body_sample(page, store_key, reviews, limit=10, deadline=None, *, evid
                    body_missing_after=0, identity_mismatch=0,
                    context_lost=False, click_errors=0,
                    excluded_nonreview_more=0, excluded_nonreview_original=0)
-    for i in range(n):
+    for i in indices:
         if deadline is not None and time.monotonic() >= deadline:
             metrics["time_budget_reached"] = True
             break
@@ -1706,7 +1712,7 @@ def maps_language_url(url, language):
     return urlunsplit((p.scheme, p.netloc, p.path, urlencode(query), p.fragment))
 
 
-def run_once(context, expected_total=None, store_key="thailand", auto_total=False, scroll_mode="baseline", audit_fields=False, field_sample=False, body_sample=False, adapter_sample=False, db_sample=False, count_round_limit=240, count_second_limit=600, count_db_audit=False, count_body_audit=False, maps_language="profile", scale_count_budget=False, newest_heads=None, newest_db_audit=False, capture_sink=None):
+def run_once(context, expected_total=None, store_key="thailand", auto_total=False, scroll_mode="baseline", audit_fields=False, field_sample=False, body_sample=False, adapter_sample=False, db_sample=False, count_round_limit=240, count_second_limit=600, count_db_audit=False, count_body_audit=False, maps_language="profile", scale_count_budget=False, newest_heads=None, newest_db_audit=False, capture_sink=None, capture_select=None):
     report = {"status": "NOT_STARTED", "phase": "select_startup_tab",
               "overview_selected": False,
               "reviews_selected": False, "initial_unique": 0,
@@ -1714,6 +1720,8 @@ def run_once(context, expected_total=None, store_key="thailand", auto_total=Fals
               "scroll_verified": False, "database_writes": False,
               "full_coverage_verified": False}
     report["store"] = STORE_CONFIG[store_key]["name"]
+    if capture_select is not None and capture_sink is None:
+        raise ValueError("PILOT_SELECTION_REQUIRES_CAPTURE")
     if capture_sink is not None and (not count_body_audit or count_db_audit or maps_language != "en"):
         raise ValueError("PILOT_CAPTURE_SCOPE_INVALID")
     if newest_db_audit and newest_heads is None:
@@ -1724,7 +1732,7 @@ def run_once(context, expected_total=None, store_key="thailand", auto_total=Fals
     report["maps_ui_language"] = "UNVERIFIED"
     if maps_language not in {"profile", "en"} or (auto_total and expected_total is not None):
         raise ValueError("MAPS_LANGUAGE_SCOPE_INVALID")
-    if scale_count_budget and (not (auto_total or expected_total is not None) or count_db_audit or count_body_audit):
+    if scale_count_budget and (not (auto_total or expected_total is not None) or count_db_audit or (count_body_audit and capture_select is None)):
         raise ValueError("SCALED_BUDGET_COUNT_ONLY")
     pilot_auto_body = capture_sink is not None and auto_total and expected_total is None
     if count_body_audit and ((not pilot_auto_body and (expected_total is None or not 1 <= expected_total <= MAX_COUNT_BODY_AUDIT or auto_total))
@@ -1899,7 +1907,7 @@ def run_once(context, expected_total=None, store_key="thailand", auto_total=Fals
             if expected_total is None or not 1 <= expected_total <= MAX_EXPECTED_COUNT:
                 report["status"] = "DISPLAYED_TOTAL_NOT_VERIFIED_OR_OUT_OF_SCOPE"
                 return report
-            if count_body_audit and expected_total > MAX_COUNT_BODY_AUDIT:
+            if count_body_audit and capture_select is None and expected_total > MAX_COUNT_BODY_AUDIT:
                 report["status"] = "PILOT_TOTAL_OUT_OF_SCOPE"
                 return report
             report["expected_total_user_observed"] = expected_total
@@ -2243,7 +2251,10 @@ def run_once(context, expected_total=None, store_key="thailand", auto_total=Fals
                                 and report["field_audit"]["rating_valid"] == len(seen)
                                 and report["field_audit"]["unique_cards"] == len(seen)
                                 and not report["field_audit"]["duplicate_cards"])
-        if (count_db_audit or count_body_audit) and (report["status"] == "EXPECTED_COUNT_MATCHED" or diagnostic_date_gaps):
+        targeted_field_gaps = (capture_select is not None and report["status"] == "COUNT_MATCHED_FIELD_GAPS"
+                               and report["field_audit"]["unique_cards"] == len(seen)
+                               and not report["field_audit"]["duplicate_cards"])
+        if (count_db_audit or count_body_audit) and (report["status"] == "EXPECTED_COUNT_MATCHED" or diagnostic_date_gaps or targeted_field_gaps):
             report["phase"] = "count_matched_db_audit"
             if blocked(page) or not same_place(page.url, store_key) or not selected(reviews):
                 report["status"] = "COUNT_DB_AUDIT_CONTEXT_UNVERIFIED"
@@ -2255,17 +2266,26 @@ def run_once(context, expected_total=None, store_key="thailand", auto_total=Fals
                 report["phase"] = "count_matched_body_audit"
                 _, before_records = audit_loaded_fields(page, len(seen), include_records=True)
                 same_set = verified_record_set(before_records, seen)
-                del before_records
                 if not same_set:
                     report["status"] = "COUNT_BODY_AUDIT_CARD_SET_UNVERIFIED"
                     return report
                 pilot_body_evidence = {} if capture_sink is not None else None
+                selected_ids = set(capture_select(before_records)) if capture_select is not None else None
+                selected_meta = {r["source_id"]: (r["author"], r["rating"], r["date_label"])
+                                 for r in before_records if selected_ids is not None and r["source_id"] in selected_ids}
+                target_count = len(seen) if selected_ids is None else len(selected_ids)
+                if selected_ids is not None and (len(selected_meta) != target_count or target_count > MAX_COUNT_BODY_AUDIT):
+                    report["status"] = "PILOT_BODY_SELECTION_HELD"
+                    return report
+                del before_records
+                report["targeted_body_audit"] = selected_ids is not None
+                report["targeted_body_count"] = target_count
                 report["body_sample"] = audit_body_sample(
-                    page, store_key, reviews, limit=len(seen),
+                    page, store_key, reviews, limit=target_count,
                     deadline=time.monotonic() + COUNT_BODY_SECONDS,
-                    evidence_sink=pilot_body_evidence,
+                    evidence_sink=pilot_body_evidence, selected_ids=selected_ids,
                 )
-                evidence = count_body_evidence(report["body_sample"], len(seen))
+                evidence = count_body_evidence(report["body_sample"], target_count)
                 report["count_body_evidence"] = evidence
                 if blocked(page):
                     report["status"] = "ACCESS_RESTRICTED_STOPPED"
@@ -2277,16 +2297,21 @@ def run_once(context, expected_total=None, store_key="thailand", auto_total=Fals
                 after_fields, after_records = audit_loaded_fields(page, len(seen), include_records=True)
                 report["post_body_field_audit"] = after_fields
                 report["post_body_same_card_set"] = verified_record_set(after_records, seen)
+                scoped_records = after_records if selected_ids is None else [r for r in after_records if r["source_id"] in selected_ids]
+                selected_metadata_stable = (selected_ids is None or selected_meta ==
+                    {r["source_id"]: (r["author"], r["rating"], r["date_label"]) for r in scoped_records})
+                fields_ok = (after_fields["status"] == "REQUIRED_FIELDS_PRESENT" or
+                             (capture_select is not None and after_fields["unique_cards"] == len(seen)))
                 if (capture_sink is not None and report["post_body_same_card_set"]
-                        and not after_fields["duplicate_cards"] and after_fields["status"] == "REQUIRED_FIELDS_PRESENT"
+                        and not after_fields["duplicate_cards"] and fields_ok and selected_metadata_stable
                         and evidence in {"COUNT_BODY_CONTROLS_CHECKED", "COUNT_BODY_CONTROL_GAPS", "COUNT_BODY_EVIDENCE_LIMITED"}
                         and not blocked(page) and same_place(page.url, store_key) and selected(reviews)):
-                    partition = body_evidence_partition(after_records, pilot_body_evidence)
+                    partition = body_evidence_partition(scoped_records, pilot_body_evidence)
                     if partition["exact_audit_scope"]:
                         capture_sink(after_records, pilot_body_evidence)
                 del after_records
                 if (not report["post_body_same_card_set"] or after_fields["duplicate_cards"]
-                        or after_fields["status"] != "REQUIRED_FIELDS_PRESENT"):
+                        or not fields_ok or not selected_metadata_stable):
                     report["status"] = "COUNT_BODY_AUDIT_CARD_OR_FIELD_GAPS"
                     return report
                 if not count_db_audit:

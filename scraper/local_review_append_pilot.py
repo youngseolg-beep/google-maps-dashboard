@@ -86,7 +86,9 @@ def history_snapshot(config, store):
 
 
 def plan_rows(store, history, records, evidence):
-    partition = probe.body_evidence_partition(records, evidence)
+    audited = [r for r in records if isinstance(r.get("source_id"), str) and
+               hashlib.sha256(r["source_id"].encode("utf-8")).hexdigest() in evidence]
+    partition = probe.body_evidence_partition(audited, evidence)
     if not partition["exact_audit_scope"]:
         raise ValueError("PILOT_BODY_SCOPE_UNVERIFIED")
     candidates, gaps = probe.adapt_local_records(
@@ -123,7 +125,7 @@ def plan_rows(store, history, records, evidence):
                   adapter_gaps=sum(gaps.values()), legacy_matched=preview["legacy_matched"],
                   legacy_held=preview["legacy_held"]+preview["additional_held"],
                   body_or_author_held=len(proposed)-len(rows),
-                  classification=partition["counts"],
+                  body_audited=len(audited), classification=partition["counts"],
                   full_coverage_verified=False, source_registry_persisted=False)
     return report, rows
 
