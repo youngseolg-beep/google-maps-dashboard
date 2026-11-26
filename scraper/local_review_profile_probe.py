@@ -1477,6 +1477,7 @@ def compare_db_sample(page, store_key, observed_unique, *, expected_seen=None, e
     import scraper as production
     from review_append_preflight import preview_append
     from review_source_append_preview import simulate_append_replay
+    from review_source_reconcile import reconcile_preview
     from review_audit_invariants import candidate_partition_ok, preview_partition_ok, diagnostic_partition
     is_count_audit = expected_seen is not None
     is_order_audit = expected_order is not None
@@ -1538,6 +1539,8 @@ def compare_db_sample(page, store_key, observed_unique, *, expected_seen=None, e
         "diagnostic_partition": partition,
         "match_evidence": match_evidence(records, historical, production),
         "source_identity_preview": source_identity_preview(records, historical, store["id"], production),
+        "source_reconciliation_preview": reconcile_preview(store["id"], records, historical, [], production),
+        "source_registry_loaded": False,
         "source_append_replay_simulation": simulate_append_replay(store, saved, candidates, production),
         "body_absence_evidence": metrics["body_absence_evidence"],
         "unverified_body_structure": metrics["unverified_body_structure"],

@@ -25,6 +25,7 @@ SUITES = {
     "incremental_baseline": ("review_incremental_baseline.py", []),
     "incremental_capture": ("review_incremental_capture.py", []),
     "incremental_transaction": ("review_incremental_transaction_qa.py", []),
+    "source_reconciliation": ("review_source_reconcile.py", []),
 }
 
 
