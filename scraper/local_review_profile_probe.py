@@ -440,16 +440,44 @@ def displayed_age_evidence(labels):
             "absolute_dates_verified":False,"publication_order_verified":False}
 
 
+# Shared metadata extractor used by the previously validated full field audit
+# and the bounded newest-head diagnostic. Only one unique date label qualifies.
+REVIEW_DATE_METADATA_JS = r"""card => {
+    const txt = el => (el?.innerText || el?.textContent || '').trim();
+const isMetadata = el => !el.closest(
+    '.wiI7pd,.MyEned,.d4r55,.CDe7pd,.RfnDt,button,a,[role="button"]'
+);
+const edited = /(?:수정(?:됨|일)?|edited|updated)/i;
+const cleanDate = value => value.replace(/\s+/g, ' ').trim()
+    .replace(/^(?:수정(?:됨|일)?|edited|updated)\s*[:：·-]?\s*/i, '')
+    .replace(/\s*[·(]?\s*(?:수정(?:됨|일)?|edited|updated)\)?$/i, '').trim();
+const relative = /^(?:(?:\d+|한)\s*(?:초|분|시간|일|주|개월|달|년)\s*전|일주일\s*전|하루\s*전|어제|방금|(?:\d+|a|an|one)\s+(?:seconds?|minutes?|hours?|days?|weeks?|months?|years?)\s+ago)$/i;
+const absolute = /^(?:\d{4}[.\-/]\s*\d{1,2}[.\-/]\s*\d{1,2}\.?|\d{4}년\s*\d{1,2}월\s*\d{1,2}일)$/;
+const dates = new Set();
+const dedicated = [...card.querySelectorAll('.rsqaof,.xRkPPb')].filter(isMetadata);
+// A dedicated date element can wrap its visible date in child spans.
+// Other metadata candidates must remain leaf nodes.
+const dateNodes = [...new Set([...dedicated, ...card.querySelectorAll('span,time')])];
+for (const el of dateNodes) {
+    if (!isMetadata(el) || !el.getClientRects().length ||
+        (el.children.length && !dedicated.includes(el))) continue;
+    const value = cleanDate(txt(el));
+    if (relative.test(value) || absolute.test(value)) dates.add(value);
+}
+
+    return {dates, dedicated, isMetadata, edited, relative};
+}"""
+
+
 def ordered_date_sample(page):
-    """Read only exact card IDs and dedicated visible date labels, in memory."""
-    records=page.locator(".jftiEf[data-review-id]").evaluate_all(r"""cards => cards.map(card=>{
-        const valid=e=>!e.closest('.wiI7pd,.MyEned,.d4r55,.CDe7pd,.RfnDt,button,a,[role="button"]')
-            && !!e.getClientRects().length;
-        const shape=/^(?:(?:edited|updated)\s*[:·-]?\s*)?(?:\d+|a|an|one)\s+(?:seconds?|minutes?|hours?|days?|weeks?|months?|years?)\s+ago(?:\s*[·(]?\s*(?:edited|updated)\)?)?$/i;
-        const dates=new Set([...card.querySelectorAll('.rsqaof,.xRkPPb')].filter(valid)
-            .map(e=>(e.innerText||e.textContent||'').replace(/\s+/g,' ').trim()).filter(v=>shape.test(v)));
-        return {id:card.getAttribute('data-review-id'), label:dates.size===1?[...dates][0]:null};
-    })""")
+    """Read exact card IDs and dates using the shared validated metadata logic."""
+    records=page.locator(".jftiEf[data-review-id]").evaluate_all(r"""cards => {
+        const readDates = """ + REVIEW_DATE_METADATA_JS + r""";
+        return cards.map(card => {
+            const {dates} = readDates(card);
+            return {id:card.getAttribute('data-review-id'), label:dates.size===1?[...dates][0]:null};
+        });
+    }""")
     ids=[r["id"] for r in records]
     if not ids or len(ids)>300 or any(not isinstance(x,str) or not x for x in ids) or len(set(ids))!=len(ids):
         return None, []
@@ -631,6 +659,7 @@ def audit_loaded_fields(page, observed_unique, *, include_records=False):
     """
     result = page.locator(".jftiEf[data-review-id]").evaluate_all(r"""(cards, includeRecords) => {
         const mainBody = """ + MAIN_BODY_JS + r""";
+        const readDates = """ + REVIEW_DATE_METADATA_JS + r""";
         const out = {
             unique_cards: 0, duplicate_cards: 0, author_present: 0,
             rating_valid: 0, date_present: 0, relative_date_label: 0,
@@ -658,26 +687,7 @@ def audit_loaded_fields(page, observed_unique, *, include_records=False):
             if (txt(card.querySelector('.d4r55'))) out.author_present++;
             // Only inspect compact metadata outside body, author, owner
             // response and action controls. Never report the raw strings.
-            const isMetadata = el => !el.closest(
-                '.wiI7pd,.MyEned,.d4r55,.CDe7pd,.RfnDt,button,a,[role="button"]'
-            );
-            const edited = /(?:수정(?:됨|일)?|edited|updated)/i;
-            const cleanDate = value => value.replace(/\s+/g, ' ').trim()
-                .replace(/^(?:수정(?:됨|일)?|edited|updated)\s*[:：·-]?\s*/i, '')
-                .replace(/\s*[·(]?\s*(?:수정(?:됨|일)?|edited|updated)\)?$/i, '').trim();
-            const relative = /^(?:(?:\d+|한)\s*(?:초|분|시간|일|주|개월|달|년)\s*전|일주일\s*전|하루\s*전|어제|방금|(?:\d+|a|an|one)\s+(?:seconds?|minutes?|hours?|days?|weeks?|months?|years?)\s+ago)$/i;
-            const absolute = /^(?:\d{4}[.\-/]\s*\d{1,2}[.\-/]\s*\d{1,2}\.?|\d{4}년\s*\d{1,2}월\s*\d{1,2}일)$/;
-            const dates = new Set();
-            const dedicated = [...card.querySelectorAll('.rsqaof,.xRkPPb')].filter(isMetadata);
-            // A dedicated date element can wrap its visible date in child spans.
-            // Other metadata candidates must remain leaf nodes.
-            const dateNodes = [...new Set([...dedicated, ...card.querySelectorAll('span,time')])];
-            for (const el of dateNodes) {
-                if (!isMetadata(el) || !el.getClientRects().length ||
-                    (el.children.length && !dedicated.includes(el))) continue;
-                const value = cleanDate(txt(el));
-                if (relative.test(value) || absolute.test(value)) dates.add(value);
-            }
+            const {dates, dedicated, isMetadata, edited, relative} = readDates(card);
             if (!dates.size) {
                 if (!dedicated.length) out.date_missing_dedicated_node++;
                 if (dedicated.some(el => el.children.length)) out.date_missing_nested_node++;
@@ -1825,6 +1835,8 @@ def run_once(context, expected_total=None, store_key="thailand", auto_total=Fals
                     return report
                 prior = current
                 report["observed_unique"] = len(current)
+                report["additional_unique"] = len(current) - report["initial_unique"]
+                report["scroll_verified"] = report["additional_unique"] > 0 and report["scroll_rounds"] > 0
                 if len(current) >= 30:
                     page.wait_for_timeout(1800)
                     if blocked(page) or not same_place(page.url, store_key) or not selected(reviews):
@@ -1838,7 +1850,11 @@ def run_once(context, expected_total=None, store_key="thailand", auto_total=Fals
                     if not ordered_extension(final, dated_head):
                         report["status"] = "NEWEST_HEAD_ORDER_CHANGED"
                         return report
+                    report["observed_unique"] = len(dated_head)
+                    report["additional_unique"] = len(dated_head) - report["initial_unique"]
+                    report["scroll_verified"] = report["additional_unique"] > 0 and report["scroll_rounds"] > 0
                     report["newest_date_evidence"] = displayed_age_evidence(labels[:30])
+                    report["newest_date_evidence"]["unique_date_labels_extracted"] = sum(x is not None for x in labels[:30])
                     report["newest_selection_explicit"] = report["newest_sort_status"] == "NEWEST_SORT_UI_VERIFIED"
                     if not report["newest_date_evidence"]["displayed_order_consistent"]:
                         report["status"] = "NEWEST_DISPLAYED_ORDER_INCONCLUSIVE"
