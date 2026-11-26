@@ -1700,7 +1700,7 @@ def maps_language_url(url, language):
     return urlunsplit((p.scheme, p.netloc, p.path, urlencode(query), p.fragment))
 
 
-def run_once(context, expected_total=None, store_key="thailand", auto_total=False, scroll_mode="baseline", audit_fields=False, field_sample=False, body_sample=False, adapter_sample=False, db_sample=False, count_round_limit=240, count_second_limit=600, count_db_audit=False, count_body_audit=False, maps_language="profile", scale_count_budget=False, newest_heads=None, newest_db_audit=False):
+def run_once(context, expected_total=None, store_key="thailand", auto_total=False, scroll_mode="baseline", audit_fields=False, field_sample=False, body_sample=False, adapter_sample=False, db_sample=False, count_round_limit=240, count_second_limit=600, count_db_audit=False, count_body_audit=False, maps_language="profile", scale_count_budget=False, newest_heads=None, newest_db_audit=False, capture_sink=None):
     report = {"status": "NOT_STARTED", "phase": "select_startup_tab",
               "overview_selected": False,
               "reviews_selected": False, "initial_unique": 0,
@@ -1708,6 +1708,8 @@ def run_once(context, expected_total=None, store_key="thailand", auto_total=Fals
               "scroll_verified": False, "database_writes": False,
               "full_coverage_verified": False}
     report["store"] = STORE_CONFIG[store_key]["name"]
+    if capture_sink is not None and (not count_body_audit or count_db_audit or maps_language != "en"):
+        raise ValueError("PILOT_CAPTURE_SCOPE_INVALID")
     if newest_db_audit and newest_heads is None:
         raise ValueError("NEWEST_DB_AUDIT_REQUIRES_HEAD")
     if newest_heads is not None and (maps_language != "en" or auto_total or expected_total is not None or audit_fields or field_sample or body_sample or adapter_sample or db_sample or count_db_audit or count_body_audit):
@@ -2247,9 +2249,11 @@ def run_once(context, expected_total=None, store_key="thailand", auto_total=Fals
                 if not same_set:
                     report["status"] = "COUNT_BODY_AUDIT_CARD_SET_UNVERIFIED"
                     return report
+                pilot_body_evidence = {} if capture_sink is not None else None
                 report["body_sample"] = audit_body_sample(
                     page, store_key, reviews, limit=len(seen),
                     deadline=time.monotonic() + COUNT_BODY_SECONDS,
+                    evidence_sink=pilot_body_evidence,
                 )
                 evidence = count_body_evidence(report["body_sample"], len(seen))
                 report["count_body_evidence"] = evidence
@@ -2263,6 +2267,13 @@ def run_once(context, expected_total=None, store_key="thailand", auto_total=Fals
                 after_fields, after_records = audit_loaded_fields(page, len(seen), include_records=True)
                 report["post_body_field_audit"] = after_fields
                 report["post_body_same_card_set"] = verified_record_set(after_records, seen)
+                if (capture_sink is not None and report["post_body_same_card_set"]
+                        and not after_fields["duplicate_cards"] and after_fields["status"] == "REQUIRED_FIELDS_PRESENT"
+                        and evidence == "COUNT_BODY_CONTROLS_CHECKED"
+                        and not blocked(page) and same_place(page.url, store_key) and selected(reviews)):
+                    partition = body_evidence_partition(after_records, pilot_body_evidence)
+                    if partition["exact_audit_scope"]:
+                        capture_sink(after_records, pilot_body_evidence)
                 del after_records
                 if (not report["post_body_same_card_set"] or after_fields["duplicate_cards"]
                         or after_fields["status"] != "REQUIRED_FIELDS_PRESENT"):
