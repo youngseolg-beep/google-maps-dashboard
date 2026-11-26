@@ -22,6 +22,7 @@ SUITES = {
     "source_recovery": ("review_source_recovery.py", []),
     "source_attempt_journal": ("review_source_attempt_journal.py", []),
     "incremental_boundary": ("review_incremental_boundary.py", []),
+    "incremental_baseline": ("review_incremental_baseline.py", []),
 }
 
 
