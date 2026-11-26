@@ -27,6 +27,7 @@ SUITES = {
     "incremental_transaction": ("review_incremental_transaction_qa.py", []),
     "source_reconciliation": ("review_source_reconcile.py", []),
     "postgres_native_guard": ("review_postgres_native_guard.py", []),
+    "postgres_launcher": ("review_postgres_launcher.py", []),
 }
 
 
@@ -62,7 +63,7 @@ def sanitized_env():
 def run_suite():
     results = []
     # Compile without creating .pyc or executing any project module.
-    filenames = [filename for filename, _ in SUITES.values()] + ["scraper.py", Path(__file__).name]
+    filenames = [filename for filename, _ in SUITES.values()] + ["scraper.py", "review_source_postgres_native_qa.py", Path(__file__).name]
     for filename in filenames:
         try:
             compile((ROOT / filename).read_bytes(), filename, "exec")

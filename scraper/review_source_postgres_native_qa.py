@@ -14,6 +14,7 @@ import subprocess
 import tempfile
 
 from review_source_postgres_qa import run_fixture_checks
+from review_postgres_launcher import launch_with_file_output
 from review_postgres_native_guard import ROLE, sanitized_env, version_is_16, handshake_matches
 
 BIN_NAMES=("initdb","pg_ctl","postgres","psql")
@@ -70,12 +71,11 @@ def main():
         # inherited pipe handles even after pg_ctl exits. Avoid capture_output
         # and communicate() for the launch; regular files cannot hold a pipe
         # reader open. The server has its own log.
-        with (root/"launcher.log").open("wb") as launch_log:
-            subprocess.run([str(binaries["pg_ctl"]),"-D",str(cluster),
-                            "-l",str(root/"server.log"),"-w","-t","60",
-                            "-o",f"-h 127.0.0.1 -p {port} -c ssl=off -c fsync=on",
-                            "start"],stdin=subprocess.DEVNULL,stdout=launch_log,
-                           stderr=subprocess.STDOUT,env=env,timeout=75,check=True)
+        launch_with_file_output(
+            [str(binaries["pg_ctl"]),"-D",str(cluster),
+             "-l",str(root/"server.log"),"-w","-t","60",
+             "-o",f"-h 127.0.0.1 -p {port} -c ssl=off -c fsync=on","start"],
+            root/"launcher.log",env=env,timeout=75)
         stage="VERIFY_CLUSTER"
         print("POSTGRES_NATIVE_STAGE: VERIFY_CLUSTER",flush=True)
         pg_env={"PGPASSWORD":password,"PGCONNECT_TIMEOUT":"5",
