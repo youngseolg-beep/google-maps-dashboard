@@ -1525,6 +1525,8 @@ def compare_db_sample(page, store_key, observed_unique, *, expected_seen=None, e
         "same_card_order_verified": is_order_audit,
         "same_card_set_verified": is_count_audit,
         "body_unexpanded_possible": metrics["possible_collapsed_body"],
+        "classification_balanced": partition["status"] == "PARTITION_BALANCED",
+        "strict_adapter_preflight_passed": consistent,
         "store_mapping_verified": True,
         "visible_existing_rows": len(saved),
         "observed_unique": observed_unique, "adapted_candidates": len(candidates),
@@ -1875,12 +1877,32 @@ def run_once(context, expected_total=None, store_key="thailand", auto_total=Fals
                     if not report["newest_date_evidence"]["displayed_order_consistent"]:
                         report["status"] = "NEWEST_DISPLAYED_ORDER_INCONCLUSIVE"
                         return report
+                    report["newest_head_size"] = 30
+                    report["newest_head_sample_verified"] = True
                     newest_heads.append(final[:30])
                     if newest_db_audit and len(newest_heads)==2 and newest_heads[0]==newest_heads[1]:
                         report["phase"] = "newest_head_db_preview"
                         if blocked(page) or not same_place(page.url, store_key) or not selected(reviews):
                             report["status"] = "ACCESS_RESTRICTED_STOPPED" if blocked(page) else "REVIEW_CONTEXT_LOST"
                             return report
+                        # Inspect only already-loaded cards with the existing bounded
+                        # body-control audit. Never interpret missing body as rating-only.
+                        if len(dated_head)>MAX_COUNT_BODY_AUDIT:
+                            report["status"] = "NEWEST_BODY_AUDIT_OUT_OF_SCOPE"
+                            return report
+                        report["phase"] = "newest_head_body_audit"
+                        body = audit_body_sample(page, store_key, reviews, limit=len(dated_head),
+                                                 deadline=time.monotonic()+min(COUNT_BODY_SECONDS,180))
+                        report["newest_body_audit"] = body
+                        body_status = count_body_evidence(body,len(dated_head))
+                        report["newest_body_audit_status"] = body_status
+                        if blocked(page) or not same_place(page.url,store_key) or not selected(reviews):
+                            report["status"] = "ACCESS_RESTRICTED_STOPPED" if blocked(page) else "REVIEW_CONTEXT_LOST"
+                            return report
+                        if ordered_head(page)!=dated_head or body_status in {"COUNT_BODY_CONTEXT_LOST","COUNT_BODY_INCOMPLETE"}:
+                            report["status"] = "NEWEST_BODY_AUDIT_HELD"
+                            return report
+                        report["phase"] = "newest_head_db_preview"
                         # Compare all retained cards from the same ordered snapshot
                         # (may include more than 30), not a separate random sample.
                         report["newest_db_preview"] = compare_db_sample(
@@ -2594,10 +2616,18 @@ def main():
         final_status = success_status if passed else "LOCAL_COUNT_DB_GAPS"
     if args.newest_head_audit:
         comparison = compare_newest_heads(newest_heads)
-        passed = passed and comparison["status"] == "NEWEST_HEAD_MATCHED"
-        explicit = passed and all(r.get("newest_selection_explicit") is True for r in reports)
+        # Keep observation evidence separate from later DB/body validation.
+        # A subsequent hold does not undo the already recorded head samples.
+        head_matched = (comparison["status"] == "NEWEST_HEAD_MATCHED"
+                        and len(reports)==2
+                        and all(r.get("newest_head_sample_verified") is True
+                                and r.get("newest_date_evidence",{}).get("displayed_order_consistent") is True
+                                for r in reports))
+        passed = passed and head_matched
+        explicit = head_matched and all(r.get("newest_selection_explicit") is True for r in reports)
+        comparison["head_sample_matched"] = head_matched
         comparison["selection_explicit_verified"] = explicit
-        comparison["displayed_order_consistent"] = passed
+        comparison["displayed_order_consistent"] = head_matched
         comparison["publication_order_verified"] = False
         comparison["stop_authorized"] = False
         comparison["newest_db_audit_requested"] = args.newest_head_db_audit
@@ -2605,6 +2635,10 @@ def main():
             db_preview = reports[-1].get("newest_db_preview") if reports else None
             comparison["newest_db_preview_status"] = db_preview.get("status") if db_preview else "NOT_COMPARED"
             comparison["baseline_committed"] = False
+            comparison["db_comparison_completed"] = bool(db_preview and db_preview.get("actual_database_compared") is True)
+            comparison["classification_balanced"] = bool(db_preview and db_preview.get("classification_balanced") is True)
+            comparison["strict_adapter_preflight_passed"] = bool(db_preview and db_preview.get("strict_adapter_preflight_passed") is True)
+            comparison["body_audit_status"] = reports[-1].get("newest_body_audit_status","NOT_RUN") if reports else "NOT_RUN"
             if not passed or comparison["newest_db_preview_status"]!="LOCAL_COUNT_DB_COMPARED":
                 passed = False
                 comparison["status"] = "NEWEST_DB_PREVIEW_HELD"
