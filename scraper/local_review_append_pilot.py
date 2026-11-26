@@ -19,13 +19,21 @@ from review_append_preflight import build_append_preview
 
 
 def backend_config(target):
-    base = production.SUPABASE_URL
+    base = production.SUPABASE_URL or target.rstrip("/")
     key = production.SUPABASE_SERVICE_ROLE_KEY
     u = urlsplit(base)
-    if (not key or base != target.rstrip("/") or u.scheme != "https"
+    if (base != target.rstrip("/") or u.scheme != "https"
             or not u.hostname or not u.hostname.endswith(".supabase.co")
             or u.path or u.query or u.fragment or u.username or u.password or u.port):
         raise ValueError("PILOT_BACKEND_TARGET_UNVERIFIED")
+    # Existing backend credential stays in memory only. No secret in CLI,
+    # shell history, files or logs; refuse an echoed-input fallback.
+    if not key:
+        import getpass
+        import warnings
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", getpass.GetPassWarning)
+            key = getpass.getpass("Supabase service_role key (hidden): ").strip()
     # Current writer expects a legacy backend JWT, never a public audit key.
     import base64
     if key.count(".") != 2:
@@ -34,6 +42,8 @@ def backend_config(target):
     claims = json.loads(base64.urlsafe_b64decode(payload + "=" * (-len(payload) % 4)))
     if claims.get("role") != "service_role" or claims.get("ref") != u.hostname.split(".")[0]:
         raise ValueError("PILOT_BACKEND_ROLE_UNVERIFIED")
+    production.SUPABASE_URL = base
+    production.SUPABASE_SERVICE_ROLE_KEY = key
     return base, key, key
 
 
@@ -71,7 +81,9 @@ def plan_rows(store, history, records, evidence):
         if (raw.get("body_scope") == e.get("scope") == "PRIMARY"
                 and e.get("fingerprint") == hashlib.sha256(body.encode("utf-8")).digest()
                 and e.get("click_error") is False and e.get("more_remaining") == 0
-                and e.get("original_remaining") == 0 and author and raw_authors[author] == 1):
+                and e.get("original_remaining") == 0
+                and e.get("more_verified") is True and e.get("original_verified") is True
+                and author and raw_authors[author] == 1):
             verified.add(production.hash_google_source_review_id(store["id"], identity))
     allowed_keys = {production.canonical_review_hash(r) for r in candidates
                     if r.get("google_source_id_hash") in verified}
@@ -126,11 +138,11 @@ def execute_append(config, store, history, rows, *, commit):
 def main():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--store", choices=("thailand", "taiwan"), default="thailand")
-    p.add_argument("--expected-total", type=int, required=True)
+    p.add_argument("--expected-total", type=int, help="Optional known total; otherwise read current Maps total twice.")
     p.add_argument("--target-url", required=True)
     p.add_argument("--commit", action="store_true")
     args = p.parse_args()
-    if not 1 <= args.expected_total <= probe.MAX_COUNT_BODY_AUDIT:
+    if args.expected_total is not None and not 1 <= args.expected_total <= probe.MAX_COUNT_BODY_AUDIT:
         p.error("expected total outside bounded body audit")
     if os.name != "nt":
         print("WINDOWS_ONLY")
@@ -172,12 +184,15 @@ def main():
                     args=["--profile-directory=Default"], locale="en-US")
                 try:
                     result = probe.run_once(context, args.expected_total, args.store,
-                                            count_body_audit=True, maps_language="en",
-                                            capture_sink=receive)
+                                            auto_total=args.expected_total is None,
+                                            scroll_mode="adaptive", count_body_audit=True,
+                                            maps_language="en", capture_sink=receive)
                 finally:
                     context.close()
-            if (result.get("status") != "LOCAL_COUNT_BODY_CONTROLS_CHECKED"
-                    or result.get("observed_unique") != args.expected_total or len(captured) != 1):
+            verified_total = result.get("expected_total_user_observed")
+            if (result.get("status") not in {"LOCAL_COUNT_BODY_CONTROLS_CHECKED", "LOCAL_COUNT_BODY_CONTROL_GAPS", "LOCAL_COUNT_BODY_EVIDENCE_LIMITED"}
+                    or type(verified_total) is not int or not 1 <= verified_total <= probe.MAX_COUNT_BODY_AUDIT
+                    or result.get("observed_unique") != verified_total or len(captured) != 1):
                 print("PILOT_CAPTURE_HELD: "+str(result.get("status")))
                 return 2
             # Fresh privileged, store-scoped history; do not rely on public
@@ -198,5 +213,6 @@ if __name__ == "__main__":
         raise SystemExit(main())
     except Exception as exc:
         # Do not print HTTP response bodies, credentials, or review payloads.
-        print("LOCAL_APPEND_PILOT_FAILED: "+type(exc).__name__)
+        reason = str(exc) if type(exc) is ValueError and str(exc).startswith("PILOT_") else type(exc).__name__
+        print("LOCAL_APPEND_PILOT_FAILED: "+reason)
         raise SystemExit(2)

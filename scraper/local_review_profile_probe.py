@@ -954,6 +954,9 @@ def audit_body_sample(page, store_key, reviews, limit=10, deadline=None, *, evid
             metrics["identity_mismatch"] += 1
             break
         errors_before=metrics["click_errors"]
+        more_confirmed_before=metrics["more_confirmed"]
+        original_confirmed_before=metrics["original_confirmed"]
+        original_changed_before=metrics["original_text_changed"]
         before, before_fingerprint, before_scope = body_snapshot(card)
         metrics["initial_scope_counts"][before_scope] = metrics["initial_scope_counts"].get(before_scope, 0) + 1
         if not before:
@@ -1059,7 +1062,10 @@ def audit_body_sample(page, store_key, reviews, limit=10, deadline=None, *, evid
             evidence_sink[source]=dict(scope=final_scope, fingerprint=final_fingerprint,
                 more_remaining=final_more, original_remaining=final_original,
                 click_error=metrics["click_errors"]!=errors_before,
-                more_observed=bool(more_count), original_observed=bool(original_count))
+                more_observed=bool(more_count), original_observed=bool(original_count),
+                more_verified=(not more_count or metrics["more_confirmed"]>more_confirmed_before),
+                original_verified=(not original_count or (metrics["original_confirmed"]>original_confirmed_before
+                                  and metrics["original_text_changed"]>original_changed_before)))
         metrics["final_scope_counts"][final_scope] = metrics["final_scope_counts"].get(final_scope, 0) + 1
         if not final_length:
             metrics["body_missing_after"] += 1
@@ -1720,8 +1726,9 @@ def run_once(context, expected_total=None, store_key="thailand", auto_total=Fals
         raise ValueError("MAPS_LANGUAGE_SCOPE_INVALID")
     if scale_count_budget and (not (auto_total or expected_total is not None) or count_db_audit or count_body_audit):
         raise ValueError("SCALED_BUDGET_COUNT_ONLY")
-    if count_body_audit and (expected_total is None or not 1 <= expected_total <= MAX_COUNT_BODY_AUDIT
-                             or auto_total or field_sample or body_sample or adapter_sample or db_sample):
+    pilot_auto_body = capture_sink is not None and auto_total and expected_total is None
+    if count_body_audit and ((not pilot_auto_body and (expected_total is None or not 1 <= expected_total <= MAX_COUNT_BODY_AUDIT or auto_total))
+                             or field_sample or body_sample or adapter_sample or db_sample):
         raise ValueError("COUNT_BODY_AUDIT_SCOPE_INVALID")
     if count_body_audit:
         audit_fields = True
@@ -1891,6 +1898,9 @@ def run_once(context, expected_total=None, store_key="thailand", auto_total=Fals
                 total_source = "reviews_rating_summary_rechecked"
             if expected_total is None or not 1 <= expected_total <= MAX_EXPECTED_COUNT:
                 report["status"] = "DISPLAYED_TOTAL_NOT_VERIFIED_OR_OUT_OF_SCOPE"
+                return report
+            if count_body_audit and expected_total > MAX_COUNT_BODY_AUDIT:
+                report["status"] = "PILOT_TOTAL_OUT_OF_SCOPE"
                 return report
             report["expected_total_user_observed"] = expected_total
             report["expected_total_source"] = total_source
@@ -2269,7 +2279,7 @@ def run_once(context, expected_total=None, store_key="thailand", auto_total=Fals
                 report["post_body_same_card_set"] = verified_record_set(after_records, seen)
                 if (capture_sink is not None and report["post_body_same_card_set"]
                         and not after_fields["duplicate_cards"] and after_fields["status"] == "REQUIRED_FIELDS_PRESENT"
-                        and evidence == "COUNT_BODY_CONTROLS_CHECKED"
+                        and evidence in {"COUNT_BODY_CONTROLS_CHECKED", "COUNT_BODY_CONTROL_GAPS", "COUNT_BODY_EVIDENCE_LIMITED"}
                         and not blocked(page) and same_place(page.url, store_key) and selected(reviews)):
                     partition = body_evidence_partition(after_records, pilot_body_evidence)
                     if partition["exact_audit_scope"]:
