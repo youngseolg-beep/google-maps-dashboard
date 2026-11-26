@@ -919,7 +919,7 @@ def body_sample_status(metrics):
     return "BODY_SAMPLE_CONTROLS_VERIFIED"
 
 
-def audit_body_sample(page, store_key, reviews, limit=10, deadline=None):
+def audit_body_sample(page, store_key, reviews, limit=10, deadline=None, *, evidence_sink=None):
     """Bounded ordinary UI check on initially loaded cards, aggregate only."""
     cards = page.locator(".jftiEf[data-review-id]")
     n = min(cards.count(), limit)
@@ -953,6 +953,7 @@ def audit_body_sample(page, store_key, reviews, limit=10, deadline=None):
         if i >= len(initial_ids) or not identity or identity != initial_ids[i]:
             metrics["identity_mismatch"] += 1
             break
+        errors_before=metrics["click_errors"]
         before, before_fingerprint, before_scope = body_snapshot(card)
         metrics["initial_scope_counts"][before_scope] = metrics["initial_scope_counts"].get(before_scope, 0) + 1
         if not before:
@@ -1039,7 +1040,26 @@ def audit_body_sample(page, store_key, reviews, limit=10, deadline=None):
         if card.get_attribute("data-review-id") != identity:
             metrics["identity_mismatch"] += 1
             break
-        final_length, _, final_scope = body_snapshot(card)
+        final_length, final_fingerprint, final_scope = body_snapshot(card)
+        if evidence_sink is not None:
+            # Recheck current review controls, not owner-response controls.
+            # Store only transient ID/body digests, never log or persist them.
+            _, final_more, _ = body_control(card,MORE_LABEL)
+            _, final_original, _ = body_control(card,ORIGINAL_LABEL)
+            if blocked(page) or not same_place(page.url,store_key) or not selected(reviews):
+                metrics["context_lost"]=True
+                break
+            if card.get_attribute("data-review-id")!=identity:
+                metrics["identity_mismatch"]+=1
+                break
+            source=hashlib.sha256(identity.encode("utf-8")).hexdigest()
+            if source in evidence_sink:
+                metrics["identity_mismatch"]+=1
+                break
+            evidence_sink[source]=dict(scope=final_scope, fingerprint=final_fingerprint,
+                more_remaining=final_more, original_remaining=final_original,
+                click_error=metrics["click_errors"]!=errors_before,
+                more_observed=bool(more_count), original_observed=bool(original_count))
         metrics["final_scope_counts"][final_scope] = metrics["final_scope_counts"].get(final_scope, 0) + 1
         if not final_length:
             metrics["body_missing_after"] += 1
@@ -1500,7 +1520,47 @@ def verified_record_order(records, expected_order):
     return len(digests)==len(set(digests)) and digests==expected_order
 
 
-def compare_db_sample(page, store_key, observed_unique, *, expected_seen=None, expected_order=None):
+def body_evidence_partition(records, evidence):
+    """Compare body-audit fingerprints against the exact extraction in memory.
+
+    A stable visible body with no unresolved control is still NOT proof of
+    full original text. Missing text is never interpreted as rating-only.
+    """
+    from collections import Counter
+    counts=Counter()
+    seen=set()
+    for r in records:
+        identity=r.get("source_id")
+        if not isinstance(identity,str) or not identity:
+            counts["identity_or_evidence_held"]+=1
+            continue
+        h=hashlib.sha256(identity.encode("utf-8")).hexdigest()
+        e=evidence.get(h)
+        if h in seen or not isinstance(e,dict):
+            category="identity_or_evidence_held"
+        else:
+            body=r.get("body")
+            scope=r.get("body_scope")
+            fingerprint=hashlib.sha256(body.encode("utf-8")).digest() if isinstance(body,str) and body else None
+            if e.get("scope")!=scope or e.get("fingerprint")!=fingerprint:
+                category="body_changed_after_audit_held"
+            elif e.get("click_error") is not False or e.get("more_remaining")!=0 or e.get("original_remaining")!=0:
+                category="unresolved_controls_held"
+            elif scope!="PRIMARY" or fingerprint is None:
+                category="body_absence_unverified_held"
+            else:
+                category="visible_body_stable_controls_clear"
+        counts[category]+=1
+        seen.add(h)
+    exact_scope=len(seen)==len(records)==len(evidence) and seen==set(evidence)
+    return dict(status="BODY_EVIDENCE_CLASSIFIED" if exact_scope else "BODY_EVIDENCE_SCOPE_HELD",
+                observed=len(records), classified=sum(counts.values()), counts=dict(counts),
+                exact_audit_scope=exact_scope, full_text_verified=False,
+                original_language_verified=False, rating_only_verified=False,
+                write_approved=False, database_writes=False)
+
+
+def compare_db_sample(page, store_key, observed_unique, *, expected_seen=None, expected_order=None, body_evidence=None):
     import scraper as production
     from review_append_preflight import preview_append
     from review_source_append_preview import simulate_append_replay
@@ -1526,6 +1586,11 @@ def compare_db_sample(page, store_key, observed_unique, *, expected_seen=None, e
             "full_text_verified": False, "full_coverage_verified": False,
             "write_approved": False,
         }
+    body_partition=body_evidence_partition(records,body_evidence) if body_evidence is not None else None
+    if body_partition is not None and not body_partition["exact_audit_scope"]:
+        return {"status":"NEWEST_DB_BODY_EVIDENCE_SCOPE_HELD",
+                "actual_database_compared":False,"database_writes":False,
+                "write_approved":False,"body_evidence_partition":body_partition}
     config = read_only_db_config()
     store = verified_db_store(config, store_key)
     saved = load_visible_history(config, store)
@@ -1559,6 +1624,7 @@ def compare_db_sample(page, store_key, observed_unique, *, expected_seen=None, e
         "excluded_trailing_cards": metrics.get("excluded_trailing_cards",0),
         "body_unexpanded_possible": metrics["possible_collapsed_body"],
         "classification_balanced": partition["status"] == "PARTITION_BALANCED",
+        "body_evidence_partition": body_partition,
         "strict_adapter_preflight_passed": consistent,
         "store_mapping_verified": True,
         "visible_existing_rows": len(saved),
@@ -1926,8 +1992,10 @@ def run_once(context, expected_total=None, store_key="thailand", auto_total=Fals
                             report["status"] = "NEWEST_BODY_AUDIT_OUT_OF_SCOPE"
                             return report
                         report["phase"] = "newest_head_body_audit"
+                        body_evidence={}
                         body = audit_body_sample(page, store_key, reviews, limit=len(dated_head),
-                                                 deadline=time.monotonic()+min(COUNT_BODY_SECONDS,180))
+                                                 deadline=time.monotonic()+min(COUNT_BODY_SECONDS,180),
+                                                 evidence_sink=body_evidence)
                         report["newest_body_audit"] = body
                         body_status = count_body_evidence(body,len(dated_head))
                         report["newest_body_audit_status"] = body_status
@@ -1948,7 +2016,7 @@ def run_once(context, expected_total=None, store_key="thailand", auto_total=Fals
                         report["newest_db_preview"] = compare_db_sample(
                             page, store_key, len(dated_head),
                             expected_seen={bytes.fromhex(h) for h in dated_head},
-                            expected_order=dated_head)
+                            expected_order=dated_head, body_evidence=body_evidence)
                         if blocked(page) or not same_place(page.url, store_key) or not selected(reviews):
                             report["status"] = "ACCESS_RESTRICTED_STOPPED" if blocked(page) else "REVIEW_CONTEXT_LOST"
                             return report
@@ -2238,6 +2306,18 @@ def self_test():
     order_fixture = [{"source_id":"first"},{"source_id":"second"}]
     order_hashes = [hashlib.sha256(r["source_id"].encode()).hexdigest() for r in order_fixture]
     assert verified_record_order(order_fixture, order_hashes)
+    raw=[dict(source_id="first",body="fixture",body_scope="PRIMARY"),
+         dict(source_id="second",body="",body_scope="NOT_DETECTED")]
+    evidence={order_hashes[0]:dict(scope="PRIMARY",fingerprint=hashlib.sha256(b"fixture").digest(),
+                                   click_error=False,more_remaining=0,original_remaining=0),
+              order_hashes[1]:dict(scope="NOT_DETECTED",fingerprint=None,
+                                   click_error=False,more_remaining=0,original_remaining=0)}
+    body=body_evidence_partition(raw,evidence)
+    assert body["exact_audit_scope"] and body["counts"]=={"visible_body_stable_controls_clear":1,"body_absence_unverified_held":1}
+    assert body["full_text_verified"] is False and body["rating_only_verified"] is False
+    assert body_evidence_partition([dict(raw[0],body="changed"),raw[1]],evidence)["counts"]["body_changed_after_audit_held"]==1
+    assert body_evidence_partition(raw,{order_hashes[0]:evidence[order_hashes[0]]})["status"]=="BODY_EVIDENCE_SCOPE_HELD"
+    assert body_evidence_partition(raw,dict(evidence,**{order_hashes[0]:dict(evidence[order_hashes[0]],more_remaining=1)}))["counts"]["unresolved_controls_held"]==1
     assert not verified_record_order(order_fixture[::-1], order_hashes)
     assert not verified_record_order(order_fixture+[order_fixture[0]], order_hashes)
     extra=hash_ordered_ids(["first","second","third"])
