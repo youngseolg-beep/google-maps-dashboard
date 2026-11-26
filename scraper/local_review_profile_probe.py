@@ -357,6 +357,86 @@ def initial_card_evidence(page):
     }""")
 
 
+def newest_menu_item(page):
+    """Require one exact visible semantic sort option, not arbitrary text."""
+    options = page.locator('[role="menuitemradio"],[role="radio"],[role="option"],[role="menuitem"]')
+    options = options.filter(visible=True).filter(has_text=re.compile(r"^Newest$", re.I))
+    return options.first if options.count() == 1 else None
+
+
+def newest_option_selected(option):
+    return option is not None and (
+        option.get_attribute("aria-checked") == "true"
+        or option.get_attribute("aria-selected") == "true")
+
+
+def verify_newest_sort(page, store_key, reviews):
+    """Use only ordinary visible Sort controls; require explicit selected state."""
+    def context_ok():
+        return not blocked(page) and same_place(page.url, store_key) and selected(reviews)
+    def failure():
+        return "ACCESS_RESTRICTED_STOPPED" if blocked(page) else "REVIEW_CONTEXT_LOST"
+    if not context_ok():
+        return failure()
+    sorts = page.get_by_role("button", name=re.compile(r"^(?:sort(?: reviews)?|sort by newest)$", re.I)).filter(visible=True)
+    if sorts.count() != 1:
+        return "NEWEST_SORT_CONTROL_UNVERIFIED"
+    sorts.first.click(timeout=5000)
+    page.wait_for_timeout(1000)
+    if not context_ok():
+        return failure()
+    option = newest_menu_item(page)
+    if option is None:
+        return "NEWEST_SORT_OPTION_UNVERIFIED"
+    if not newest_option_selected(option):
+        option.click(timeout=5000)
+        page.wait_for_timeout(2500)
+        if not context_ok():
+            return failure()
+        # Reopen the menu only if selection closed it.
+        if newest_menu_item(page) is None:
+            if sorts.count() != 1:
+                return "NEWEST_SORT_CONTROL_UNVERIFIED"
+            sorts.first.click(timeout=5000)
+            page.wait_for_timeout(1000)
+            if not context_ok():
+                return failure()
+    if not newest_option_selected(newest_menu_item(page)):
+        return "NEWEST_SORT_SELECTION_UNVERIFIED"
+    page.keyboard.press("Escape")
+    page.wait_for_timeout(1200)
+    if not context_ok():
+        return failure()
+    if newest_menu_item(page) is not None:
+        return "NEWEST_SORT_MENU_NOT_CLOSED"
+    return "NEWEST_SORT_UI_VERIFIED"
+
+
+def ordered_head(page):
+    """Transient hashed exact-card sequence; reject duplicates and missing IDs."""
+    ids = page.locator(".jftiEf[data-review-id]").evaluate_all(
+        "(cards) => cards.map(c => c.getAttribute('data-review-id'))")
+    if not ids or len(ids) > 300 or any(not isinstance(x,str) or not x for x in ids):
+        return None
+    if len(set(ids)) != len(ids):
+        return None
+    return [hashlib.sha256(x.encode("utf-8")).hexdigest() for x in ids]
+
+
+def ordered_extension(before, after):
+    return isinstance(before,list) and isinstance(after,list) and bool(before) and after[:len(before)] == before
+
+
+def compare_newest_heads(heads, target=30):
+    if len(heads) != 2 or any(len(h) != target or len(set(h)) != target for h in heads):
+        return {"status":"NEWEST_HEAD_COMPARISON_INCOMPLETE","compared":0,"write_approved":False}
+    match = heads[0] == heads[1]
+    return {"status":"NEWEST_HEAD_MATCHED" if match else "NEWEST_HEAD_CHANGED",
+            "compared":target,"position_matches":sum(a==b for a,b in zip(*heads)),
+            "shared_ids":len(set(heads[0])&set(heads[1])),
+            "write_approved":False,"stop_authorized":False}
+
+
 def observe(page, seen, id_cache):
     """Count unique IDs in memory; track whether old cards remain in the DOM.
 
@@ -1388,7 +1468,7 @@ def maps_language_url(url, language):
     return urlunsplit((p.scheme, p.netloc, p.path, urlencode(query), p.fragment))
 
 
-def run_once(context, expected_total=None, store_key="thailand", auto_total=False, scroll_mode="baseline", audit_fields=False, field_sample=False, body_sample=False, adapter_sample=False, db_sample=False, count_round_limit=240, count_second_limit=600, count_db_audit=False, count_body_audit=False, maps_language="profile", scale_count_budget=False):
+def run_once(context, expected_total=None, store_key="thailand", auto_total=False, scroll_mode="baseline", audit_fields=False, field_sample=False, body_sample=False, adapter_sample=False, db_sample=False, count_round_limit=240, count_second_limit=600, count_db_audit=False, count_body_audit=False, maps_language="profile", scale_count_budget=False, newest_heads=None):
     report = {"status": "NOT_STARTED", "phase": "select_startup_tab",
               "overview_selected": False,
               "reviews_selected": False, "initial_unique": 0,
@@ -1396,6 +1476,8 @@ def run_once(context, expected_total=None, store_key="thailand", auto_total=Fals
               "scroll_verified": False, "database_writes": False,
               "full_coverage_verified": False}
     report["store"] = STORE_CONFIG[store_key]["name"]
+    if newest_heads is not None and (maps_language != "en" or auto_total or expected_total is not None or audit_fields or field_sample or body_sample or adapter_sample or db_sample or count_db_audit or count_body_audit):
+        raise ValueError("NEWEST_SAMPLE_SCOPE_INVALID")
     report["maps_language_requested"] = maps_language
     report["maps_ui_language"] = "UNVERIFIED"
     if maps_language not in {"profile", "en"} or (auto_total and expected_total is not None):
@@ -1536,6 +1618,12 @@ def run_once(context, expected_total=None, store_key="thailand", auto_total=Fals
             report["status"] = "REVIEWS_NOT_VERIFIED"
             return report
 
+        if newest_heads is not None:
+            report["phase"] = "verify_newest_sort"
+            report["newest_sort_status"] = verify_newest_sort(page, store_key, reviews)
+            if report["newest_sort_status"] != "NEWEST_SORT_UI_VERIFIED":
+                report["status"] = report["newest_sort_status"]
+                return report
         if auto_total:
             expected_total = overview_target
             total_source = "overview_rating_summary_rechecked"
@@ -1613,6 +1701,57 @@ def run_once(context, expected_total=None, store_key="thailand", auto_total=Fals
         report["phase"] = "observe_initial_reviews"
         report["initial_unique"], _ = observe(page, seen, id_cache)
         report["observed_unique"] = len(seen)
+        if newest_heads is not None:
+            report["phase"] = "newest_order_sample"
+            first = ordered_head(page)
+            if not first:
+                report["status"] = "NEWEST_HEAD_UNVERIFIED"
+                return report
+            prior = first
+            sample_started = time.monotonic()
+            for i in range(25):
+                if blocked(page) or not same_place(page.url, store_key) or not selected(reviews):
+                    report["status"] = "ACCESS_RESTRICTED_STOPPED" if blocked(page) else "REVIEW_CONTEXT_LOST"
+                    return report
+                current = ordered_head(page)
+                if not ordered_extension(prior, current):
+                    report["status"] = "NEWEST_HEAD_ORDER_CHANGED"
+                    return report
+                prior = current
+                report["observed_unique"] = len(current)
+                if len(current) >= 30:
+                    page.wait_for_timeout(1800)
+                    if blocked(page) or not same_place(page.url, store_key) or not selected(reviews):
+                        report["status"] = "ACCESS_RESTRICTED_STOPPED" if blocked(page) else "REVIEW_CONTEXT_LOST"
+                        return report
+                    final = ordered_head(page)
+                    if not ordered_extension(current, final):
+                        report["status"] = "NEWEST_HEAD_ORDER_CHANGED"
+                        return report
+                    newest_heads.append(final[:30])
+                    report["status"] = "NEWEST_HEAD_SAMPLE_VERIFIED"
+                    report["newest_head_size"] = 30
+                    return report
+                if i == 24 or time.monotonic()-sample_started >= 60:
+                    break
+                pane = review_pane(page)
+                if pane is None:
+                    break
+                try:
+                    box = pane.bounding_box()
+                    if not box:
+                        break
+                    x,y = box["x"]+box["width"]/2, box["y"]+box["height"]/2
+                    if not pane.evaluate("(el,p)=>el.contains(document.elementFromPoint(p.x,p.y))",{"x":x,"y":y}):
+                        break
+                finally:
+                    pane.dispose()
+                page.mouse.move(x,y)
+                page.mouse.wheel(0,900)
+                page.wait_for_timeout(1800)
+                report["scroll_rounds"] = i+1
+            report["status"] = "NEWEST_HEAD_SAMPLE_INCOMPLETE"
+            return report
         if field_sample or body_sample or adapter_sample or db_sample:
             report["phase"] = "initial_field_sample"
             report["field_audit"] = audit_loaded_fields(page, len(seen))
@@ -1868,6 +2007,12 @@ def run_once(context, expected_total=None, store_key="thailand", auto_total=Fals
 
 def self_test():
     assert same_place(PLACE_URL)
+    head = [str(i) for i in range(30)]
+    assert ordered_extension(head, head+["extra"])
+    assert not ordered_extension(head, list(reversed(head)))
+    assert compare_newest_heads([head,head])["status"] == "NEWEST_HEAD_MATCHED"
+    assert compare_newest_heads([head,list(reversed(head))])["status"] == "NEWEST_HEAD_CHANGED"
+    assert compare_newest_heads([head])["status"] == "NEWEST_HEAD_COMPARISON_INCOMPLETE"
     assert stall_evidence_status(None,0) == "PANE_UNVERIFIED"
     assert stall_evidence_status({"at_bottom":True},1) == "VISIBLE_BUSY_INDICATOR"
     assert stall_evidence_status({"at_bottom":True},0) == "PANE_BOTTOM_NO_VISIBLE_BUSY"
@@ -2086,6 +2231,7 @@ def self_test():
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--self-test", action="store_true")
+    parser.add_argument("--newest-head-audit", action="store_true", help="Two independent read-only 30-ID head observations, no ID output.")
     parser.add_argument("--maps-language", choices=("profile", "en"), default="profile", help="Request English Maps display for a diagnostic; no account setting change.")
     parser.add_argument("--db-read-preflight", action="store_true", help="Verify DB read access and history without opening Chrome.")
     parser.add_argument("--inspect-on-failure", action="store_true",
@@ -2118,6 +2264,8 @@ def main():
     parser.add_argument("--count-body-audit", action="store_true",
                         help="Bounded body-control audit after count match; DB comparison is optional.")
     args = parser.parse_args()
+    if args.newest_head_audit and (args.maps_language != "en" or args.auto_total or args.expected_total is not None or args.audit_fields or args.field_sample or args.body_sample or args.adapter_sample or args.db_sample or args.count_db_audit or args.count_body_audit or args.db_read_preflight or args.self_test):
+        parser.error("--newest-head-audit is a standalone English diagnostic")
     if args.maps_language == "en" and (args.db_read_preflight or args.self_test):
         parser.error("--maps-language en is for direct place diagnostics only")
     if args.db_read_preflight:
@@ -2184,6 +2332,7 @@ def main():
         return 2
 
     reports = []
+    newest_heads = [] if args.newest_head_audit else None
     # No export or import of cookies, no synthetic browser identity. Each
     # trial opens and closes the existing dedicated local Chrome normally.
     count_mode = args.auto_total or args.expected_total is not None
@@ -2199,6 +2348,9 @@ def main():
         success_status = "LOCAL_COUNT_BODY_CONTROLS_CHECKED"
     if args.count_db_audit:
         success_status = "LOCAL_COUNT_BODY_DB_COMPARED" if args.count_body_audit else "LOCAL_COUNT_DB_COMPARED"
+    if args.newest_head_audit:
+        target_runs = 2
+        success_status = "NEWEST_HEAD_SAMPLE_VERIFIED"
     for attempt in range(1, target_runs + 1):
         context = None
         try:
@@ -2209,7 +2361,7 @@ def main():
                     **({"locale": "en-US"} if args.maps_language == "en" else {}),
                 )
                 try:
-                    report = run_once(context, args.expected_total, args.store, args.auto_total, args.scroll_mode, args.audit_fields, args.field_sample, args.body_sample, args.adapter_sample, args.db_sample, args.count_round_limit, args.count_second_limit, args.count_db_audit, args.count_body_audit, maps_language=args.maps_language)
+                    report = run_once(context, args.expected_total, args.store, args.auto_total, args.scroll_mode, args.audit_fields, args.field_sample, args.body_sample, args.adapter_sample, args.db_sample, args.count_round_limit, args.count_second_limit, args.count_db_audit, args.count_body_audit, maps_language=args.maps_language, newest_heads=newest_heads)
                     # Snapshot unexpected lifecycle events BEFORE our intentional
                     # cleanup, so closing Chrome normally is not a false failure.
                     report["lifecycle"] = dict(report["lifecycle"])
@@ -2252,6 +2404,11 @@ def main():
         final_status = success_status if passed else reports[-1].get("status", "LOCAL_COUNT_BODY_GAPS")
     elif args.count_db_audit:
         final_status = success_status if passed else "LOCAL_COUNT_DB_GAPS"
+    if args.newest_head_audit:
+        comparison = compare_newest_heads(newest_heads)
+        passed = passed and comparison["status"] == "NEWEST_HEAD_MATCHED"
+        print("LOCAL_NEWEST_HEAD_FINAL: " + json.dumps(dict(comparison, attempts=len(reports), database_writes=False, full_coverage_verified=False)), flush=True)
+        return 0 if passed else 2
     print("LOCAL_REVIEW_FINAL: " + json.dumps({
         "status": final_status,
         "attempts": len(reports), "database_writes": False,
