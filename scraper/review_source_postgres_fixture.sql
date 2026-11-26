@@ -25,7 +25,7 @@ GRANT USAGE ON SCHEMA fixture_private TO fixture_owner;
 CREATE POLICY writer_read_reviews ON fixture_private.reviews FOR SELECT TO fixture_writer USING (true);
 CREATE POLICY writer_read_links ON fixture_private.source_links FOR SELECT TO fixture_writer USING (true);
 CREATE FUNCTION fixture_private.append_fixture(s uuid, h text, r uuid, k text, b text)
-RETURNS text LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog AS $
+RETURNS text LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog AS $$
 BEGIN
  IF s IS NULL OR h IS NULL OR h !~ '^[0-9a-f]{64}$' THEN
    RAISE EXCEPTION 'invalid fixture source';
@@ -108,7 +108,7 @@ BEGIN
 END $$;
 RESET ROLE;
 -- Administrative negative tests isolate constraints from writer grants.
-DO $
+DO $$
 BEGIN
  BEGIN
    INSERT INTO fixture_private.source_links VALUES('10000000-0000-0000-0000-000000000002',repeat('c',64),'00000000-0000-0000-0000-000000000001');
@@ -120,7 +120,7 @@ BEGIN
    RAISE EXCEPTION 'target constraint missing';
  EXCEPTION WHEN unique_violation THEN NULL;
  END;
-END $;
+END $$;
 SET ROLE fixture_anon;
 DO $$ BEGIN
  BEGIN
