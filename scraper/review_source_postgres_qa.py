@@ -17,6 +17,28 @@ IMAGE = "postgres:16"
 STORE = "10000000-0000-0000-0000-000000000001"
 
 
+def run_fixture_checks(psql):
+    """Shared serial/permission/rollback/concurrency tests on an isolated fixture."""
+    if not __debug__:
+        raise RuntimeError("ASSERTIONS_REQUIRED")
+    version = psql("SHOW server_version_num;").strip()
+    if not 160000 <= int(version) < 170000:
+        raise RuntimeError("FIXTURE_POSTGRES_VERSION_UNEXPECTED")
+    assert "POSTGRES_FIXTURE_SERIAL_PASS" in psql(SQL.read_text(encoding="utf-8"))
+    def concurrent(n):
+        return psql("SET ROLE fixture_writer; BEGIN; SELECT fixture_private.append_fixture("
+                    f"'{STORE}',repeat('f',64),'00000000-0000-0000-0000-00000000001{n}',"
+                    f"'parallel-{n}','synthetic'); SELECT pg_sleep(1); COMMIT;")
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        outputs = list(pool.map(concurrent,(1,2)))
+    combined = "\n".join(outputs).splitlines()
+    assert combined.count("APPENDED") == 1 and combined.count("LINKED_NO_INSERT") == 1
+    assert psql("SELECT count(*) FROM fixture_private.reviews;").strip() == "3"
+    assert psql("SELECT count(*) FROM fixture_private.source_links;").strip() == "2"
+    assert psql("SELECT count(*) FROM fixture_private.reviews WHERE review_key LIKE 'parallel-%';").strip() == "1"
+    print("POSTGRES_FIXTURE_CONCURRENT_PASS")
+
+
 def main():
     if len(sys.argv) != 1:
         raise SystemExit("No external DB arguments accepted")
@@ -47,22 +69,7 @@ def main():
                 time.sleep(1)
         else:
             raise RuntimeError("FIXTURE_POSTGRES_NOT_READY")
-        version = psql("SHOW server_version_num;").strip()
-        if not 160000 <= int(version) < 170000:
-            raise RuntimeError("FIXTURE_POSTGRES_VERSION_UNEXPECTED")
-        assert "POSTGRES_FIXTURE_SERIAL_PASS" in psql(SQL.read_text(encoding="utf-8"))
-        def concurrent(n):
-            return psql("SET ROLE fixture_writer; BEGIN; SELECT fixture_private.append_fixture("
-                        f"'{STORE}',repeat('f',64),'00000000-0000-0000-0000-00000000001{n}',"
-                        f"'parallel-{n}','synthetic'); SELECT pg_sleep(1); COMMIT;")
-        with ThreadPoolExecutor(max_workers=2) as pool:
-            outputs = list(pool.map(concurrent,(1,2)))
-        combined = "\n".join(outputs).splitlines()
-        assert combined.count("APPENDED") == 1 and combined.count("LINKED_NO_INSERT") == 1
-        assert psql("SELECT count(*) FROM fixture_private.reviews;").strip() == "3"
-        assert psql("SELECT count(*) FROM fixture_private.source_links;").strip() == "2"
-        assert psql("SELECT count(*) FROM fixture_private.reviews WHERE review_key LIKE 'parallel-%';").strip() == "1"
-        print("POSTGRES_FIXTURE_CONCURRENT_PASS")
+        run_fixture_checks(psql)
     finally:
         if created:
             docker(["rm","-fv",name])
