@@ -57,6 +57,7 @@ def main():
     failure=None
     stage="INIT"
     try:
+        print("POSTGRES_NATIVE_STAGE: INIT",flush=True)
         pwfile.write_text(password+"\n",encoding="ascii")
         run("initdb",["-D",cluster,"-U",ROLE,"--auth=scram-sha-256",
                       "--pwfile",pwfile,"--encoding=UTF8","--no-locale"],timeout=120)
@@ -64,10 +65,19 @@ def main():
         stage="START"
         # Use fresh configuration and loopback only; no existing PGDATA.
         start_attempted=True
-        run("pg_ctl",["-D",cluster,"-l",root/"server.log","-w","-t","60",
-                      "-o",f"-h 127.0.0.1 -p {port} -c ssl=off -c fsync=on",
-                      "start"],timeout=75)
+        print("POSTGRES_NATIVE_STAGE: START",flush=True)
+        # On Windows a persistent postgres descendant may retain pg_ctl's
+        # inherited pipe handles even after pg_ctl exits. Avoid capture_output
+        # and communicate() for the launch; regular files cannot hold a pipe
+        # reader open. The server has its own log.
+        with (root/"launcher.log").open("wb") as launch_log:
+            subprocess.run([str(binaries["pg_ctl"]),"-D",str(cluster),
+                            "-l",str(root/"server.log"),"-w","-t","60",
+                            "-o",f"-h 127.0.0.1 -p {port} -c ssl=off -c fsync=on",
+                            "start"],stdin=subprocess.DEVNULL,stdout=launch_log,
+                           stderr=subprocess.STDOUT,env=env,timeout=75,check=True)
         stage="VERIFY_CLUSTER"
+        print("POSTGRES_NATIVE_STAGE: VERIFY_CLUSTER",flush=True)
         pg_env={"PGPASSWORD":password,"PGCONNECT_TIMEOUT":"5",
                 "PGCLIENTENCODING":"UTF8","PGSSLMODE":"disable",
                 "PGPASSFILE":str(root/"nonexistent.pgpass")}
@@ -87,10 +97,12 @@ def main():
         # Each SQL invocation uses only the verified local endpoint and
         # ephemeral login, never environment-supplied connection settings.
         stage="FIXTURE"
+        print("POSTGRES_NATIVE_STAGE: FIXTURE",flush=True)
         run_fixture_checks(query)
     except Exception as exc:
         failure=(stage,type(exc).__name__)
     finally:
+        print("POSTGRES_NATIVE_STAGE: CLEANUP",flush=True)
         try:
             if pwfile.exists():
                 pwfile.unlink()
