@@ -400,6 +400,62 @@ def sort_menu_evidence(page):
     }""")
 
 
+def all_sort_options_unmarked(options):
+    expected = {"most relevant","newest","highest rating","lowest rating"}
+    return (len(options)==4 and {x["label"] for x in options}==expected
+            and all(x["role"]=="menuitemradio" and x["state"]["aria-checked"]=="false"
+                    and all(x["state"][k] in (None,"false") for k in ("aria-selected","aria-pressed","aria-current"))
+                    and not any(x["native_checked"])
+                    and not any(i["check_label"] or any(v=="true" for v in i["state"].values()) for i in x["indicators"])
+                    for x in options))
+
+
+def relative_age_interval(label):
+    """Coarse displayed-age bands, not absolute dates or publication times."""
+    if not isinstance(label,str):
+        return None
+    value = re.sub(r"^(?:edited|updated)\s*[:·-]?\s*", "", label.strip(), flags=re.I)
+    value = re.sub(r"\s*[·(]?\s*(?:edited|updated)\)?$", "", value, flags=re.I)
+    m = re.fullmatch(r"(\d+|a|an|one)\s+(second|minute|hour|day|week|month|year)s?\s+ago",value,re.I)
+    if not m:
+        return None
+    n = int(m[1]) if m[1].isdigit() and len(m[1])<=6 else (1 if m[1].lower() in {"a","an","one"} else -1)
+    if not 0<=n<=100000:
+        return None
+    units={"second":(1,1),"minute":(60,60),"hour":(3600,3600),"day":(86400,86400),
+           "week":(604800,604800),"month":(28*86400,31*86400),"year":(365*86400,366*86400)}
+    lo,hi=units[m[2].lower()]
+    # Broad bands allow rounding/relative-label boundary ambiguity.
+    return (max(0,n-1)*lo,(n+1)*hi)
+
+
+def displayed_age_evidence(labels):
+    bands=[relative_age_interval(x) for x in labels]
+    known=[b for b in bands if b is not None]
+    inversions=sum(a[0]>b[1] for i,a in enumerate(known) for b in known[i+1:])
+    informative=sum(a[1]<b[0] for i,a in enumerate(known) for b in known[i+1:])
+    return {"sample_size":len(labels),"parseable":len(known),"unknown":len(labels)-len(known),
+            "clear_inversions":inversions,"clear_newer_before_older_pairs":informative,
+            "displayed_order_consistent":bool(labels) and len(known)==len(labels) and not inversions and informative>0,
+            "absolute_dates_verified":False,"publication_order_verified":False}
+
+
+def ordered_date_sample(page):
+    """Read only exact card IDs and dedicated visible date labels, in memory."""
+    records=page.locator(".jftiEf[data-review-id]").evaluate_all(r"""cards => cards.map(card=>{
+        const valid=e=>!e.closest('.wiI7pd,.MyEned,.d4r55,.CDe7pd,.RfnDt,button,a,[role="button"]')
+            && !!e.getClientRects().length;
+        const shape=/^(?:(?:edited|updated)\s*[:·-]?\s*)?(?:\d+|a|an|one)\s+(?:seconds?|minutes?|hours?|days?|weeks?|months?|years?)\s+ago(?:\s*[·(]?\s*(?:edited|updated)\)?)?$/i;
+        const dates=new Set([...card.querySelectorAll('.rsqaof,.xRkPPb')].filter(valid)
+            .map(e=>(e.innerText||e.textContent||'').replace(/\s+/g,' ').trim()).filter(v=>shape.test(v)));
+        return {id:card.getAttribute('data-review-id'), label:dates.size===1?[...dates][0]:null};
+    })""")
+    ids=[r["id"] for r in records]
+    if not ids or len(ids)>300 or any(not isinstance(x,str) or not x for x in ids) or len(set(ids))!=len(ids):
+        return None, []
+    return [hashlib.sha256(x.encode("utf-8")).hexdigest() for x in ids],[r["label"] for r in records]
+
+
 def verify_newest_sort(page, store_key, reviews, evidence=None):
     """Use only ordinary visible Sort controls; require explicit selected state."""
     def context_ok():
@@ -411,6 +467,9 @@ def verify_newest_sort(page, store_key, reviews, evidence=None):
             evidence.append({"stage":stage,"options":sort_menu_evidence(page)})
     if not context_ok():
         return failure()
+    before_head, before_labels = ordered_date_sample(page)
+    if evidence is not None:
+        evidence.append({"stage":"before_head","date_evidence":displayed_age_evidence(before_labels)})
     sorts = page.get_by_role("button", name=re.compile(r"^(?:sort(?: reviews)?|sort by newest)$", re.I)).filter(visible=True)
     if sorts.count() != 1:
         return "NEWEST_SORT_CONTROL_UNVERIFIED"
@@ -419,6 +478,8 @@ def verify_newest_sort(page, store_key, reviews, evidence=None):
     if not context_ok():
         return failure()
     record("before_selection")
+    before_unmarked = all_sort_options_unmarked(sort_menu_evidence(page))
+    clicked_and_closed = False
     option = newest_menu_item(page)
     if option is None:
         return "NEWEST_SORT_OPTION_UNVERIFIED"
@@ -430,6 +491,7 @@ def verify_newest_sort(page, store_key, reviews, evidence=None):
         record("after_selection")
         # Reopen the menu only if selection closed it.
         if newest_menu_item(page) is None:
+            clicked_and_closed = True
             if sorts.count() != 1:
                 return "NEWEST_SORT_CONTROL_UNVERIFIED"
             sorts.first.click(timeout=5000)
@@ -437,7 +499,10 @@ def verify_newest_sort(page, store_key, reviews, evidence=None):
             if not context_ok():
                 return failure()
     record("selection_recheck")
-    if not newest_option_selected(newest_menu_item(page)):
+    explicit = newest_option_selected(newest_menu_item(page))
+    diagnostic_only = (not explicit and before_unmarked and clicked_and_closed
+                       and all_sort_options_unmarked(sort_menu_evidence(page)))
+    if not explicit and not diagnostic_only:
         return "NEWEST_SORT_SELECTION_UNVERIFIED"
     page.keyboard.press("Escape")
     page.wait_for_timeout(1200)
@@ -445,7 +510,11 @@ def verify_newest_sort(page, store_key, reviews, evidence=None):
         return failure()
     if newest_menu_item(page) is not None:
         return "NEWEST_SORT_MENU_NOT_CLOSED"
-    return "NEWEST_SORT_UI_VERIFIED"
+    after_head, after_labels = ordered_date_sample(page)
+    if evidence is not None:
+        evidence.append({"stage":"after_head","head_changed":before_head!=after_head if before_head and after_head else None,
+                         "date_evidence":displayed_age_evidence(after_labels)})
+    return "NEWEST_SORT_UI_VERIFIED" if explicit else "NEWEST_SORT_ACTION_OBSERVED_ONLY"
 
 
 def ordered_head(page):
@@ -1658,7 +1727,7 @@ def run_once(context, expected_total=None, store_key="thailand", auto_total=Fals
             report["phase"] = "verify_newest_sort"
             report["newest_sort_evidence"] = []
             report["newest_sort_status"] = verify_newest_sort(page, store_key, reviews, report["newest_sort_evidence"])
-            if report["newest_sort_status"] != "NEWEST_SORT_UI_VERIFIED":
+            if report["newest_sort_status"] not in {"NEWEST_SORT_UI_VERIFIED","NEWEST_SORT_ACTION_OBSERVED_ONLY"}:
                 report["status"] = report["newest_sort_status"]
                 return report
         if auto_total:
@@ -1764,6 +1833,15 @@ def run_once(context, expected_total=None, store_key="thailand", auto_total=Fals
                     final = ordered_head(page)
                     if not ordered_extension(current, final):
                         report["status"] = "NEWEST_HEAD_ORDER_CHANGED"
+                        return report
+                    dated_head, labels = ordered_date_sample(page)
+                    if not ordered_extension(final, dated_head):
+                        report["status"] = "NEWEST_HEAD_ORDER_CHANGED"
+                        return report
+                    report["newest_date_evidence"] = displayed_age_evidence(labels[:30])
+                    report["newest_selection_explicit"] = report["newest_sort_status"] == "NEWEST_SORT_UI_VERIFIED"
+                    if not report["newest_date_evidence"]["displayed_order_consistent"]:
+                        report["status"] = "NEWEST_DISPLAYED_ORDER_INCONCLUSIVE"
                         return report
                     newest_heads.append(final[:30])
                     report["status"] = "NEWEST_HEAD_SAMPLE_VERIFIED"
@@ -2044,6 +2122,16 @@ def run_once(context, expected_total=None, store_key="thailand", auto_total=Fals
 
 def self_test():
     assert same_place(PLACE_URL)
+    assert displayed_age_evidence(["a week ago","4 months ago"])["displayed_order_consistent"]
+    assert displayed_age_evidence(["4 months ago","a week ago"])["clear_inversions"] == 1
+    assert not displayed_age_evidence(["a week ago","a week ago"])["displayed_order_consistent"]
+    assert not displayed_age_evidence(["a week ago",None])["displayed_order_consistent"]
+    assert relative_age_interval("Edited 2 days ago") is not None
+    assert relative_age_interval("unknown") is None
+    fixture_options = [dict(label=x,role="menuitemradio",state={"aria-checked":"false","aria-selected":None,"aria-pressed":None,"aria-current":None},native_checked=[],indicators=[]) for x in ("most relevant","newest","highest rating","lowest rating")]
+    assert all_sort_options_unmarked(fixture_options)
+    fixture_options[0]["state"]["aria-checked"]="true"
+    assert not all_sort_options_unmarked(fixture_options)
     head = [str(i) for i in range(30)]
     assert ordered_extension(head, head+["extra"])
     assert not ordered_extension(head, list(reversed(head)))
@@ -2444,6 +2532,13 @@ def main():
     if args.newest_head_audit:
         comparison = compare_newest_heads(newest_heads)
         passed = passed and comparison["status"] == "NEWEST_HEAD_MATCHED"
+        explicit = passed and all(r.get("newest_selection_explicit") is True for r in reports)
+        comparison["selection_explicit_verified"] = explicit
+        comparison["displayed_order_consistent"] = passed
+        comparison["publication_order_verified"] = False
+        comparison["stop_authorized"] = False
+        if passed and not explicit:
+            comparison["status"] = "NEWEST_HEAD_MATCHED_BEHAVIOR_ONLY"
         print("LOCAL_NEWEST_HEAD_FINAL: " + json.dumps(dict(comparison, attempts=len(reports), database_writes=False, full_coverage_verified=False)), flush=True)
         return 0 if passed else 2
     print("LOCAL_REVIEW_FINAL: " + json.dumps({
