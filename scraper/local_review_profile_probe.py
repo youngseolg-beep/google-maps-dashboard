@@ -370,12 +370,45 @@ def newest_option_selected(option):
         or option.get_attribute("aria-selected") == "true")
 
 
-def verify_newest_sort(page, store_key, reviews):
+def sort_menu_evidence(page):
+    """Bounded structural evidence from exact known sort options only.
+
+    No review text, profile data, URLs, arbitrary labels or HTML in output.
+    Class/indicator evidence is diagnostic only, not selection proof.
+    """
+    return page.evaluate(r"""() => {
+        const names = /^(most relevant|newest|highest rating|lowest rating)$/i;
+        const visible=e=>{
+            const r=e.getBoundingClientRect(),s=getComputedStyle(e);
+            return r.width>0 && r.height>0 && s.visibility!=='hidden' && s.display!=='none';
+        };
+        const state=e=>Object.fromEntries(['aria-checked','aria-selected','aria-pressed','aria-current']
+            .map(k=>{const v=e.getAttribute(k); return [k, v===null?null: v==='true'||v==='false'?v:'other'];}));
+        const classes=e=>[...e.classList].filter(x=>/^[a-zA-Z0-9_-]{1,40}$/.test(x)).slice(0,12);
+        const opts=[...document.querySelectorAll('[role="menuitemradio"],[role="radio"],[role="option"],[role="menuitem"]')]
+            .filter(e=>visible(e)&&names.test((e.innerText||'').trim()));
+        return opts.slice(0,8).map(e=>({
+            label:(e.innerText||'').trim().toLowerCase(),
+            role:e.getAttribute('role'), state:state(e), classes:classes(e),
+            native_checked:[...e.querySelectorAll('input[type="radio"],input[type="checkbox"]')].slice(0,4).map(x=>x.checked),
+            indicators:[...e.querySelectorAll('span,i,svg,[aria-checked],[aria-selected],[aria-pressed]')]
+                .filter(visible).slice(0,16).map(x=>({
+                    tag:x.tagName.toLowerCase(),classes:classes(x),state:state(x),
+                    check_label:/^(check|checked|selected|checkmark)$/i.test((x.getAttribute('aria-label')||x.textContent||'').trim())
+                }))
+        }));
+    }""")
+
+
+def verify_newest_sort(page, store_key, reviews, evidence=None):
     """Use only ordinary visible Sort controls; require explicit selected state."""
     def context_ok():
         return not blocked(page) and same_place(page.url, store_key) and selected(reviews)
     def failure():
         return "ACCESS_RESTRICTED_STOPPED" if blocked(page) else "REVIEW_CONTEXT_LOST"
+    def record(stage):
+        if evidence is not None:
+            evidence.append({"stage":stage,"options":sort_menu_evidence(page)})
     if not context_ok():
         return failure()
     sorts = page.get_by_role("button", name=re.compile(r"^(?:sort(?: reviews)?|sort by newest)$", re.I)).filter(visible=True)
@@ -385,6 +418,7 @@ def verify_newest_sort(page, store_key, reviews):
     page.wait_for_timeout(1000)
     if not context_ok():
         return failure()
+    record("before_selection")
     option = newest_menu_item(page)
     if option is None:
         return "NEWEST_SORT_OPTION_UNVERIFIED"
@@ -393,6 +427,7 @@ def verify_newest_sort(page, store_key, reviews):
         page.wait_for_timeout(2500)
         if not context_ok():
             return failure()
+        record("after_selection")
         # Reopen the menu only if selection closed it.
         if newest_menu_item(page) is None:
             if sorts.count() != 1:
@@ -401,6 +436,7 @@ def verify_newest_sort(page, store_key, reviews):
             page.wait_for_timeout(1000)
             if not context_ok():
                 return failure()
+    record("selection_recheck")
     if not newest_option_selected(newest_menu_item(page)):
         return "NEWEST_SORT_SELECTION_UNVERIFIED"
     page.keyboard.press("Escape")
@@ -1620,7 +1656,8 @@ def run_once(context, expected_total=None, store_key="thailand", auto_total=Fals
 
         if newest_heads is not None:
             report["phase"] = "verify_newest_sort"
-            report["newest_sort_status"] = verify_newest_sort(page, store_key, reviews)
+            report["newest_sort_evidence"] = []
+            report["newest_sort_status"] = verify_newest_sort(page, store_key, reviews, report["newest_sort_evidence"])
             if report["newest_sort_status"] != "NEWEST_SORT_UI_VERIFIED":
                 report["status"] = report["newest_sort_status"]
                 return report
