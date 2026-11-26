@@ -216,23 +216,80 @@ def selected(locator):
     return locator.get_attribute("aria-selected") == "true"
 
 
-def initial_card_poll(read, wait, seconds=45):
-    """Bounded ordinary UI wait, no reload or repeat navigation.
+def initial_card_poll(read, wait, seconds=45, reveal=None):
+    """Wait for exact cards; optionally scroll a verified review summary pane.
 
-    read returns aggregate structural evidence and a context status. Check
-    restriction/context before accepting visible cards on every observation.
+    The callback uses ordinary mouse wheel input and never clicks Sort/filter.
+    At most six reveal attempts, spaced by at least three one-second waits.
     """
     if type(seconds) is not int or not 1 <= seconds <= 45:
         raise ValueError("INITIAL_CARD_WAIT_OUT_OF_SCOPE")
+    attempts = 0
     for tick in range(seconds + 1):
         status, evidence = read()
         if status:
             return status, tick, evidence
         if evidence["visible_expected_cards"] > 0:
             return "INITIAL_REVIEW_CARDS_VISIBLE", tick, evidence
+        if reveal is not None and 4 <= tick < seconds and (tick - 4) % 3 == 0 and attempts < 6:
+            reveal()
+            attempts += 1
         if tick < seconds:
             wait()
     return "INITIAL_REVIEW_CARDS_TIMEOUT", seconds, evidence
+
+
+def review_summary_pane(page):
+    """Identify the scrollable ancestor of the unique visible Sort control.
+
+    Do not select a generic feed, map canvas, filter chip or document body.
+    This is only a bootstrap for the card-anchored scroll path.
+    """
+    controls = page.get_by_role("button", name=re.compile(r"^(?:sort(?: reviews)?|정렬)$", re.I)).filter(visible=True)
+    if controls.count() != 1:
+        return None
+    handle = controls.first.evaluate_handle("""button => {
+        for (let el=button.parentElement; el && el!==document.body; el=el.parentElement) {
+            const r=el.getBoundingClientRect(), css=getComputedStyle(el);
+            if (r.width>=160 && r.height>=150 &&
+                ['auto','scroll'].includes(css.overflowY) &&
+                el.scrollHeight>el.clientHeight+30) return el;
+        }
+        return null;
+    }""")
+    element = handle.as_element()
+    if element is None:
+        handle.dispose()
+    return element
+
+
+def reveal_initial_cards(page, store_key, reviews):
+    if blocked(page) or not same_place(page.url, store_key) or not selected(reviews):
+        return "CONTEXT_UNVERIFIED"
+    pane = review_summary_pane(page)
+    if pane is None:
+        return "SUMMARY_PANE_UNVERIFIED"
+    try:
+        point = pane.evaluate("""el => {
+            const r=el.getBoundingClientRect();
+            const l=Math.max(0,r.left), t=Math.max(0,r.top),
+                  right=Math.min(innerWidth,r.right), bottom=Math.min(innerHeight,r.bottom);
+            if(right-l<40 || bottom-t<40) return null;
+            const x=(l+right)/2, y=(t+bottom)/2;
+            if(!el.contains(document.elementFromPoint(x,y))) return null;
+            return {x,y,at_end: el.scrollTop+el.clientHeight>=el.scrollHeight-2};
+        }""")
+        if not point:
+            return "SUMMARY_PANE_POINT_UNVERIFIED"
+        if point["at_end"]:
+            return "SUMMARY_PANE_AT_END"
+        if blocked(page) or not same_place(page.url, store_key) or not selected(reviews):
+            return "CONTEXT_UNVERIFIED"
+        page.mouse.move(point["x"],point["y"])
+        page.mouse.wheel(0,600)
+        return "SUMMARY_PANE_WHEEL"
+    finally:
+        pane.dispose()
 
 
 def initial_card_evidence(page):
@@ -1455,12 +1512,17 @@ def run_once(context, expected_total=None, store_key="thailand", auto_total=Fals
                 return "REVIEW_CONTEXT_LOST", {}
             return None, initial_card_evidence(page)
         wait_started = time.monotonic()
+        reveal_results = []
+        def reveal():
+            reveal_results.append(reveal_initial_cards(page, store_key, reviews))
         initial_status, polls_waited, evidence = initial_card_poll(
-            read_initial, lambda: page.wait_for_timeout(1000))
+            read_initial, lambda: page.wait_for_timeout(1000), reveal=reveal)
         report["initial_card_wait"] = {
             "status": initial_status, "poll_intervals": polls_waited,
             "elapsed_seconds": round(time.monotonic() - wait_started, 1),
-            "configured_wait_seconds": 45, "evidence": evidence}
+            "configured_wait_seconds": 45, "evidence": evidence,
+            "summary_reveal_results": reveal_results,
+            "summary_wheel_rounds": reveal_results.count("SUMMARY_PANE_WHEEL")}
         if initial_status != "INITIAL_REVIEW_CARDS_VISIBLE":
             report["status"] = initial_status
             return report
@@ -1694,6 +1756,18 @@ def self_test():
     for failure in ("ACCESS_RESTRICTED_STOPPED", "REVIEW_CONTEXT_LOST"):
         status, ticks, _ = initial_card_poll(lambda: (failure, {}), lambda: None, 2)
         assert status == failure and ticks == 0
+    reveal_calls = []
+    status, ticks, _ = initial_card_poll(lambda: (None, {"visible_expected_cards":0}),
+                                         lambda: None, 45, reveal=lambda: reveal_calls.append(1))
+    assert status == "INITIAL_REVIEW_CARDS_TIMEOUT" and ticks == 45 and len(reveal_calls) == 6
+    reveal_calls.clear()
+    state = {"ready":False}
+    def fixture_reveal():
+        reveal_calls.append(1)
+        state["ready"] = True
+    status, ticks, _ = initial_card_poll(lambda: (None, {"visible_expected_cards":int(state["ready"])}),
+                                         lambda: None, 45, reveal=fixture_reveal)
+    assert status == "INITIAL_REVIEW_CARDS_VISIBLE" and ticks == 5 and len(reveal_calls) == 1
     a = {"status":"UI_DISPLAYED","displayed_total":167,"candidate_counts":[167]}
     assert stable_overview_total(a, a) == 167
     assert scaled_count_budget(167, 240, 600, True) == (240, 600)
