@@ -5,7 +5,7 @@ from review_source_identity import source_replay_preview
 from review_incremental_baseline import UUID, valid
 
 
-def preview_capture(store, baseline, records, history, links, production, adapter, base, *,
+def _capture_plan(store, baseline, records, history, links, production, adapter, base, *,
                     newest_verified=False, snapshot_verified=False, context_verified=False,
                     capture_verified=False, pending_attempts=None):
     """Connect ordered DOM records to the existing source and legacy gates.
@@ -17,7 +17,7 @@ def preview_capture(store, baseline, records, history, links, production, adapte
     def result(status, **extra):
         return dict(status=status, database_writes=False, write_approved=False,
                     stop_authorized=False, baseline_advance_authorized=False,
-                    full_coverage_verified=False, **extra)
+                    full_coverage_verified=False, **extra), []
     if not all(x is True for x in (newest_verified,snapshot_verified,context_verified,capture_verified)) or type(pending_attempts) is not int or pending_attempts!=0:
         return result("CAPTURE_EVIDENCE_HELD")
     if (not isinstance(store,dict) or not valid(store.get("id"),UUID)
@@ -71,8 +71,25 @@ def preview_capture(store, baseline, records, history, links, production, adapte
             or legacy["hypothetical_row_shape_valid"]!=n):
         return result("CAPTURE_LEGACY_HELD",unlinked_prefix=n,
                       hypothetical_rows=len(rows))
-    return result("CAPTURE_APPEND_PREVIEW",unlinked_prefix=n,
-                  overlap=boundary["ordered_overlap"],hypothetical_rows=n)
+    # Bind each candidate to its exact canonical row without relying on
+    # the legacy planner's output ordering. Keep the plan in memory only.
+    by_key={r["review_key"]:r for r in rows}
+    if len(by_key)!=n or any(r.get("store_id")!=store_id or r.get("first_seen_run_id") is not None for r in rows):
+        return result("CAPTURE_ROW_MAPPING_HELD",unlinked_prefix=n)
+    report,_=result("CAPTURE_APPEND_PREVIEW",unlinked_prefix=n,
+                    overlap=boundary["ordered_overlap"],hypothetical_rows=n)
+    return report, [(source,dict(by_key[key])) for source,key in zip(ordered[:n],keys)]
+
+
+def preview_capture(store, baseline, records, history, links, production, adapter, base, *,
+                    newest_verified=False, snapshot_verified=False, context_verified=False,
+                    capture_verified=False, pending_attempts=None):
+    """Public aggregate diagnostic; discard all transient row payloads."""
+    report,_=_capture_plan(store,baseline,records,history,links,production,adapter,base,
+                           newest_verified=newest_verified,snapshot_verified=snapshot_verified,
+                           context_verified=context_verified,capture_verified=capture_verified,
+                           pending_attempts=pending_attempts)
+    return report
 
 
 def self_test():
