@@ -86,6 +86,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--target-url", required=True)
     parser.add_argument("--country", action="append", help="Optional registered country filter")
+    parser.add_argument("--store-name", help="Exactly one registered store name; fail closed on ambiguous matches")
     parser.add_argument("--limit", type=int, help="Optional number of eligible stores")
     parser.add_argument("--skip-store", action="append", default=[])
     parser.add_argument("--mode", choices=("backfill","recent"), default="backfill")
@@ -118,6 +119,10 @@ def main():
         raise ValueError("BATCH_UNKNOWN_COUNTRY")
     tasks = [t for t in tasks if (not countries or t["country"] in countries)
              and t["name"] not in args.skip_store]
+    if args.store_name is not None:
+        tasks = [t for t in tasks if t["name"] == args.store_name]
+        if len(tasks) != 1 or tasks[0]["hold_reason"]:
+            raise ValueError("BATCH_STORE_NAME_UNVERIFIED")
     if args.limit is not None:
         tasks = [t for t in tasks if not t["hold_reason"]][:args.limit]
     if not tasks:
@@ -150,7 +155,7 @@ def main():
         run_id = None
         # Record an aggregate-only local checkpoint after every store. Do not
         # overwrite the full dashboard crawl summary for a filtered pilot.
-        full_scope = not (args.country or args.limit or args.skip_store)
+        full_scope = not (args.country or args.limit or args.skip_store or args.store_name)
         if args.commit and full_scope:
             run_id = production.create_crawl_run(len(tasks))
         def checkpoint(state):
