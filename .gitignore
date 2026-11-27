@@ -1,0 +1,9 @@
+# Local credentials and authenticated browser/runtime state must never enter Git.
+.env
+.env.local
+*.credential.xml
+*.sqlite3
+*.sqlite3-*
+GoogleMapsSortProfile/
+append-automation/
+__pycache__/

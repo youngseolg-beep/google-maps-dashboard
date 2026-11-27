@@ -188,3 +188,136 @@ were dry-run acceptance only; no insertion or source-table baseline query was
 performed. The previously confirmed local source receipts were a conservative
 read-only substitute for privileged source-link reads, not a new production
 source registry snapshot.
+
+
+## 운영 전환 준비 — 매일 22:00 KST (아직 활성화 금지)
+
+수집 엔진/RPC/프로덕션 스키마는 변경하지 않는다. 정확한 등록 매장명을
+--store-name으로 여러 번 지정할 수 있다. 중복 이름, 오타, 보류 매핑은
+실행 전에 거부된다. 필터 없이 실행하면 전체 등록 목록을 사용한다.
+
+매장별 처리는 순차 실행하며 3초 간격을 둔다. 매장 종료 시 이전 페이지를
+닫고 빈 탭 하나만 유지한다. 로그의 JS heap은 페이지 추정치이며 Chrome 전체
+프로세스 RSS 측정은 아니다. 일반적인 매장 관측 실패는 다음 매장으로 진행한다.
+접근 제한, 브라우저 단절, 미확정 쓰기는 전체 실행을 중단한다. 미확정 POST는
+기존 journal과 영수증으로만 복구하고 즉시 재삽입하거나 삭제하지 않는다.
+강제 종료 전후에 journal을 지우지 말고, 같은 PC/사용자/백엔드로 재실행한다.
+
+일일 완료는 검증된 Newest + 이전 일일/DB 경계 도달 + 신규 구간 미해결 0 +
+미확정 요청 0일 때만 인정한다. 이전 경계 이후의 과거 backlog가 남아 있어도
+일일 완료로 표시하며 전체 역사 완전성 검증으로 격상하지 않는다.
+새 구간의 보류, 정렬 미확인/backfill, cap 도달은 PARTIAL이다.
+
+커밋 실행은 필터 유무와 관계없이 먼저 crawl_runs를 생성한다. 모든 새 리뷰의
+first_seen_run_id는 이 실행 ID를 사용한다. 대시보드 stores JSON에는 필터 밖의
+등록 매장도 NOT_CHECKED로 포함한다. 기존 리뷰의 first_seen_run_id는 수정하지
+않는다. 실패/중단 실행도 최종 집계하며 로컬 checkpoint는 DB 집계 실패 시에도
+남긴다. 비정상 종료로 DB 집계가 남지 않을 수 있으므로 로컬 보고서도 확인한다.
+
+### Windows에서 승인 전 준비
+
+검증된 개발 checkout에서 같은 Windows 사용자로 실행한다. 아래 작업은 이번
+개발 검증 중 실행하지 않았다. 실제 backend key 입력/태스크 등록은 사용자
+승인 후 로컬 PowerShell에서 수행한다.
+
+    powershell.exe -NoProfile -File scraper/local_review_scheduler.ps1 -Action AppendPlan
+    powershell.exe -NoProfile -File scraper/local_review_scheduler.ps1 -Action PrepareAppend -TargetUrl "https://PROJECT.supabase.co" -PythonPath "C:\Python\python.exe"
+    powershell.exe -NoProfile -File scraper/local_review_scheduler.ps1 -Action ProtectAppendCredential
+    powershell.exe -NoProfile -File scraper/local_review_scheduler.ps1 -Action RegisterAppendDisabled
+
+PROJECT와 Python 경로는 실제 검증된 값으로 바꾼다. credential 입력은 숨김
+프롬프트 한 번뿐이다. 키를 명령행, 문서, GitHub Secrets에 붙이지 않는다.
+credential XML은 Windows DPAPI CurrentUser 암호화이고, 설정/로그 디렉터리 ACL은
+현재 사용자와 SYSTEM만 허용한다. 런처는 비대화식으로 복호화하여 자식 Python
+프로세스 환경에만 전달하고 종료 시 부모 환경을 복원한다. 메모리 내 평문과
+자식 프로세스 환경 노출 위험은 남으므로 같은 사용자 계정도 보호해야 한다.
+다른 PC나 사용자로 암호화 XML을 복사해서 쓰지 않는다.
+
+로컬 파일은 LOCALAPPDATA/SVReviewMaster/append-automation 아래에 있으며
+프로필과 review-source-requests.sqlite3는 기존 경로를 유지한다. 설정은 최초
+approved=false, legacy_writer_disabled_confirmed=false이고 덮어쓰기를 거부한다.
+태스크 XML도 Enabled=false이다. 활성화 액션은 구현하지 않았다.
+비활성 태스크를 실수로 수동 실행해도 위 두 승인 값이 true가 아니면 종료 3으로
+차단한다. 태스크는 InteractiveToken, LeastPrivilege, IgnoreNew를 사용하며
+Python의 기존 byte-range lock이 수동 실행 간 중복도 막는다.
+
+PC는 켜져 있고 네트워크에 연결되어 있어야 한다. 같은 Windows 사용자로
+로그인한 대화형 데스크톱과 기존 Chrome 프로필 인증이 필요하다. 절전/전원 종료
+상태에서 깨우지 않으며 로그인/네트워크 복구 뒤 StartWhenAvailable로 지연 실행될
+수 있다. 로그아웃, 인증 만료, CAPTCHA, Google 접근 제한은 사람의 확인이 필요하다.
+전용 프로필을 수동 Chrome이나 다른 태스크에서 동시에 사용하지 않는다.
+작업 제한 4시간에 의해 종료되면 다음 실행이 journal에서 복구하며 직접 스크롤
+위치 복원을 보장하지 않는다.
+
+### 기존 GitHub writer 전환 순서 — 지금 실행하지 않음
+
+1. 사용자가 새 버전과 cutover를 승인한다.
+2. GitHub의 scrape-and-update workflow를 먼저 비활성화한다.
+   승인 후 수동 명령 예: gh workflow disable scrape.yml --repo youngseolg-beep/google-maps-dashboard
+3. 기존 실행 중인 GitHub crawl/repair가 모두 종료됐는지 확인한다.
+   다른 Windows staging/collector 태스크도 같은 프로필을 쓰지 않는지 확인한다.
+4. Windows 보호 저장소의 대상 프로젝트와 journal 백엔드가 일치하는지 확인한다.
+5. 로컬 settings.json의 approved와 legacy_writer_disabled_confirmed를 사용자가
+   확인 후 true로 바꾼다. 그 전에는 RunAppend가 쓰기를 실행할 수 없다.
+6. 비활성 태스크의 22:00 KST, 사용자, Python, checkout 경로를 검토한 후에만
+   Enable-ScheduledTask -TaskName "SVReviewMaster-Daily-2200-APPEND"를 실행한다.
+7. 첫 실행의 daily 상태/backlog/미확정 쓰기/NEW 리뷰를 점검한다.
+   문제가 생기면 새 태스크부터 비활성화하고 journal을 보존한다.
+   구 writer 재활성화도 별도 승인 후 진행하며 두 writer를 겹쳐 실행하지 않는다.
+
+이번 변경은 scrape.yml의 cron, workflow 활성 상태, 프로덕션 데이터 또는
+스키마를 바꾸지 않았다. 기존 cron은 UTC 22:00 (= KST 07:00)이고 새 Windows
+태스크의 KST 22:00와 다르다.
+
+### 실제 읽기 전용 3매장 검증
+
+동일 전용 Chrome 컨텍스트에서 매장 사이에 DOM을 해제하며 순차 실행했다.
+세 매장 모두 각 3회 스크롤/60초의 관측 예산으로 제한하고 commit=False를
+사용했다. 모든 privileged backend 호출을 차단했다. 공개 GET history와 로컬
+확정 source 영수증을 사용했고 원본 SQLite는 읽기 전용으로 열어 임시 복제본에서
+검증했다. 이는 최신 privileged source table 전체를 읽은 검증은 아니다.
+
+- Eastville: 30/167 관측, Newest 행동 검증, OBSERVED_FRONTIER_REACHED,
+  일일 완료 / 신규 구간 미해결 0. 기존 DB 200행 전후 동일.
+- Ratchada: 60/195 관측, Newest 행동 검증, ROUND_LIMIT, PARTIAL.
+  기존 DB 147행 전후 동일.
+- Siam Discovery: 60개 관측, 정렬 근거 부족으로 bounded_backfill,
+  ROUND_LIMIT, PARTIAL. 기존 DB 99행 전후 동일.
+
+실제 신규 삽입 0, 접근 제한 없음, 매장마다 정리 후 빈 탭 1개,
+페이지 heap 정리 전 약 46.7/68.2/58.2 MB였다. 이는 장시간 60매장 메모리
+지속성 검증이 아니다. 원본 journal integrity_check=ok, Chrome 정상 종료,
+증분 경계 갱신 0이었다. DB 저장/복구 및 crawl_runs 연동은 별도 합성
+PostgreSQL/PostgREST 회귀 테스트로 검증한다.
+
+
+### 이 PC의 준비 결과와 수동 설정 명령
+
+SVReviewMaster-Daily-2200-APPEND를 현재 Windows 사용자용으로 비활성 등록했다.
+StartBoundary는 KST 22:00, Interactive 로그온, Enabled=false이며,
+RunAppend 직접 호출도 승인 전 gate exit 3으로 차단됨을 확인했다.
+실제 backend 자격 증명 파일은 아직 없고 두 승인 플래그도 false다.
+준비한 작업 디렉터리는 검증된 개발 worktree를 가리킨다.
+
+아래 명령은 그 개발 checkout에서 실행한다. 이 PC의 PrepareAppend 및
+RegisterAppendDisabled는 이미 완료했으므로 다시 실행하거나 덮어쓰지 않는다.
+다른 PC에서 준비할 때만 정확한 프로젝트 URL과 Python 경로를 명시한다.
+
+    powershell.exe -NoProfile -File .\scraper\local_review_scheduler.ps1 -Action AppendPlan
+    # 다른 PC에서만:
+    powershell.exe -NoProfile -File .\scraper\local_review_scheduler.ps1 -Action PrepareAppend -TargetUrl 'https://PROJECT.supabase.co' -PythonPath 'C:\PATH\python.exe'
+    powershell.exe -NoProfile -File .\scraper\local_review_scheduler.ps1 -Action RegisterAppendDisabled
+    # 키 소유자가 로컬 숨김 입력으로 직접 보호 저장할 때만:
+    powershell.exe -NoProfile -File .\scraper\local_review_scheduler.ps1 -Action ProtectAppendCredential
+
+settings.json 및 backend.credential.xml은 LOCALAPPDATA/SVReviewMaster/
+append-automation에만 보관한다. 사용자+SYSTEM ACL로 상속을 차단하고
+credential XML은 Windows DPAPI current-user 보호를 사용한다. 스케줄 실행은
+같은 사용자로 비대화형 복호화한 키를 Python 자식 프로세스 환경에만 전달하며,
+명령행/로그에 키를 넣지 않고 실행 후 기존 환경을 복원한다. 같은 사용자 권한의
+악성 프로세스나 관리자 침해까지 방어하는 저장소는 아니다. PC/계정 변경이나
+키 교체 시 소유자가 다시 설정해야 하며 Git/이메일/채팅으로 파일을 보내지 않는다.
+
+최종 승인과 기존 writer 중단 확인 후에만, 사용자가 로컬 두 플래그를 바꾸고
+Enable-ScheduledTask -TaskName 'SVReviewMaster-Daily-2200-APPEND'를 실행한다.
+그 명령과 workflow disable은 이번 작업에서 실행하지 않았다.

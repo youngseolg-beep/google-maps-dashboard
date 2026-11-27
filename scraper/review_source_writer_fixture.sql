@@ -20,3 +20,12 @@ ALTER TABLE public.reviews ENABLE ROW LEVEL SECURITY;
 GRANT USAGE ON SCHEMA public TO service_role;
 GRANT SELECT,INSERT ON public.stores,public.reviews TO service_role;
 GRANT SELECT ON public.sv_writer_fixture TO service_role;
+
+-- Existing crawl_runs shape, synthetic integration fixture only.
+CREATE TABLE public.crawl_runs (
+ id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+ last_crawled_at text,total_stores integer,success_count integer,failed_count integer,
+ failed_stores jsonb,stores jsonb
+);
+GRANT SELECT,INSERT,UPDATE ON public.crawl_runs TO service_role;
+GRANT USAGE,SELECT ON SEQUENCE public.crawl_runs_id_seq TO service_role;

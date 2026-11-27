@@ -226,3 +226,27 @@ test('keyword output counts reviews once and uses valid-rated matches for averag
   app.renderKeywordCloud([]);
   assert.match(element('keyword-cloud').innerHTML, /표시할 데이터가 없습니다/);
 });
+
+test('daily completion is independent of historical backlog and exposes operational failures', () => {
+  const { app } = loadDashboard();
+  const stores = [
+    { store_name: 'Daily', ok: true, daily_status: 'COMPLETED', collection_status: 'PARTIAL', historical_backlog: 36, historical_coverage_unknown: true },
+    { store_name: 'Mapping', ok: false, collection_status: 'FAILED', collection_reason: 'MAPPING_HELD' },
+    { store_name: 'Uncertain', ok: false, collection_status: 'FAILED', write_outcome_uncertain: true },
+    { store_name: 'Skipped', ok: null, collection_status: 'NOT_CHECKED' },
+    { store_name: 'Partial', ok: false, collection_status: 'PARTIAL' },
+  ];
+  const run = { total_stores: 5, stores };
+  const summary = app.summarizeCollectionRun(run);
+  assert.equal(summary.dailyCompleted, 1);
+  assert.equal(summary.historicalBacklog, 36);
+  assert.equal(summary.mappingFailed, 1);
+  assert.equal(summary.uncertainWrites, 1);
+  assert.ok(!summary.failedNames.includes('Daily'));
+  assert.match(summary.label, /일일 완료 1/);
+  assert.match(summary.label, /일부 관측 1/);
+  app.setState({ crawlStatus: run });
+  assert.equal(app.latestStoreCollectionLabel('Daily'), '일일 완료 · 과거 보류 36 · 과거 범위 미확인');
+  assert.equal(app.latestStoreCollectionLabel('Mapping'), '매핑 실패');
+  assert.equal(app.latestStoreCollectionLabel('Uncertain'), '저장 결과 미확정');
+});

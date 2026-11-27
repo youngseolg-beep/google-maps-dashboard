@@ -51,6 +51,88 @@ class WriterPlanning(unittest.TestCase):
         return writer
 
 
+
+
+    @unittest.skipUnless(os.name=='nt' and shutil.which('powershell.exe'),'Windows PowerShell required')
+    def test_scheduler_disabled_2200_xml_and_dpapi_roundtrip(self):
+        script=Path(pilot.__file__).with_name('local_review_scheduler.ps1')
+        command=r'''
+$ErrorActionPreference='Stop'
+$env:PSModulePath=Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\Modules'
+$source=Get-Content -Raw -Encoding UTF8 -LiteralPath 'SCRIPT'
+$tokens=$null;$errors=$null
+$ast=[System.Management.Automation.Language.Parser]::ParseInput($source,[ref]$tokens,[ref]$errors)
+if($errors.Count){throw 'syntax'}
+foreach($name in @('Escape-Xml','New-AppendTaskXml','Protect-AppendDirectory')){
+ $fn=$ast.Find({param($n)$n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq $name},$true)
+ Invoke-Expression $fn.Extent.Text
+}
+function Get-TimeZone { [pscustomobject]@{Id='Korea Standard Time'} }
+$Zone='Korea Standard Time';$PowerShell='powershell.exe';$RepoRoot='C:\fixture';$PSCommandPath='C:\fixture\launcher.ps1'
+[xml]$xml=New-AppendTaskXml
+$ns=New-Object System.Xml.XmlNamespaceManager($xml.NameTable);$ns.AddNamespace('t',$xml.DocumentElement.NamespaceURI)
+if($xml.SelectSingleNode('//t:Settings/t:Enabled',$ns).InnerText -ne 'false'){throw 'enabled'}
+if($xml.SelectSingleNode('//t:LogonType',$ns).InnerText -ne 'InteractiveToken'){throw 'user'}
+if($xml.SelectSingleNode('//t:MultipleInstancesPolicy',$ns).InnerText -ne 'IgnoreNew'){throw 'overlap'}
+if(([datetime]$xml.SelectSingleNode('//t:StartBoundary',$ns).InnerText).Hour -ne 22){throw 'time'}
+$AppendRoot=Join-Path $env:TEMP ([guid]::NewGuid().ToString('N'))
+Protect-AppendDirectory
+if(-not (Get-Acl -LiteralPath $AppendRoot).AreAccessRulesProtected){throw 'acl'}
+$path=Join-Path $AppendRoot 'fixture.xml'
+try {
+ $secret=ConvertTo-SecureString 'synthetic-only' -AsPlainText -Force
+ $c=New-Object System.Management.Automation.PSCredential('fixture',$secret)
+ $c|Export-Clixml -LiteralPath $path
+ $recovered=Import-Clixml -LiteralPath $path
+ if($recovered.GetNetworkCredential().Password -ne 'synthetic-only'){throw 'roundtrip'}
+ if((Get-Content -Raw -LiteralPath $path).Contains('synthetic-only')){throw 'plaintext'}
+ 'SCHEDULER_XML_AND_DPAPI_PASS'
+} finally {if(Test-Path $path){Remove-Item -LiteralPath $path};Remove-Item -LiteralPath $AppendRoot}
+'''
+        command=command.replace('SCRIPT',str(script).replace("'","''"))
+        result=subprocess.run(['powershell.exe','-NoProfile','-NonInteractive','-Command',command],capture_output=True,text=True)
+        self.assertEqual(result.returncode,0,result.stderr)
+        self.assertIn('SCHEDULER_XML_AND_DPAPI_PASS',result.stdout)
+
+
+    def test_exact_multiple_store_selection_and_status_reporting(self):
+        tasks=[dict(store_id=str(uuid4()),name=n,country='Fixture',hold_reason=None) for n in ('A','B','C')]
+        self.assertEqual([t['name'] for t in batch.select_store_names(tasks,['A','C'])],['A','C'])
+        for names in (['A','A'],['missing'],['a']):
+            with self.assertRaises(ValueError):batch.select_store_names(tasks,names)
+        tasks[1]['hold_reason']='DUPLICATE_PLACE_MAPPING'
+        with self.assertRaises(ValueError):batch.select_store_names(tasks,['B'])
+        daily=batch.status_for_run(tasks[0],dict(status='DAILY_COMPLETE',daily_status='COMPLETED',
+            observed=30,historical_backlog=36,database_writes=False))
+        self.assertTrue(daily['ok'])
+        self.assertEqual(daily['collection_status'],'PARTIAL')
+        self.assertEqual(daily['historical_backlog'],36)
+        uncertain=batch.status_for_run(tasks[0],dict(status='DAILY_COMPLETE',daily_status='COMPLETED',
+            observed=30,database_writes='UNKNOWN'))
+        self.assertFalse(uncertain['ok'])
+        self.assertEqual(uncertain['collection_reason'],'WRITE_OUTCOME_UNCERTAIN')
+        blocked=batch.status_for_run(tasks[0],dict(status='ACCESS_RESTRICTED_STOPPED',daily_status='COMPLETED',observed=30))
+        self.assertFalse(blocked['ok'])
+        self.assertNotEqual(blocked['daily_status'],'COMPLETED')
+        self.assertEqual(batch.status_for_run(tasks[1],dict(status='MAPPING_HELD'))['collection_status'],'FAILED')
+        self.assertEqual(batch.status_for_run(tasks[2],dict(status='NOT_ATTEMPTED'))['collection_status'],'NOT_CHECKED')
+
+    def test_store_page_isolation_releases_dom_and_stops_on_restriction(self):
+        context=Mock()
+        page=Mock()
+        page.is_closed.return_value=False
+        page.evaluate.return_value=1234
+        context.pages=[page]
+        with patch.object(pilot.probe,'blocked',return_value=False):
+            result=batch.isolate_store_pages(context)
+        page.close.assert_called_once()
+        context.new_page.assert_called_once()
+        self.assertEqual(result['js_heap_bytes_before_cleanup'],1234)
+        with patch.object(pilot.probe,'blocked',return_value=True):
+            with self.assertRaisesRegex(RuntimeError,'ACCESS_RESTRICTED_STOPPED'):
+                batch.isolate_store_pages(context)
+
+
     def sort_samples(self):
         before=['old'+str(i) for i in range(8)]
         before_dates=['2 years ago','a week ago']+['a month ago']*6
@@ -662,13 +744,59 @@ with patch.object(tests.production,'supabase_request',side_effect=case.api), pat
         self.assertEqual(self.saved(),before)
 
 
-    def run_sorted_batch(self, status):
+
+    def test_crawl_run_daily_completion_backlog_uncertainty_and_new_review_link(self):
+        started=production.now_kst()
+        run_id=production.create_crawl_run(4)
+        writer=pilot.SourceWriter(None,self.store,Path(self.tmp.name)/'crawl-journal.sqlite3',commit=True,run_id=run_id)
+        self.writers.append(writer)
+        writer.append([card('new-for-run')],evidence([card('new-for-run')]))
+        tasks=[dict(store_id=self.store['id'] if i==0 else str(uuid4()),name='Store '+str(i),country='Fixture') for i in range(4)]
+        results=[dict(status='DAILY_COMPLETE',daily_status='COMPLETED',observed=30,
+                      confirmed_new=1,historical_backlog=36,database_writes=False),
+                 dict(status='PARTIAL_NO_READY_ROWS',observed=10,database_writes='UNKNOWN'),
+                 dict(status='MAPPING_HELD')]
+        batch.finish_dashboard_run(run_id,tasks,tasks[:3],results,started)
+        row=self.api('GET','crawl_runs',query={'id':'eq.'+str(run_id)})[0]
+        self.assertEqual((row['success_count'],row['failed_count'],row['total_stores']),(1,2,4))
+        self.assertEqual([r['collection_status'] for r in row['stores']],['PARTIAL','FAILED','FAILED','NOT_CHECKED'])
+        self.assertEqual(row['stores'][0]['daily_status'],'COMPLETED')
+        self.assertEqual(row['stores'][0]['historical_backlog'],36)
+        self.assertEqual(self.saved()[0]['first_seen_run_id'],run_id)
+        # Pass the real PostgREST result through the actual dashboard inline JS.
+        node=shutil.which('node') or shutil.which('node.exe')
+        if node:
+            script=r"""
+const fs=require('fs'),vm=require('vm');
+const row=JSON.parse(fs.readFileSync(0,'utf8'));
+const html=fs.readFileSync('index.html','utf8'),src=[...html.matchAll(/<script\s*>([\s\S]*?)<\/script>/gi)][0][1];
+const c=vm.createContext({window:{matchMedia:()=>({matches:false}),addEventListener:()=>{}},document:{},fetch:()=>{throw Error('network')}});
+vm.runInContext(src.replace(/^\s*init\(\);\s*$/gm,'')+';globalThis.check=summarizeCollectionRun;',c);
+const r=c.check(row);
+if(r.dailyCompleted!==1||r.historicalBacklog!==36||r.mappingFailed!==1||r.uncertainWrites!==1||r.failedNames.includes('Store 0'))process.exit(2);
+"""
+            subprocess.run([node,'-e',script],input=json.dumps(row),text=True,check=True,
+                           cwd=Path(__file__).resolve().parents[1])
+            print('DASHBOARD_POSTGREST_INTEGRATION_PASS')
+
+
+    def run_sorted_batch(self, status, historical=False):
         (Path(self.tmp.name)/'SVReviewMaster').mkdir()
         records=[card('batch-sort'+str(i),author='Batch '+str(i)) for i in range(30)]
+        if historical:
+            writer=pilot.SourceWriter(None,self.store,Path(self.tmp.name)/'SVReviewMaster/review-source-requests.sqlite3',commit=True)
+            proof=evidence(records)
+            proof.pop(hashlib.sha256(records[0]['source_id'].encode()).hexdigest())
+            writer.append(records,proof)
+            writer.observed=[production.hash_google_source_review_id(self.store['id'],r['source_id']) for r in records]
+            writer.save_progress(newest_verified=True,complete=True,finished=True)
+            writer.journal.close()
         page=Mock()
         page.locator.return_value.evaluate_all.return_value=[r['source_id'] for r in records]
         def audit(*args,evidence_sink,**kwargs):
-            evidence_sink.update(evidence(records))
+            proof=evidence(records)
+            if historical:proof.pop(hashlib.sha256(records[0]['source_id'].encode()).hexdigest())
+            evidence_sink.update(proof)
             return dict(context_lost=False,identity_mismatch=0)
         def capture(*args,stream,**kwargs):
             self.assertTrue(kwargs['stream_recent'])
@@ -681,10 +809,18 @@ with patch.object(tests.production,'supabase_request',side_effect=case.api), pat
                   country='Synthetic',pair='fixture',url='https://www.google.com/maps/place/fixture')
         with patch.object(pilot.probe,'verified_db_store',return_value=self.store), \
              patch.object(pilot.probe,'run_once',side_effect=capture), \
-             patch.object(pilot.probe,'audit_loaded_fields',return_value=({},records)), \
+             patch.object(pilot.probe,'audit_loaded_fields',side_effect=lambda *a,selected_ids,**kw:({},[r for r in records if r['source_id'] in selected_ids])), \
              patch.object(pilot.probe,'audit_body_sample',side_effect=audit), \
              patch.dict(os.environ,{'LOCALAPPDATA':self.tmp.name}):
             return batch.run_store(Mock(pages=[]),None,task,True,None,mode='recent')
+
+    def test_actual_daily_completion_does_not_fail_for_historical_backlog(self):
+        result=self.run_sorted_batch('NEWEST_SORT_BEHAVIOR_VERIFIED',historical=True)
+        self.assertEqual(result['daily_status'],'COMPLETED')
+        self.assertEqual(result['daily_unresolved'],0)
+        self.assertEqual(result['historical_backlog'],1)
+        self.assertFalse(result['boundary_advanced'])
+        self.assertTrue(batch.status_for_run(dict(store_id=self.store['id'],name='Fixture',country='Fixture'),result)['ok'])
 
     def test_actual_batch_behavioral_verification_can_advance_frontier(self):
         result=self.run_sorted_batch('NEWEST_SORT_BEHAVIOR_VERIFIED')

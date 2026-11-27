@@ -1010,11 +1010,16 @@
         function summarizeCollectionRun(run) {
             const counts = { VERIFIED: 0, PARTIAL: 0, FAILED: 0, NOT_CHECKED: 0 };
             const failedNames = new Set();
+            let dailyCompleted = 0, historicalBacklog = 0, mappingFailed = 0, uncertainWrites = 0;
             const rows = run?.stores || [];
             const recordedNames = new Set(rows.map(row => row.store_name));
             let unrecorded = Math.max(0, Number(run?.total_stores || 0) - rows.length);
             for (const row of rows) {
                 const status = storeCollectionStatus(row);
+                if (status === 'PARTIAL' && row.daily_status === 'COMPLETED' && row.ok === true && !row.write_outcome_uncertain) dailyCompleted++;
+                historicalBacklog += Math.max(0, Number(row.historical_backlog) || 0);
+                if (row.collection_reason === 'MAPPING_HELD') mappingFailed++;
+                if (row.write_outcome_uncertain) uncertainWrites++;
                 if (status) counts[status]++;
                 else unrecorded++;
                 if (status === 'FAILED' && row.store_name) failedNames.add(row.store_name);
@@ -1026,9 +1031,14 @@
                 unrecorded = Math.max(0, unrecorded - 1);
                 failedNames.add(row.store_name);
             }
-            const labels = Object.entries(counts).map(([status, count]) => `${COLLECTION_STATUS_LABELS[status]} ${count}`);
+            const labels = Object.entries(counts).map(([status, count]) =>
+                COLLECTION_STATUS_LABELS[status] + ' ' + (status === 'PARTIAL' ? Math.max(0, count - dailyCompleted) : count));
+            if (dailyCompleted) labels.unshift('일일 완료 ' + dailyCompleted);
+            if (historicalBacklog) labels.push('과거 보류 ' + historicalBacklog);
+            if (mappingFailed) labels.push('매핑 실패 ' + mappingFailed);
+            if (uncertainWrites) labels.push('저장 결과 미확정 ' + uncertainWrites);
             if (unrecorded) labels.push(`상태 미기록 ${unrecorded}`);
-            return { counts, unrecorded, failedNames: [...failedNames], label: run ? labels.join(' · ') : '수집 상태 없음' };
+            return { counts, unrecorded, dailyCompleted, historicalBacklog, mappingFailed, uncertainWrites, failedNames: [...failedNames], label: run ? labels.join(' · ') : '수집 상태 없음' };
         }
 
         async function loadLatestCrawlRunFromSupabase() {
@@ -1512,6 +1522,12 @@
             if (!crawlStatus) return '';
             const row = getLatestRunStoreResult(storeName);
             const status = storeCollectionStatus(row);
+            if (row?.write_outcome_uncertain) return '저장 결과 미확정';
+            if (row?.collection_reason === 'MAPPING_HELD') return '매핑 실패';
+            if (status === 'PARTIAL' && row?.daily_status === 'COMPLETED' && row.ok === true) {
+                return '일일 완료' + (Number(row.historical_backlog) > 0 ? ' · 과거 보류 ' + Number(row.historical_backlog) : '')
+                    + (row.historical_coverage_unknown ? ' · 과거 범위 미확인' : '');
+            }
             if (status) return COLLECTION_STATUS_LABELS[status];
             if (!row && crawlStatus.failed_stores?.some(store => store.store_name === storeName)) {
                 return COLLECTION_STATUS_LABELS.FAILED;

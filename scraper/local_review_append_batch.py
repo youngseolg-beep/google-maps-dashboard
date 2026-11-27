@@ -8,6 +8,7 @@ import argparse
 from collections import Counter
 import json
 import os
+import time
 from pathlib import Path
 from datetime import datetime, timezone
 from uuid import uuid4
@@ -45,11 +46,22 @@ def run_store(context, config, task, commit, run_id, *, mode="backfill", recent_
             boundary_reached = newest and mode=="recent" and writer.boundary(writer.observed)
             finished = report.get("status")=="STREAM_CAPTURE_FINISHED"
             progress = writer.save_progress(newest_verified=newest,complete=complete,finished=finished)
+            if not progress:
+                progress=dict(historical_backlog=len(writer.journal.backlog(store['id'])),
+                              historical_coverage_unknown=(writer.daily_frontier or {}).get('unknown_history',not complete),
+                              observed_frontier_saved=False)
             advanced = writer.finish(writer.observed,newest_verified=newest and finished,complete=complete)
             unresolved = sum(h not in writer.known for h in writer.observed)
+            prior_head = ((writer.daily_frontier or {}).get('head') if writer.frontier_reached()
+                          else (writer.baseline or {}).get('head')) or []
+            reached = newest and (writer.frontier_reached() or boundary_reached)
+            prefix = writer.observed[:writer.observed.index(prior_head[0])] if reached and prior_head else writer.observed
+            daily_unresolved = sum(h not in writer.known for h in prefix)
             uncertain = bool(writer.journal.pending_requests(store['id']))
+            daily_complete = mode=="recent" and finished and reached and not daily_unresolved and not uncertain
             counts = dict(writer.outcomes)
             status = ("DRY_RUN" if not commit else
+                      "DAILY_COMPLETE" if daily_complete else
                       "APPEND_CONFIRMED" if finished and not unresolved and (complete or boundary_reached) else
                       "PARTIAL_APPEND_CONFIRMED" if counts.get("inserted",0) else "PARTIAL_NO_READY_ROWS")
             if not finished:
@@ -65,7 +77,8 @@ def run_store(context, config, task, commit, run_id, *, mode="backfill", recent_
                 coverage_incomplete=not (complete or boundary_reached) or bool(unresolved),
                 backlog_unknown=not (complete or boundary_reached),
                 held_reasons=dict(Counter(writer.held.values())),
-                daily_frontier_reached=writer.frontier_reached(), **progress,
+                daily_frontier_reached=reached, daily_status="COMPLETED" if daily_complete else "PARTIAL",
+                daily_unresolved=daily_unresolved, **progress,
                 elapsed_scroll_seconds=report.get("elapsed_scroll_seconds"), full_coverage_verified=False)
         finally:
             writer.journal.close()
@@ -73,25 +86,68 @@ def run_store(context, config, task, commit, run_id, *, mode="backfill", recent_
         probe.STORE_CONFIG.pop(key, None)
 
 
+def select_store_names(tasks, names):
+    if not names:
+        return tasks
+    if len(set(names))!=len(names):
+        raise ValueError("BATCH_DUPLICATE_STORE_SELECTION")
+    for name in names:
+        matched=[t for t in tasks if t["name"]==name]
+        if len(matched)!=1 or matched[0]["hold_reason"]:
+            raise ValueError("BATCH_STORE_NAME_UNVERIFIED")
+    return [t for t in tasks if t["name"] in names]
+
+
 def status_for_run(task, result):
     status = result["status"]
-    ok = status in {"APPEND_CONFIRMED", "NO_READY_ROWS"}
-    attempted = status not in {"NOT_ATTEMPTED", "MAPPING_HELD"}
-    observed = result.get("observed", 0)
-    return dict(store_name=task["name"], country=task["country"], sv=task.get("sv",""),
+    uncertain = result.get("database_writes")=="UNKNOWN"
+    daily = status=="DAILY_COMPLETE" and result.get("daily_status")=="COMPLETED" and not uncertain
+    ok = not uncertain and (daily or status in {"APPEND_CONFIRMED","NO_READY_ROWS"})
+    attempted = status not in {"NOT_ATTEMPTED","MAPPING_HELD"}
+    observed = result.get("observed",0)
+    return dict(store_id=task["store_id"],store_name=task["name"],country=task["country"],sv=task.get("sv",""),
                 ok=ok if attempted else (False if status=="MAPPING_HELD" else None),
-                collected_count=result.get("confirmed_new", 0),
-                observed_review_count=observed, error="" if ok else status,
+                collected_count=result.get("confirmed_new",0), observed_review_count=observed,
+                error="" if ok else status,
                 crawled_at=production.now_kst().strftime("%Y-%m-%d %H:%M:%S") if attempted else None,
-                collection_status="PARTIAL" if observed else ("FAILED" if attempted else "NOT_CHECKED"),
-                collection_reason=status)
+                collection_status=("FAILED" if uncertain or status=="MAPPING_HELD" else
+                                   "NOT_CHECKED" if not attempted else "PARTIAL" if observed else "FAILED"),
+                collection_reason="WRITE_OUTCOME_UNCERTAIN" if uncertain else status,
+                daily_status="COMPLETED" if daily else "NOT_CHECKED" if not attempted else "PARTIAL" if observed else "FAILED",
+                historical_backlog=result.get("historical_backlog"),
+                historical_coverage_unknown=result.get("historical_coverage_unknown",True),
+                write_outcome_uncertain=uncertain)
+
+
+def finish_dashboard_run(run_id, registry, tasks, results, started):
+    selected={t["store_id"]:r for t,r in zip(tasks,results)}
+    rows=[status_for_run(t,selected.get(t["store_id"],dict(status="NOT_ATTEMPTED")))
+          for t in registry]
+    production.finish_crawl_run(run_id,rows,started)
+
+
+def isolate_store_pages(context):
+    """Keep one blank tab; release the prior store's DOM before the next store."""
+    pages=list(context.pages)
+    heap=0
+    for page in pages:
+        if not page.is_closed():
+            if probe.blocked(page):
+                raise RuntimeError("ACCESS_RESTRICTED_STOPPED")
+            heap+=page.evaluate("() => performance.memory?.usedJSHeapSize || 0")
+    context.new_page()
+    for page in pages:
+        if not page.is_closed():
+            page.close()
+    return dict(open_pages=len(context.pages),js_heap_bytes_before_cleanup=heap)
+
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--target-url", required=True)
     parser.add_argument("--country", action="append", help="Optional registered country filter")
-    parser.add_argument("--store-name", help="Exactly one registered store name; fail closed on ambiguous matches")
+    parser.add_argument("--store-name", action="append", help="Repeat for multiple exact registered store names")
     parser.add_argument("--limit", type=int, help="Optional number of eligible stores")
     parser.add_argument("--skip-store", action="append", default=[])
     parser.add_argument("--mode", choices=("backfill","recent"), default="backfill")
@@ -122,12 +178,12 @@ def main():
     countries = set(args.country or [])
     if countries - {t["country"] for t in tasks}:
         raise ValueError("BATCH_UNKNOWN_COUNTRY")
+    registry = list(tasks)
     tasks = [t for t in tasks if (not countries or t["country"] in countries)
              and t["name"] not in args.skip_store]
-    if args.store_name is not None:
-        tasks = [t for t in tasks if t["name"] == args.store_name]
-        if len(tasks) != 1 or tasks[0]["hold_reason"]:
-            raise ValueError("BATCH_STORE_NAME_UNVERIFIED")
+    tasks = select_store_names(tasks,args.store_name)
+    if args.store_name and args.limit:
+        raise ValueError("BATCH_EXACT_SELECTION_WITH_LIMIT")
     if args.limit is not None:
         tasks = [t for t in tasks if not t["hold_reason"]][:args.limit]
     if not tasks:
@@ -158,16 +214,16 @@ def main():
                         database_writes=False) if t["hold_reason"] else
                    dict(status="NOT_ATTEMPTED", confirmed_new=0, database_writes=False) for t in tasks]
         run_id = None
-        # Record an aggregate-only local checkpoint after every store. Do not
-        # overwrite the full dashboard crawl summary for a filtered pilot.
+        # Every committed run gets an ID for NEW reviews. Nonselected registered
+        # stores are explicitly NOT_CHECKED in the dashboard summary.
         full_scope = not (args.country or args.limit or args.skip_store or args.store_name)
-        if args.commit and full_scope:
-            run_id = production.create_crawl_run(len(tasks))
+        if args.commit:
+            run_id = production.create_crawl_run(len(registry))
         def checkpoint(state):
             report = dict(state=state, mode="APPEND" if args.commit else "DRY_RUN",
                           full_scope=full_scope, capture_mode=args.mode, crawl_run_id=run_id,
                           started_at=started.isoformat(),
-                          stores=[dict(store=t["name"],country=t["country"],**r)
+                          stores=[dict(store_id=t["store_id"],store=t["name"],country=t["country"],**r)
                                   for t,r in zip(tasks,results)])
             discovery.checkpoint(path,report)
         checkpoint("RUNNING")
@@ -183,6 +239,9 @@ def main():
                             continue
                         print("LOCAL_BATCH_STORE: "+json.dumps(dict(index=i+1,total=len(tasks),
                               store=task["name"],country=task["country"]),ensure_ascii=False),flush=True)
+                        store_started=time.monotonic()
+                        results[i]=dict(status="INTERRUPTED",database_writes="UNKNOWN" if args.commit else False)
+                        checkpoint("RUNNING")
                         try:
                             result = run_store(context,config,task,args.commit,run_id,mode=args.mode,
                                                recent_limit=args.recent_limit,max_body_batches=args.max_body_batches)
@@ -190,6 +249,12 @@ def main():
                             # A write may have reached DB; never blindly retry.
                             result = dict(status="STORE_EXECUTION_ERROR",error_type=type(exc).__name__,
                                           confirmed_new=0,database_writes="UNKNOWN" if args.commit else False)
+                        result["duration_seconds"]=round(time.monotonic()-store_started,1)
+                        try:
+                            result["browser_lifecycle"]=isolate_store_pages(context)
+                        except Exception as exc:
+                            result.update(status="ACCESS_RESTRICTED_STOPPED" if str(exc)=="ACCESS_RESTRICTED_STOPPED"
+                                          else "BROWSER_CONNECTION_LOST")
                         results[i]=result
                         checkpoint("RUNNING")
                         print("LOCAL_BATCH_RESULT: "+json.dumps(dict(store=task["name"],**result),ensure_ascii=False),flush=True)
@@ -198,18 +263,25 @@ def main():
                                 or result.get("database_writes")=="UNKNOWN"):
                             stop=result["status"]
                             break
+                        if i+1<len(tasks):
+                            time.sleep(3)
                 finally:
                     context.close()
+        except BaseException:
+            stop="INTERRUPTED"
+            raise
         finally:
             try:
-                if run_id is not None:
-                    production.finish_crawl_run(run_id,[status_for_run(t,r) for t,r in zip(tasks,results)],started)
-                checkpoint("STOPPED" if stop or any(r["status"]=="NOT_ATTEMPTED" for r in results) else "FINISHED")
+                try:
+                    if run_id is not None:
+                        finish_dashboard_run(run_id,registry,tasks,results,started)
+                finally:
+                    checkpoint("STOPPED" if stop or any(r["status"]=="NOT_ATTEMPTED" for r in results) else "FINISHED")
             finally:
                 lock.seek(0)
                 msvcrt.locking(lock.fileno(),msvcrt.LK_UNLCK,1)
         counts=Counter(r["status"] for r in results)
-        success={"APPEND_CONFIRMED","NO_READY_ROWS"} if args.commit else {"DRY_RUN"}
+        success={"DAILY_COMPLETE","APPEND_CONFIRMED","NO_READY_ROWS"} if args.commit else {"DRY_RUN"}
         print("LOCAL_BATCH_FINAL: "+json.dumps(dict(stores=len(tasks),statuses=dict(counts),
                 confirmed_new=sum(r.get("confirmed_new",0) for r in results),stop=stop,
                 report=str(path)),ensure_ascii=False),flush=True)
