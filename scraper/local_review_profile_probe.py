@@ -965,9 +965,8 @@ def audit_body_sample(page, store_key, reviews, limit=10, deadline=None, *, evid
             metrics["identity_mismatch"] += 1
             break
         errors_before=metrics["click_errors"]
-        more_confirmed_before=metrics["more_confirmed"]
+        more_resolved_before=metrics["more_control_resolved"]
         original_confirmed_before=metrics["original_confirmed"]
-        original_changed_before=metrics["original_text_changed"]
         before, before_fingerprint, before_scope = body_snapshot(card)
         metrics["initial_scope_counts"][before_scope] = metrics["initial_scope_counts"].get(before_scope, 0) + 1
         if not before:
@@ -1012,7 +1011,7 @@ def audit_body_sample(page, store_key, reviews, limit=10, deadline=None, *, evid
                         metrics["more_no_length_increase"] += 1
                     if details_grew:
                         metrics["more_details_increased"] += 1
-                    if remaining == 0 and after > 0:
+                    if remaining == 0 and (after > 0 or details_grew):
                         metrics["more_control_resolved"] += 1
                         if grew:
                             metrics["more_confirmed"] += 1
@@ -1074,9 +1073,8 @@ def audit_body_sample(page, store_key, reviews, limit=10, deadline=None, *, evid
                 more_remaining=final_more, original_remaining=final_original,
                 click_error=metrics["click_errors"]!=errors_before,
                 more_observed=bool(more_count), original_observed=bool(original_count),
-                more_verified=(not more_count or metrics["more_confirmed"]>more_confirmed_before),
-                original_verified=(not original_count or (metrics["original_confirmed"]>original_confirmed_before
-                                  and metrics["original_text_changed"]>original_changed_before)))
+                more_verified=(not more_count or metrics["more_control_resolved"]>more_resolved_before),
+                original_verified=(not original_count or metrics["original_confirmed"]>original_confirmed_before))
             # Positive structural check, repeated after rendering settles. Hidden,
             # empty or unrecognized customer text containers remain held.
             def rating_only_structure():
@@ -1094,14 +1092,24 @@ def audit_body_sample(page, store_key, reviews, limit=10, deadline=None, *, evid
                         if (!parent || !visible(parent) || parent.closest(
                             '.d4r55,.rsqaof,.xRkPPb,.rsqaWe,.CDe7pd,button,[role="button"],[role="img"],svg')) continue;
                         const value = text.textContent.trim();
-                        if (!value || /^(?:new|새 리뷰|local guide|지역 가이드|\d+[,.]?\d* (?:reviews?|photos?)|·|[0-5](?:\.0)?)$/i.test(value)) continue;
+                        if (!value || /^(?:new|새 리뷰|local guide|지역 가이드|\d+[,.]?\d* (?:reviews?|photos?)|·|[0-5](?:\.0)?)$/i.test(value) ||
+                            /^(?:food|service|atmosphere)\s*[:：]\s*[1-5](?:\.\d)?$/i.test(value) ||
+                            /^(?:(?:local guide|지역 가이드|\d[\d,]*\s+(?:reviews?|photos?))[\s·•]*)+$/i.test(value)) continue;
                         // Unknown text structure must never become a rating-only row.
                         return false;
                     }
+                    // Match the same visible rating labels as the field extractor.
+                    // Google can expose a rating on a SPAN without role="img".
+                    const rated = [...card.querySelectorAll('[aria-label]')].some(n => visible(n) &&
+                        !n.closest('.CDe7pd') && /^(?:[1-5]\s*stars?|별(?:표)?\s*[1-5]\s*개|[1-5]\s*개의?\s*별(?:표)?|평점\s*[1-5](?:점|\s*\/\s*5)?|별점\s*[1-5](?:점|\s*\/\s*5)?|[1-5]\s*\/\s*5\s*(?:stars?|점)?|5점\s*만점에\s*[1-5]점?)$/i.test((n.getAttribute('aria-label') || '').trim()));
                     return !busy && !customer.length && !controls &&
-                        !!card.querySelector('.d4r55') && !!card.querySelector('[role="img"][aria-label]');
+                        !!card.querySelector('.d4r55') && rated;
                 }""")
-            if not final_length and not more_count and not original_count and rating_only_structure():
+            current_evidence = evidence_sink[source]
+            if (not final_length and final_more == 0 and final_original == 0
+                    and current_evidence['click_error'] is False
+                    and current_evidence['more_verified'] and current_evidence['original_verified']
+                    and rating_only_structure()):
                 page.wait_for_timeout(400)
                 evidence_sink[source]['rating_only_verified'] = (
                     not blocked(page) and same_place(page.url,store_key) and selected(reviews)
@@ -1369,6 +1377,9 @@ def load_visible_history(config, store):
 def normalize_history_row(row):
     """Preserve legacy text in memory; reject conflicting dual fields."""
     normalized = dict(row)
+    # Keep the RPC's exact immutable preimage separate from normalized fallback
+    # metadata. SQL coalesce preserves an empty current date ahead of a legacy one.
+    normalized['_stored_date_for_link'] = row.get('date') if row.get('date') is not None else (row.get('relative_date') or '')
     for current, legacy in (("text", "review_text"), ("date", "relative_date")):
         a, b = row.get(current), row.get(legacy)
         if any(value is not None and not isinstance(value, str) for value in (a, b)):

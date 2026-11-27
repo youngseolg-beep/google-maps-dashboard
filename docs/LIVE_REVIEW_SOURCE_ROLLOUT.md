@@ -1,13 +1,16 @@
 # Live writer rollout
 
 The actual `local_review_append_batch.py` and single-store append entry point
-now use `SourceWriter` in `local_review_append_pilot.py`. No production migration
-has been executed. The old single-POST helper remains for existing compatibility
+now use `SourceWriter` in `local_review_append_pilot.py`. The source-identity
+migration was reported applied before this acceptance fix, preserving all 11,071
+pre-existing production reviews. This fix executes no migration or production
+write. The old single-POST helper remains for existing compatibility
 tests, and is no longer called by either live append entry point.
 
 ## Database approval
 
-Review `migrations/20261127_review_source_append.sql` before applying it separately.
+For a new environment, review `migrations/20261127_review_source_append.sql` before applying it separately.
+The already migrated production environment needs no additional SQL for this fix.
 It adds store-scoped source links, immutable request receipts, a versioned recent
 boundary, one supporting index, and the `SECURITY INVOKER` append RPC. New tables
 have RLS enabled. Only `service_role` receives RPC execution and table access.
@@ -50,8 +53,14 @@ Hard scan/time limits still apply and are reported as incomplete/backlog unknown
 `--recent-limit` and `--max-body-batches` are accepted as deprecated compatibility
 options; they no longer decide when the live streaming writer stops.
 
-Legacy rows are linked only after a unique exact author/body/rating/date match,
-revalidated in the RPC. Ambiguous legacy identities remain held. Same-author
+Legacy text rows are linked only after a unique exact full-body/rating match
+with a whitespace/case-normalized author. Relative date labels may drift.
+Multiple matching historical rows stay held even if one current date label
+matches; conflicting explicit calendar dates also stay held. Empty-body legacy
+matches still require the date label to agree. The writer sends the selected
+historical author/date as an immutable preimage to the existing RPC, which
+revalidates equality against that row. This changes no historical fields and
+requires no SQL update. Ambiguous legacy identities remain held. Same-author
 distinct source IDs are accepted once there is no unresolved same-author legacy
 row. A changed display name on an unlinked legacy record cannot be reliably
 reconciled automatically. Review IDs establish identity, not completeness.
@@ -59,6 +68,15 @@ reconciled automatically. Review IDs establish identity, not completeness.
 Rating-only insertion requires two stable structural checks, a rating/author
 control, no customer text container, no unresolved More/original control, and no
 unrecognized visible text. Hidden, blank, or changed body markup stays held.
+Visible star labels on spans are accepted without requiring `role=img`.
+More/original resolution requires the control to disappear, a valid scoped
+body, unchanged card identity and the final body fingerprint binding. Text
+length or fingerprint changes are recorded as observations, not mandatory gates.
+Each held source has one primary reason: missing author/rating/audit, failed
+click, unresolved More/original, unverified resolution, missing body, unverified
+rating-only state, unverified customer-body scope, changed body fingerprint,
+or a specific legacy/source identity conflict. Other valid sources in the same
+window still persist while held sources prevent boundary advancement.
 Unknown dates are stored with `review_date=NULL`, `review_date_source=unknown`
 and the visible date label or `Unknown`. They do not silently disappear or become
 today's date. Dashboard date-dependent analytics may exclude them.
@@ -75,8 +93,10 @@ marker into `sv_writer_fixture`, and set `SV_WRITER_TEST_API` to its loopback UR
 Never point the fixture at an existing database. The suite exercises actual RPCs,
 including receipt loss and recovery in a fresh Python process.
 
-After schema review/approval, validate a single store's Newest UI, rating-only
-structure and unknown dates against live Maps, then re-run it for deduplication.
+For the already migrated project, re-run the existing Eastville single-store
+append command and compare inserted/linked/held counts and primary hold reasons.
+Then repeat it for deduplication. Validate rating-only structure and unknown dates
+against live Maps before treating those cases as accepted live evidence.
 Only approve a wider daily run after observing boundary establishment and the
 next incremental run. No Google session export or access-restriction bypass is
 part of this change. A browser action or displayed count alone never establishes

@@ -1,22 +1,36 @@
 """Read-only legacy linkage evidence; never confirms identity or writes a link."""
 from collections import Counter, defaultdict
+from datetime import date
+import re
 from review_source_identity import source_replay_preview, valid_hash
 
 
 def legacy_target(history, linked_rows, candidate, production):
-    """Return a unique exact unlinked target, or hold an ambiguous old author.
+    """Match a unique full-body signature despite drifting relative dates.
 
     A successful proposal is still rechecked inside the append transaction.
     Source-linked rows no longer impose an author-wide exclusion.
     """
     norm = lambda value: production.normalize_spaces(value or '').casefold()
     unlinked = [row for row in history if row['id'] not in linked_rows]
-    exact = [row for row in unlinked if row.get('author') == candidate['author']
-             and row.get('text','') == candidate['text'] and row.get('rating') == candidate['rating']
-             and row.get('date') == candidate['date']]
+    exact = [row for row in unlinked if norm(row.get('author')) == norm(candidate['author'])
+             and row.get('text','') == candidate['text'] and row.get('rating') == candidate['rating']]
     prior_author = any(norm(row.get('author')) == norm(candidate['author']) for row in unlinked)
     if len(exact)>1 or (not exact and prior_author):
         return None, 'legacy_identity_ambiguous'
+    if exact and not candidate['text'].strip() and exact[0].get('date') != candidate['date']:
+        # Empty text is not a distinguishing signature across different dates.
+        return None, 'legacy_rating_only_date_unverified'
+    def displayed_date(label):
+        match=re.fullmatch(r'(\d{4})(?:[.\-/]\s*|년\s*)(\d{1,2})(?:[.\-/]\s*|월\s*)(\d{1,2})(?:[.일])?',label or '')
+        try:
+            return date(*map(int,match.groups())) if match else None
+        except ValueError:
+            return None
+    if exact:
+        before,after=displayed_date(exact[0].get('date')),displayed_date(candidate['date'])
+        if before and after and before!=after:
+            return None,'legacy_absolute_date_conflict'
     return exact[0]['id'] if exact else None, None
 
 

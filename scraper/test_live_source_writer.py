@@ -17,6 +17,8 @@ from urllib.parse import urlencode, urlsplit
 from urllib.request import Request, urlopen
 from urllib.error import HTTPError
 from uuid import uuid4
+import ast
+import shutil
 
 sys.path.insert(0,str(Path(__file__).resolve().parent))
 if importlib.util.find_spec('playwright') is None:
@@ -42,6 +44,111 @@ def evidence(records):
 
 
 class WriterPlanning(unittest.TestCase):
+    def planning_writer(self):
+        writer=pilot.SourceWriter.__new__(pilot.SourceWriter)
+        writer.store=dict(id=str(uuid4()),store_name='Fixture',sv='A',country='Synthetic')
+        writer.history,writer.known,writer.linked_rows,writer.held,writer.run_id={},set(),set(),{},None
+        return writer
+
+    def test_actionable_rejection_is_one_primary_category(self):
+        raw=card('rejected')
+        proof=evidence([raw])[hashlib.sha256(b'rejected').hexdigest()]
+        cases=[({},'body_audit_missing'),
+               (dict(proof,click_error=True,more_remaining=1),'body_control_click_failed'),
+               (dict(proof,more_remaining=1,original_remaining=1),'more_control_unresolved'),
+               (dict(proof,original_remaining=1),'original_control_unresolved'),
+               (dict(proof,more_verified=False),'more_resolution_unverified'),
+               (dict(proof,original_verified=False),'original_resolution_unverified'),
+               (dict(proof,scope='AMBIGUOUS'),'customer_body_scope_unverified'),
+               (dict(proof,fingerprint=b'changed'),'body_changed_after_audit')]
+        for value,reason in cases:
+            with self.subTest(reason=reason):
+                writer=self.planning_writer()
+                self.assertEqual(writer.plan([raw],{hashlib.sha256(b'rejected').hexdigest():value}),[])
+                self.assertEqual(list(writer.held.values()),[reason])
+        self.assertEqual(pilot.acceptance_rejection(dict(raw,author='',rating=None),{}),'author_missing')
+        self.assertEqual(pilot.acceptance_rejection(dict(raw,rating=None),{}),'rating_missing_or_invalid')
+
+    def test_resolved_more_and_unchanged_original_reach_actual_writer(self):
+        raw=card('controls')
+        page=Mock()
+        node=Mock()
+        page.locator.return_value.evaluate_all.return_value=['controls']
+        page.locator.return_value.nth.return_value=node
+        node.get_attribute.return_value='controls'
+        opened={'more':True,'original':True}
+        more,original=Mock(),Mock()
+        more.click.side_effect=lambda **kw:opened.update(more=False)
+        original.click.side_effect=lambda **kw:opened.update(original=False)
+        def control(card,pattern):
+            which='more' if pattern is pilot.probe.MORE_LABEL else 'original'
+            return ((more if which=='more' else original),1,0) if opened[which] else (None,0,0)
+        fingerprint=hashlib.sha256(raw['body'].encode()).digest()
+        proof={}
+        with patch.object(pilot.probe,'blocked',return_value=False),patch.object(pilot.probe,'same_place',return_value=True), \
+             patch.object(pilot.probe,'selected',return_value=True),patch.object(pilot.probe,'body_control',side_effect=control), \
+             patch.object(pilot.probe,'body_snapshot',return_value=(len(raw['body']),fingerprint,'PRIMARY')), \
+             patch.object(pilot.probe,'detail_measure',return_value=1):
+            metrics=pilot.probe.audit_body_sample(page,'synthetic',Mock(),evidence_sink=proof)
+        self.assertEqual(metrics['more_length_increased'],0)
+        self.assertEqual(metrics['original_text_changed'],0)
+        value=proof[hashlib.sha256(b'controls').hexdigest()]
+        self.assertTrue(value['more_verified'])
+        self.assertTrue(value['original_verified'])
+        self.assertEqual(len(self.planning_writer().plan([raw],proof)),1)
+        value['original_remaining']=1
+        self.assertEqual(self.planning_writer().plan([raw],proof),[])
+
+    def test_rating_only_more_requires_resolved_details_and_structural_evidence(self):
+        for details_after in (0,3):
+            with self.subTest(details_after=details_after):
+                raw=card('rating-details',body='')
+                raw['body_scope']='NOT_DETECTED'
+                page,node,button=Mock(),Mock(),Mock()
+                page.locator.return_value.evaluate_all.return_value=[raw['source_id']]
+                page.locator.return_value.nth.return_value=node
+                node.get_attribute.return_value=raw['source_id']
+                node.evaluate.return_value=True
+                state={'more':True}
+                button.click.side_effect=lambda **kw:state.update(more=False)
+                def control(card,pattern):
+                    return (button,1,0) if pattern is pilot.probe.MORE_LABEL and state['more'] else (None,0,0)
+                proof={}
+                with patch.object(pilot.probe,'blocked',return_value=False),patch.object(pilot.probe,'same_place',return_value=True), \
+                     patch.object(pilot.probe,'selected',return_value=True),patch.object(pilot.probe,'body_control',side_effect=control), \
+                     patch.object(pilot.probe,'body_snapshot',return_value=(0,None,'NOT_DETECTED')), \
+                     patch.object(pilot.probe,'detail_measure',side_effect=[0,details_after]):
+                    pilot.probe.audit_body_sample(page,'synthetic',Mock(),evidence_sink=proof)
+                planned=self.planning_writer().plan([raw],proof)
+                self.assertEqual(len(planned),int(details_after>0))
+                if planned:
+                    self.assertFalse(planned[0]['row']['has_text'])
+
+    @unittest.skipUnless(shutil.which('node'),'Node required for DOM acceptance fixture')
+    def test_rating_only_accepts_span_rating_but_rejects_hidden_or_unknown_body(self):
+        tree=ast.parse(Path(pilot.probe.__file__).read_text(encoding='utf8'))
+        function=next(n for n in ast.walk(tree) if isinstance(n,ast.FunctionDef) and n.name=='rating_only_structure')
+        source=next(n.value for n in ast.walk(function) if isinstance(n,ast.Constant) and isinstance(n.value,str))
+        js=r'''
+const source=JSON.parse(require('fs').readFileSync(0,'utf8'));
+global.NodeFilter={SHOW_TEXT:4};
+for (const mode of ['rating','hidden','unknown','more']) {
+  const textNodes=mode==='unknown'?[{textContent:'Unrecognized customer content',parentElement:{getClientRects:()=>[1],closest:()=>null}}]:[];
+  global.document={createTreeWalker:()=>({nextNode:()=>textNodes.shift()||null})};
+  const rating={getClientRects:()=>[1],closest:()=>null,getAttribute:()=> '5 stars'};
+  const card={
+    querySelector:sel=>sel==='.d4r55'?{}:null,
+    querySelectorAll:sel=>sel==='[aria-label]'?[rating]:
+      sel==='.wiI7pd,.MyEned'&&mode==='hidden'?[{closest:()=>null}]:
+      sel==='button,[role="button"]'&&mode==='more'?[{getClientRects:()=>[1],innerText:'More'}]:[]
+  };
+  console.log(JSON.stringify([mode,eval('('+source+')')(card)]));
+}
+'''
+        result=subprocess.run(['node','-e',js],input=json.dumps(source),text=True,capture_output=True,check=True)
+        self.assertEqual(dict(json.loads(line) for line in result.stdout.splitlines()),
+                         dict(rating=True,hidden=False,unknown=False,more=False))
+
     def test_journal_refuses_a_different_backend(self):
         with tempfile.TemporaryDirectory() as tmp:
             journal=pilot.AttemptJournal(Path(tmp)/'journal.sqlite3')
@@ -98,7 +205,7 @@ class StorageTests(unittest.TestCase):
         self.patch.start()
         self.addCleanup(self.patch.stop)
         self.history_patch=patch.object(pilot,'history_snapshot',side_effect=lambda config,store:{
-            row['review_key']:row for row in self.api('GET','reviews',query={'store_id':'eq.'+store['id']})})
+            row['review_key']:pilot.probe.normalize_history_row(row) for row in self.api('GET','reviews',query={'store_id':'eq.'+store['id']})})
         self.history_patch.start()
         self.addCleanup(self.history_patch.stop)
         self.writers=[]
@@ -194,6 +301,72 @@ with patch.object(tests.production,'supabase_request',side_effect=case.api), pat
         self.writer().append([raw],evidence([raw]))
         self.assertEqual(self.saved(),before)
         self.assertEqual(len(self.writer().known),1)
+
+    def test_relative_date_drift_links_unique_body_without_historical_changes(self):
+        writer=self.writer()
+        original=card('old-date',date='2 days ago')
+        old=writer.plan([original],evidence([original]))[0]['row']
+        self.api('POST','reviews',body=old)
+        before=self.saved()
+        current=card('live-source',date='3 weeks ago',author='SYNTHETIC REVIEWER')
+        writer=self.writer()
+        writer.append([current],evidence([current]))
+        self.assertEqual(self.saved(),before)
+        self.assertEqual(writer.outcomes,{'linked_legacy':1})
+        self.assertFalse(writer.held)
+
+    def test_legacy_date_fallback_preserves_the_rpc_preimage(self):
+        writer=self.writer()
+        raw=card('fallback')
+        old=writer.plan([raw],evidence([raw]))[0]['row']
+        old.update(date='',relative_date='2 days ago')
+        self.api('POST','reviews',body=old)
+        before=self.saved()
+        current=card('new-live-id',date='3 weeks ago')
+        writer=self.writer()
+        writer.append([current],evidence([current]))
+        self.assertEqual(self.saved(),before)
+        self.assertEqual(writer.outcomes,{'linked_legacy':1})
+
+    def test_conflicting_absolute_dates_are_held(self):
+        writer=self.writer()
+        raw=card('old-calendar',date='2026-11-01')
+        old=writer.plan([raw],evidence([raw]))[0]['row']
+        self.api('POST','reviews',body=old)
+        current=card('different-calendar',date='2026-11-02')
+        writer=self.writer()
+        writer.append([current],evidence([current]))
+        self.assertEqual(len(self.saved()),1)
+        self.assertEqual(list(writer.held.values()),['legacy_absolute_date_conflict'])
+
+    def test_ambiguous_legacy_dates_do_not_block_independent_new_review(self):
+        writer=self.writer()
+        original=card('old-date')
+        old=writer.plan([original],evidence([original]))[0]['row']
+        first=dict(old,review_key='c'*64,date='2 days ago')
+        second=dict(old,review_key='d'*64,date='3 days ago')
+        self.api('POST','reviews',body=[first,second])
+        before=self.saved()
+        ambiguous=card('ambiguous',date='3 weeks ago')
+        valid=card('valid-new',author='Different synthetic reviewer')
+        writer=self.writer()
+        writer.append([ambiguous,valid],evidence([ambiguous,valid]))
+        self.assertEqual(writer.outcomes,{'inserted':1})
+        self.assertEqual(list(writer.held.values()),['legacy_identity_ambiguous'])
+        self.assertEqual(len(self.saved()),3)
+        self.assertTrue(all(row in self.saved() for row in before))
+
+    def test_rating_only_legacy_date_drift_remains_ambiguous(self):
+        writer=self.writer()
+        raw=card('old-rating',body='')
+        raw['body_absence_evidence']='NO_KNOWN_TEXT_NODES'
+        old=writer.plan([raw],evidence([raw]))[0]['row']
+        self.api('POST','reviews',body=old)
+        changed=dict(raw,source_id='live-rating',date_label='3 weeks ago')
+        writer=self.writer()
+        writer.append([changed],evidence([changed]))
+        self.assertEqual(len(self.saved()),1)
+        self.assertEqual(list(writer.held.values()),['legacy_rating_only_date_unverified'])
 
     def test_more_than_100_and_partial_run_do_not_skip_boundary(self):
         writer=self.writer()

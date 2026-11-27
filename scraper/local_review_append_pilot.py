@@ -24,6 +24,36 @@ from review_incremental_baseline import committed_baseline
 from review_source_reconcile import legacy_target
 
 
+def acceptance_rejection(raw, evidence):
+    """One primary reason per held source; order is deliberate and stable."""
+    if not production.normalize_spaces(raw.get('author') or ''):
+        return 'author_missing'
+    if type(raw.get('rating')) is not int or not 1 <= raw['rating'] <= 5:
+        return 'rating_missing_or_invalid'
+    if not evidence:
+        return 'body_audit_missing'
+    if evidence.get('click_error') is not False:
+        return 'body_control_click_failed'
+    if evidence.get('more_remaining') != 0:
+        return 'more_control_unresolved'
+    if evidence.get('original_remaining') != 0:
+        return 'original_control_unresolved'
+    if evidence.get('more_verified') is not True:
+        return 'more_resolution_unverified'
+    if evidence.get('original_verified') is not True:
+        return 'original_resolution_unverified'
+    body = raw.get('body')
+    if not isinstance(body,str):
+        return 'body_extraction_missing'
+    if not body.strip():
+        return None if body == '' and evidence.get('rating_only_verified') is True else 'rating_only_unverified'
+    if raw.get('body_scope') != 'PRIMARY' or evidence.get('scope') != 'PRIMARY':
+        return 'customer_body_scope_unverified'
+    if evidence.get('fingerprint') != hashlib.sha256(body.encode()).digest():
+        return 'body_changed_after_audit'
+    return None
+
+
 class SourceWriter:
     """Actual append path: atomic source links/rows/receipts, durable retries."""
     def __init__(self, config, store, journal_path, *, commit, run_id=None):
@@ -132,7 +162,6 @@ class SourceWriter:
             source = production.hash_google_source_review_id(self.store['id'],raw.get('source_id'))
             shape = repr(tuple(raw.get(k) for k in ('author','rating','body','body_scope','date_label')))
             variants.setdefault(source,set()).add(shape)
-        norm = lambda text: production.normalize_spaces(text or '').casefold()
         for raw in records:
             source = production.hash_google_source_review_id(self.store['id'], raw.get('source_id'))
             if not valid_hash(source) or source in seen:
@@ -145,15 +174,9 @@ class SourceWriter:
                 continue
             e = evidence.get(hashlib.sha256(raw['source_id'].encode()).hexdigest(), {})
             body = raw.get('body')
-            rating_only = e.get('rating_only_verified') is True and body == ''
-            valid_body = (isinstance(body, str) and bool(body.strip()) and raw.get('body_scope') == e.get('scope') == 'PRIMARY'
-                          and e.get('fingerprint') == hashlib.sha256(body.encode()).digest())
-            if (not (valid_body or rating_only) or e.get('click_error') is not False
-                    or e.get('more_remaining') != 0 or e.get('original_remaining') != 0
-                    or e.get('more_verified') is not True or e.get('original_verified') is not True
-                    or type(raw.get('rating')) is not int or not 1 <= raw['rating'] <= 5
-                    or not norm(raw.get('author'))):
-                self.held[source] = 'body_or_metadata_unverified'
+            rejection = acceptance_rejection(raw,e)
+            if rejection:
+                self.held[source] = rejection
                 continue
             date_value, date_source = probe.local_date_value(raw.get('date_label'), production.now_kst().date(), production)
             review = dict(store_name=self.store['store_name'], sv=self.store['sv'], country=self.store['country'],
@@ -171,6 +194,12 @@ class SourceWriter:
             item = dict(source_hash=source, row=row)
             if target:
                 item['legacy_id'] = target
+                # The RPC compares an immutable historical preimage. Date drift
+                # is resolved by the unique signature above, never by changing
+                # the historical row or weakening the server's equality check.
+                legacy = next(old for old in self.history.values() if old['id'] == target)
+                row['author'] = legacy['author']
+                row['date'] = legacy.get('_stored_date_for_link',legacy.get('date') or '')
             items.append(item)
         targets = Counter(item.get('legacy_id') for item in items if item.get('legacy_id'))
         accepted = []
