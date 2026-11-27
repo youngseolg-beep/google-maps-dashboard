@@ -849,11 +849,11 @@ def detail_measure(card):
     """Count only known, visibly displayed review-detail labels, not content."""
     return card.evaluate(r"""card => {
         const visible = el => !!el.getClientRects().length;
-        const labels = /^(?:식사 유형|방문 유형|1인당 가격|음식|서비스|분위기|meal type|price per person|food|service|atmosphere)(?:\s*[:：]\s*[1-5])?$/i;
+        const labels = /^(?:식사 유형|방문 유형|1인당 가격|음식|서비스|분위기|meal type|price per person|food|service|atmosphere)(?:\s*[:：]\s*[1-5]?)?$/i;
         const owner = [...card.querySelectorAll('span,div')].find(el =>
             !el.children.length && /^(?:업체 대표 응답|소유자 답변|Response from the owner|Owner response)$/i.test((el.innerText || '').trim()));
         const found = new Set();
-        for (const el of card.querySelectorAll('span,div')) {
+        for (const el of card.querySelectorAll('span,div,b')) {
             if (el.children.length || !visible(el) || el.closest('.CDe7pd,.wiI7pd')) continue;
             if (owner && (owner.compareDocumentPosition(el) & Node.DOCUMENT_POSITION_FOLLOWING)) continue;
             const value = (el.innerText || '').trim();
@@ -883,17 +883,28 @@ def body_control(card, pattern):
             // Do not count an actionable wrapper and its matching child twice.
             if (els.some(other => other !== el && el.contains(other))) continue;
             const visible = node => !!node.getClientRects().length;
-            const bodies = [...card.querySelectorAll('.wiI7pd')].filter(visible);
-            const primary = bodies[0] || [...card.querySelectorAll('.MyEned')].find(visible);
-            if (!primary) { unresolved++; continue; }
+            const bodies = [...card.querySelectorAll('.wiI7pd')].filter(n => visible(n) && !n.closest('.CDe7pd'));
+            const primary = bodies[0] || [...card.querySelectorAll('.MyEned')].find(n => visible(n) && !n.closest('.CDe7pd'));
             const precedes = (a,b) => !!(a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING);
             const replyHeaders = [...card.querySelectorAll('span,div')].filter(node =>
                 !node.children.length && /^(?:업체 대표 응답|소유자 답변|Response from the owner|Owner response)$/i.test((node.innerText || '').trim())
             );
             if (el.closest('.CDe7pd') ||
-                replyHeaders.some(h => precedes(primary,h) && precedes(h,el)) ||
+                replyHeaders.some(h => precedes(h,el)) ||
                 bodies.slice(1).some(b => precedes(primary,b) && precedes(b,el))) {
                 excluded++; continue;
+            }
+            if (!primary) {
+                // Live Maps also has a More button for structured details with
+                // no written customer body. Associate it with the observed
+                // RfDO5c details region, never with the owner's reply body.
+                let region=el.parentElement;
+                while(region && region!==card && !region.querySelector('.RfDO5c')) region=region.parentElement;
+                if (el.tagName==='BUTTON' && el.classList.contains('w8nwRe') && el.hasAttribute('aria-expanded')
+                    && region && region!==card && ![...region.querySelectorAll('.MyEned')].some(n=>!n.closest('.CDe7pd'))) {
+                    accepted.push({index:i,distance:0});
+                } else unresolved++;
+                continue;
             }
             let common = el, distance = 0;
             while (common && common !== card && !common.contains(primary)) {
@@ -1080,20 +1091,23 @@ def audit_body_sample(page, store_key, reviews, limit=10, deadline=None, *, evid
             def rating_only_structure():
                 return card.evaluate(r"""card => {
                     const visible = n => !!n.getClientRects().length;
-                    const busy = card.querySelector('[aria-busy="true"],[role="progressbar"]');
+                    const busy = [...card.querySelectorAll('[aria-busy="true"],[role="progressbar"]')]
+                        .some(n=>visible(n) && !n.closest('.CDe7pd'));
                     const customer = [...card.querySelectorAll('.wiI7pd,.MyEned')]
                         .filter(n => !n.closest('.CDe7pd'));
                     const controls = [...card.querySelectorAll('button,[role="button"]')]
-                        .filter(visible).some(n => /more|original|더.?보기|원문|원본/i.test(n.innerText || ''));
+                        .filter(n=>visible(n) && !n.closest('.CDe7pd')).some(n => /^(?:more|read more|see more|see original|show original|view original|더보기|더 보기|자세히 보기|원문 보기|원본 보기)(?:\s*\([^()]*\))?$/i.test((n.innerText || '').trim()));
                     const walker = document.createTreeWalker(card,NodeFilter.SHOW_TEXT);
                     let text;
                     while (text = walker.nextNode()) {
                         const parent = text.parentElement;
                         if (!parent || !visible(parent) || parent.closest(
                             '.d4r55,.rsqaof,.xRkPPb,.rsqaWe,.CDe7pd,button,[role="button"],[role="img"],svg')) continue;
+                        const details=parent.closest('.RfDO5c');
+                        if(details && !details.querySelector('.wiI7pd,.MyEned')) continue;
                         const value = text.textContent.trim();
                         if (!value || /^(?:new|새 리뷰|local guide|지역 가이드|\d+[,.]?\d* (?:reviews?|photos?)|·|[0-5](?:\.0)?)$/i.test(value) ||
-                            /^(?:food|service|atmosphere)\s*[:：]\s*[1-5](?:\.\d)?$/i.test(value) ||
+                            /^(?:food|service|atmosphere)\s*[:：]\s*(?:[1-5](?:\.\d)?)?$/i.test(value) ||
                             /^(?:(?:local guide|지역 가이드|\d[\d,]*\s+(?:reviews?|photos?))[\s·•]*)+$/i.test(value)) continue;
                         // Unknown text structure must never become a rating-only row.
                         return false;
@@ -2175,7 +2189,8 @@ def run_once(context, expected_total=None, store_key="thailand", auto_total=Fals
                 state = stream(page, reviews)
                 report['stream'] = state
                 if state['boundary_reached']:
-                    report['stop_reason'] = 'COMMITTED_BOUNDARY_REACHED'
+                    report['stop_reason'] = ('COMMITTED_BOUNDARY_REACHED' if state.get('boundary_kind','committed')=='committed'
+                                             else 'OBSERVED_FRONTIER_REACHED')
                     break
             if recent_limit is not None and len(seen) >= min(expected_total, recent_limit):
                 report["stop_reason"] = "RECENT_WINDOW_REACHED"

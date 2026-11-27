@@ -12,6 +12,15 @@ def valid_sequence(values):
             and len(set(values)) == len(values))
 
 
+def observed_frontier_reached(head, observed):
+    """Ordered observation overlap only; makes no persistence/completeness claim."""
+    if not valid_sequence(head) or len(head)!=MIN_OVERLAP or not valid_sequence(observed) or head[0] not in observed:
+        return False
+    position=observed.index(head[0])
+    return (not set(head).intersection(observed[:position])
+            and observed[position:position+MIN_OVERLAP]==head)
+
+
 def preview_boundary(store_id, baseline, observed, known, *, newest_verified=False,
                      registry_verified=False, context_verified=False):
     """Require an exact ordered overlap with the previous committed head.

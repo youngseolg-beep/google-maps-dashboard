@@ -37,9 +37,41 @@ class AttemptJournal:
               CHECK(state IN ('PENDING','COMMITTED_CONFIRMED')) )""")
             self.db.execute("""CREATE UNIQUE INDEX IF NOT EXISTS one_pending_store
               ON attempts(store_id) WHERE state='PENDING'""")
+            self.db.execute('CREATE TABLE IF NOT EXISTS historical_backlog (store_id TEXT NOT NULL, source_hash TEXT NOT NULL, reason TEXT NOT NULL, PRIMARY KEY(store_id,source_hash))')
+            self.db.execute('CREATE TABLE IF NOT EXISTS daily_frontiers (store_id TEXT PRIMARY KEY, generation INTEGER NOT NULL, head TEXT NOT NULL, unknown_history INTEGER NOT NULL)')
 
     def close(self):
         self.db.close()
+
+    def frontier(self, store_id):
+        row=self.db.execute('SELECT generation,head,unknown_history FROM daily_frontiers WHERE store_id=?',(store_id,)).fetchone()
+        return dict(generation=row[0],head=json.loads(row[1]),unknown_history=bool(row[2])) if row else None
+
+    def backlog(self, store_id):
+        return dict(self.db.execute('SELECT source_hash,reason FROM historical_backlog WHERE store_id=?',(store_id,)))
+
+    def record_progress(self, store_id, observed, known, held, *, frontier_generation=None, unknown_history=None):
+        """Save observed progress and outstanding IDs atomically, without advancing a DB baseline."""
+        if (not valid(store_id,UUID) or len(set(observed))!=len(observed)
+                or any(not valid(h,HEX) for h in observed)):
+            raise ValueError('LOCAL_PROGRESS_INVALID')
+        with self.db:
+            for source in set(self.backlog(store_id)).intersection(known):
+                self.db.execute('DELETE FROM historical_backlog WHERE store_id=? AND source_hash=?',(store_id,source))
+            for source in observed:
+                if source not in known:
+                    self.db.execute('INSERT INTO historical_backlog VALUES (?,?,?) ON CONFLICT(store_id,source_hash) DO UPDATE SET reason=excluded.reason',
+                                    (store_id,source,held.get(source,'capture_unresolved')))
+            if frontier_generation is not None:
+                if len(observed)<30:
+                    raise ValueError('LOCAL_FRONTIER_TOO_SHORT')
+                previous=self.frontier(store_id)
+                if (previous['generation'] if previous else 0)!=frontier_generation:
+                    raise ValueError('LOCAL_FRONTIER_GENERATION_CONFLICT')
+                self.db.execute('INSERT INTO daily_frontiers VALUES (?,?,?,?) ON CONFLICT(store_id) DO UPDATE SET generation=excluded.generation,head=excluded.head,unknown_history=excluded.unknown_history',
+                    (store_id,frontier_generation+1,json.dumps(observed[:30]),int(unknown_history is not False)))
+            elif unknown_history is not None:
+                self.db.execute('UPDATE daily_frontiers SET unknown_history=? WHERE store_id=?',(int(unknown_history),store_id))
 
     def bind_backend(self, identity):
         """A staging journal must never replay requests into another project."""

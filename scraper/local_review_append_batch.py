@@ -43,6 +43,7 @@ def run_store(context, config, task, commit, run_id, *, mode="backfill", recent_
             newest = report.get("newest_sort_status")=="NEWEST_SORT_UI_VERIFIED"
             boundary_reached = mode=="recent" and writer.boundary(writer.observed)
             finished = report.get("status")=="STREAM_CAPTURE_FINISHED"
+            progress = writer.save_progress(newest_verified=newest,complete=complete,finished=finished)
             advanced = writer.finish(writer.observed,newest_verified=newest and finished,complete=complete)
             unresolved = sum(h not in writer.known for h in writer.observed)
             uncertain = bool(writer.journal.pending_requests(store['id']))
@@ -61,6 +62,7 @@ def run_store(context, config, task, commit, run_id, *, mode="backfill", recent_
                 coverage_incomplete=not (complete or boundary_reached) or bool(unresolved),
                 backlog_unknown=not (complete or boundary_reached),
                 held_reasons=dict(Counter(writer.held.values())),
+                daily_frontier_reached=writer.frontier_reached(), **progress,
                 elapsed_scroll_seconds=report.get("elapsed_scroll_seconds"), full_coverage_verified=False)
         finally:
             writer.journal.close()

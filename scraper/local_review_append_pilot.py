@@ -19,7 +19,7 @@ import scraper as production
 from review_append_preflight import build_append_preview
 from review_source_attempt_journal import AttemptJournal
 from review_source_identity import valid_hash
-from review_incremental_boundary import preview_boundary, MIN_OVERLAP
+from review_incremental_boundary import preview_boundary, MIN_OVERLAP, observed_frontier_reached
 from review_incremental_baseline import committed_baseline
 from review_source_reconcile import legacy_target
 
@@ -76,6 +76,7 @@ class SourceWriter:
             if len(bases) > 1:
                 raise ValueError('SOURCE_BASELINE_INVALID')
             self.baseline = committed_baseline(store['id'], **bases[0]) if bases else None
+            self.daily_frontier = self.journal.frontier(store['id'])
         except BaseException:
             self.journal.close()
             raise
@@ -114,7 +115,27 @@ class SourceWriter:
         self.raw_seen.update(fresh)
         return dict(observed=len(self.observed), committed=sum(h in self.known for h in self.observed),
                     unresolved=sum(h not in self.known for h in self.observed),
-                    boundary_reached=recent and self.boundary(self.observed))
+                    boundary_reached=recent and (self.boundary(self.observed) or self.frontier_reached()),
+                    boundary_kind='committed' if self.boundary(self.observed) else 'observed_with_backlog')
+
+    def frontier_reached(self):
+        frontier=getattr(self,'daily_frontier',None)
+        return bool(frontier and observed_frontier_reached(frontier['head'],self.observed))
+
+    def save_progress(self, *, newest_verified=False, complete=False, finished=False):
+        if not self.commit:
+            return {}
+        frontier=getattr(self,'daily_frontier',None)
+        reached=self.frontier_reached() or self.boundary(self.observed)
+        advance=(finished and newest_verified and len(self.observed)>=MIN_OVERLAP
+                 and not self.journal.pending_requests(self.store['id'])
+                 and (complete or reached or (frontier is None and self.baseline is None)))
+        self.journal.record_progress(self.store['id'],self.observed,self.known,self.held,
+            frontier_generation=(frontier['generation'] if frontier else 0) if advance else None,
+            unknown_history=not complete and (not reached or not frontier or frontier['unknown_history']))
+        return dict(historical_backlog=len(self.journal.backlog(self.store['id'])),
+                    historical_coverage_unknown=(self.journal.frontier(self.store['id']) or {}).get('unknown_history',not complete),
+                    observed_frontier_saved=advance)
 
     def read_rows(self, table, columns, order):
         rows = []
@@ -200,6 +221,7 @@ class SourceWriter:
                 legacy = next(old for old in self.history.values() if old['id'] == target)
                 row['author'] = legacy['author']
                 row['date'] = legacy.get('_stored_date_for_link',legacy.get('date') or '')
+                row['text'] = legacy.get('text') or ''
             items.append(item)
         targets = Counter(item.get('legacy_id') for item in items if item.get('legacy_id'))
         accepted = []
@@ -214,6 +236,7 @@ class SourceWriter:
         items = self.plan(records, evidence)
         if not self.commit:
             return dict(status='DRY_RUN', ready=len(items), held=len(self.held))
+        self.journal.record_progress(self.store['id'],list(self.held),self.known,self.held)
         for offset in range(0,len(items),250):
             result = self.request(dict(p_operation_id=str(uuid4()), p_store_id=self.store['id'],
                                        p_items=items[offset:offset+250], p_finalize=None))
@@ -226,6 +249,7 @@ class SourceWriter:
                     self.known.add(source)
                     self.linked_rows.add(outcome['review_id'])
                     self.held.pop(source, None)
+        self.journal.record_progress(self.store['id'],list(self.held),self.known,self.held)
         return dict(status='APPEND_CONFIRMED', held=len(self.held))
 
     def boundary(self, observed):
@@ -236,7 +260,7 @@ class SourceWriter:
 
     def finish(self, observed, *, newest_verified, complete):
         if (not self.commit or not newest_verified or len(observed) < MIN_OVERLAP
-                or self.held or self.journal.pending_requests(self.store['id'])
+                or self.held or self.journal.backlog(self.store['id']) or self.journal.pending_requests(self.store['id'])
                 or not set(observed).issubset(self.known)
                 or (self.baseline is None and not complete) or (self.baseline and not self.boundary(observed))):
             return False

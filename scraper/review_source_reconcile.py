@@ -14,7 +14,8 @@ def legacy_target(history, linked_rows, candidate, production):
     norm = lambda value: production.normalize_spaces(value or '').casefold()
     unlinked = [row for row in history if row['id'] not in linked_rows]
     exact = [row for row in unlinked if norm(row.get('author')) == norm(candidate['author'])
-             and row.get('text','') == candidate['text'] and row.get('rating') == candidate['rating']]
+             and production.normalize_spaces(row.get('text','')) == production.normalize_spaces(candidate['text'])
+             and row.get('rating') == candidate['rating']]
     prior_author = any(norm(row.get('author')) == norm(candidate['author']) for row in unlinked)
     if len(exact)>1 or (not exact and prior_author):
         return None, 'legacy_identity_ambiguous'

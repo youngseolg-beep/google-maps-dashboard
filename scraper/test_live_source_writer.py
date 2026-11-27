@@ -132,22 +132,46 @@ class WriterPlanning(unittest.TestCase):
         js=r'''
 const source=JSON.parse(require('fs').readFileSync(0,'utf8'));
 global.NodeFilter={SHOW_TEXT:4};
-for (const mode of ['rating','hidden','unknown','more']) {
-  const textNodes=mode==='unknown'?[{textContent:'Unrecognized customer content',parentElement:{getClientRects:()=>[1],closest:()=>null}}]:[];
+        for (const mode of ['rating','hidden','unknown','more','details','owner_more']) {
+  const textNodes=['unknown','details'].includes(mode)?[{textContent:'Unrecognized customer content',parentElement:{getClientRects:()=>[1],closest:s=>mode==='details'&&s==='.RfDO5c'?{querySelector:()=>null}:null}}]:[];
   global.document={createTreeWalker:()=>({nextNode:()=>textNodes.shift()||null})};
   const rating={getClientRects:()=>[1],closest:()=>null,getAttribute:()=> '5 stars'};
   const card={
     querySelector:sel=>sel==='.d4r55'?{}:null,
     querySelectorAll:sel=>sel==='[aria-label]'?[rating]:
       sel==='.wiI7pd,.MyEned'&&mode==='hidden'?[{closest:()=>null}]:
-      sel==='button,[role="button"]'&&mode==='more'?[{getClientRects:()=>[1],innerText:'More'}]:[]
+      sel==='button,[role="button"]'&&['more','owner_more'].includes(mode)?[{getClientRects:()=>[1],closest:()=>mode==='owner_more'?{}:null,innerText:'More'}]:[]
   };
   console.log(JSON.stringify([mode,eval('('+source+')')(card)]));
 }
 '''
         result=subprocess.run(['node','-e',js],input=json.dumps(source),text=True,capture_output=True,check=True)
         self.assertEqual(dict(json.loads(line) for line in result.stdout.splitlines()),
-                         dict(rating=True,hidden=False,unknown=False,more=False))
+                         dict(rating=True,hidden=False,unknown=False,more=False,details=True,owner_more=True))
+
+    @unittest.skipUnless(shutil.which('node'),'Node required for DOM control fixture')
+    def test_details_only_more_is_associated_but_owner_more_is_excluded(self):
+        tree=ast.parse(Path(pilot.probe.__file__).read_text(encoding='utf8'))
+        function=next(n for n in ast.walk(tree) if isinstance(n,ast.FunctionDef) and n.name=='body_control')
+        source=next(n.args[0].value for n in ast.walk(function) if isinstance(n,ast.Call)
+                    and isinstance(n.func,ast.Attribute) and n.func.attr=='evaluate_all')
+        js=r'''
+const source=JSON.parse(require('fs').readFileSync(0,'utf8'));
+global.Node={DOCUMENT_POSITION_FOLLOWING:4};
+for(const mode of ['details','owner','unknown']){
+ const card={querySelectorAll:()=>[]};
+ const region={parentElement:card,querySelector:()=>mode==='unknown'?null:{},querySelectorAll:()=>[]};
+ const button={tagName:'BUTTON',classList:{contains:()=>true},hasAttribute:()=>true,
+  parentElement:region,getClientRects:()=>[1],contains:()=>false,
+  closest:s=>s==='.jftiEf[data-review-id]'?card:mode==='owner'?{}:null};
+ console.log(JSON.stringify([mode,eval('('+source+')')([button])]));
+}
+'''
+        result=subprocess.run(['node','-e',js],input=json.dumps(source),text=True,capture_output=True,check=True)
+        rows=dict(json.loads(line) for line in result.stdout.splitlines())
+        self.assertEqual(len(rows['details']['accepted']),1)
+        self.assertEqual(rows['owner']['excluded'],1)
+        self.assertEqual(rows['unknown']['unresolved'],1)
 
     def test_journal_refuses_a_different_backend(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -328,6 +352,28 @@ with patch.object(tests.production,'supabase_request',side_effect=case.api), pat
         self.assertEqual(self.saved(),before)
         self.assertEqual(writer.outcomes,{'linked_legacy':1})
 
+    def test_legacy_whitespace_difference_links_without_rewriting_text(self):
+        writer=self.writer()
+        raw=card('whitespace')
+        old=writer.plan([raw],evidence([raw]))[0]['row']
+        old['text']='Synthetic\n\n body'
+        self.api('POST','reviews',body=old)
+        before=self.saved()
+        writer=self.writer()
+        writer.append([raw],evidence([raw]))
+        self.assertEqual(self.saved(),before)
+        self.assertEqual(writer.outcomes,{'linked_legacy':1})
+
+    def test_multiple_whitespace_equivalent_targets_remain_held(self):
+        writer=self.writer()
+        raw=card('whitespace-ambiguous')
+        old=writer.plan([raw],evidence([raw]))[0]['row']
+        self.api('POST','reviews',body=[dict(old,review_key='e'*64),dict(old,text='Synthetic\n body',review_key='f'*64)])
+        writer=self.writer()
+        writer.append([raw],evidence([raw]))
+        self.assertEqual(len(self.saved()),2)
+        self.assertEqual(list(writer.held.values()),['legacy_identity_ambiguous'])
+
     def test_conflicting_absolute_dates_are_held(self):
         writer=self.writer()
         raw=card('old-calendar',date='2026-11-01')
@@ -386,6 +432,55 @@ with patch.object(tests.production,'supabase_request',side_effect=case.api), pat
         self.assertFalse(writer.finish(observed,newest_verified=False,complete=False))
         self.assertTrue(writer.finish(observed,newest_verified=True,complete=False))
         self.assertEqual(len(self.saved()),181)
+
+    def test_daily_observed_frontier_preserves_old_backlog_without_advancing_db_baseline(self):
+        writer=self.writer()
+        old=[card('old-head'+str(i),author='Old '+str(i)) for i in range(31)]
+        proof=evidence(old)
+        proof.pop(hashlib.sha256(old[0]['source_id'].encode()).hexdigest())
+        writer.append(old,proof)
+        prior=[production.hash_google_source_review_id(self.store['id'],r['source_id']) for r in old]
+        writer.observed=prior
+        progress=writer.save_progress(newest_verified=True,complete=True,finished=True)
+        self.assertTrue(progress['observed_frontier_saved'])
+        self.assertEqual(progress['historical_backlog'],1)
+        self.assertFalse(writer.finish(prior,newest_verified=True,complete=True))
+        restarted=self.writer()
+        new=[card('daily'+str(i),author='Daily '+str(i)) for i in range(5)]
+        restarted.append(new,evidence(new))
+        restarted.observed=[production.hash_google_source_review_id(self.store['id'],r['source_id']) for r in new]+prior[:30]
+        self.assertTrue(restarted.frontier_reached())
+        self.assertFalse(restarted.boundary(restarted.observed))
+        self.assertFalse(restarted.finish(restarted.observed,newest_verified=True,complete=False))
+        progress=restarted.save_progress(newest_verified=True,finished=True)
+        self.assertEqual(progress['historical_backlog'],1)
+        self.assertEqual(len(self.saved()),35)
+        self.assertEqual(self.api('GET','review_source_baselines',query={'store_id':'eq.'+self.store['id']}),[])
+
+    def test_unverified_sort_cannot_save_observed_frontier(self):
+        writer=self.writer()
+        writer.observed=[f'{i:064x}' for i in range(30)]
+        result=writer.save_progress(newest_verified=False,finished=True)
+        self.assertFalse(result['observed_frontier_saved'])
+        self.assertIsNone(writer.journal.frontier(self.store['id']))
+        self.assertEqual(result['historical_backlog'],30)
+
+    def test_partial_history_is_explicit_and_frontier_generation_is_protected(self):
+        writer=self.writer()
+        writer.observed=[f'{i:064x}' for i in range(30)]
+        result=writer.save_progress(newest_verified=True,finished=True)
+        self.assertTrue(result['historical_coverage_unknown'])
+        left,right=self.writer(),self.writer()
+        left.observed=right.observed=writer.observed
+        left.save_progress(newest_verified=True,finished=True)
+        with self.assertRaisesRegex(ValueError,'LOCAL_FRONTIER_GENERATION_CONFLICT'):
+            right.save_progress(newest_verified=True,finished=True)
+        missed=self.writer()
+        old_head=missed.daily_frontier['head']
+        missed.observed=[f'{i:064x}' for i in range(100,130)]
+        result=missed.save_progress(newest_verified=True,finished=True)
+        self.assertFalse(result['observed_frontier_saved'])
+        self.assertEqual(missed.journal.frontier(self.store['id'])['head'],old_head)
 
     def test_unresolved_body_blocks_boundary(self):
         writer=self.writer()
