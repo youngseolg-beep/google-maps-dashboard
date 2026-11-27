@@ -144,3 +144,47 @@ rejection count is unknown. These are acceptance proposals, not actual inserts.
 Production row snapshots remained unchanged and every production write path in
 the preview was disabled. No body/author/raw source IDs were exported. Database
 regressions use an independent disposable PostgreSQL/PostgREST with synthetic data.
+
+
+## Newest state missing from Maps
+
+Eastville's live authenticated menu exposed four menuitemradio options with
+aria-checked=false, even after Newest replaced the list. The recent streaming
+path now accepts either explicit selection or NEWEST_SORT_BEHAVIOR_VERIFIED.
+The latter requires all of: an ordinary click on the exact Newest option and
+menu closure; an observed pre-sort chronological inversion; a different first
+ID after the action; an append-stable 30-ID head over consecutive observations
+after scrolling; every sampled date readable, no clear inversions and at least
+three displayed-age bands with unambiguously newer/older pairs. The normal
+menu reopen check must retain the same unmarked four-option structure. No
+arbitrary classes or successful click returns are treated as selection proof.
+Behavioral verification does not establish exact publication timestamps,
+ordering within ambiguous relative-date ties or full-store completeness.
+
+Sampling is bounded to 12 scroll rounds / 45 seconds, using normal wheel input
+only. Displayed chronology is rechecked before streamed batches and final flush.
+Insufficient or lost evidence falls back to bounded backfill using the caller's
+unscaled round/time caps. Neither the database baseline nor the local incremental
+frontier may advance in fallback. Unsorted backfill ignores overlap boundaries.
+An access restriction, lost place context or unresolved open menu stops safely.
+Source identity, historical backlog, insert-only RPC and recovery are unchanged.
+
+Read-only live validation used the actual batch -> SourceWriter -> stream path
+with commit=False, all backend requests disabled, public GET-only history and
+81 locally confirmed source receipts. Eastville reached 167/167 observed in
+102.4 scrolling seconds: pre-sort 8 readable dates / 2 clear inversions; post-sort
+30 readable dates / 0 inversions / 252 clearly ordered age pairs, stable ID head.
+Result: NEWEST_SORT_BEHAVIOR_VERIFIED, no production inserts or boundary
+advancement, existing 163 review rows identical before/after. This is browser
+execution evidence; fallback persistence and frontier guards are separately
+tested with synthetic PostgreSQL/PostgREST data.
+
+After the final fallback callback change, another fresh Chrome process passed
+the same behavioral verification in the actual recent writer path. A configured
+three-scroll cap stopped normally at 60/167 after 24.4 scrolling seconds with
+ROUND_LIMIT, coverage_incomplete=true, backlog_unknown=true and no boundary
+advancement. The 163 database rows again remained identical. Both browser runs
+were dry-run acceptance only; no insertion or source-table baseline query was
+performed. The previously confirmed local source receipts were a conservative
+read-only substitute for privileged source-link reads, not a new production
+source registry snapshot.

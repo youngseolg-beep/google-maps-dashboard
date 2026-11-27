@@ -32,16 +32,17 @@ def run_store(context, config, task, commit, run_id, *, mode="backfill", recent_
         journal_path = root/"review-source-requests.sqlite3"
         writer = pilot.SourceWriter(config,store,journal_path,commit=commit,run_id=run_id)
         try:
-            def stream(page, reviews):
-                return writer.collect_window(page,reviews,key,recent=mode=="recent")
+            def stream(page, reviews, *, recent_verified=None):
+                incremental = mode=="recent" if recent_verified is None else recent_verified
+                return writer.collect_window(page,reviews,key,recent=incremental)
             report = probe.run_once(context,store_key=key,auto_total=True,
                 scroll_mode="adaptive",maps_language="en",scale_count_budget=True,
                 stream=stream,stream_recent=mode=="recent")
             complete = (report.get("status")=="STREAM_CAPTURE_FINISHED"
                         and report.get("stop_reason")=="EXPECTED_TOTAL_REACHED"
                         and len(writer.observed)==report.get("expected_total_user_observed"))
-            newest = report.get("newest_sort_status")=="NEWEST_SORT_UI_VERIFIED"
-            boundary_reached = mode=="recent" and writer.boundary(writer.observed)
+            newest = probe.newest_sort_verified(report.get("newest_sort_status"))
+            boundary_reached = newest and mode=="recent" and writer.boundary(writer.observed)
             finished = report.get("status")=="STREAM_CAPTURE_FINISHED"
             progress = writer.save_progress(newest_verified=newest,complete=complete,finished=finished)
             advanced = writer.finish(writer.observed,newest_verified=newest and finished,complete=complete)
@@ -54,6 +55,8 @@ def run_store(context, config, task, commit, run_id, *, mode="backfill", recent_
             if not finished:
                 status = report.get("status","CAPTURE_HELD")
             return dict(status=status, observed=len(writer.observed), mode=mode,
+                effective_mode=report.get("effective_mode",mode),newest_sort_status=report.get("newest_sort_status"),
+                newest_sort_evidence=report.get("newest_sort_evidence",[]),fallback_reason=report.get("fallback_reason"),
                 expected=report.get("expected_total_user_observed"), confirmed_new=counts.get("inserted",0),
                 outcomes=counts, database_writes='UNKNOWN' if uncertain else bool(commit and (counts or writer.recovered_operations)),
                 recovered_operations=writer.recovered_operations, recovered_outcomes=dict(writer.recovered_outcomes),

@@ -469,23 +469,107 @@ for (const el of dateNodes) {
 }"""
 
 
-def ordered_date_sample(page):
+def ordered_date_sample(page, limit=None):
     """Read exact card IDs and dates using the shared validated metadata logic."""
-    records=page.locator(".jftiEf[data-review-id]").evaluate_all(r"""cards => {
+    records=page.locator(".jftiEf[data-review-id]").evaluate_all(r"""(cards,limit) => {
+        if (limit !== null) cards=cards.slice(0,limit);
         const readDates = """ + REVIEW_DATE_METADATA_JS + r""";
         return cards.map(card => {
             const {dates} = readDates(card);
             return {id:card.getAttribute('data-review-id'), label:dates.size===1?[...dates][0]:null};
         });
-    }""")
+    }""", limit)
     ids=[r["id"] for r in records]
     if not ids or len(ids)>300 or any(not isinstance(x,str) or not x for x in ids) or len(set(ids))!=len(ids):
         return None, []
     return [hashlib.sha256(x.encode("utf-8")).hexdigest() for x in ids],[r["label"] for r in records]
 
 
+
+# Same minimum ordered head as the incremental overlap. This verifies a sampled
+# UI transition, not publication timestamps, tie order or full-store coverage.
+NEWEST_BEHAVIOR_HEAD = 30
+NEWEST_BEHAVIOR_ROUNDS = 12
+NEWEST_BEHAVIOR_SECONDS = 45
+
+
+def newest_sort_verified(status):
+    return status in {"NEWEST_SORT_UI_VERIFIED", "NEWEST_SORT_BEHAVIOR_VERIFIED"}
+
+
+def behavioral_newest_evidence(before_ids, before_labels, samples):
+    """Require a discriminating pre/post transition AND stable dated ID order."""
+    before=displayed_age_evidence(before_labels)
+    result=dict(verified=False, reason="INSUFFICIENT_ORDER_EVIDENCE",
+                before=before, sample_count=len(samples), full_coverage_verified=False)
+    if not before_ids or not before["clear_inversions"] or len(samples)<2:
+        return result
+    previous=None
+    for ids,labels in samples:
+        if (not isinstance(ids,list) or not ids or len(set(ids))!=len(ids)
+                or len(ids)!=len(labels) or (previous and not ordered_extension(previous,ids))):
+            result["reason"]="ID_ORDER_UNSTABLE"
+            return result
+        dates=displayed_age_evidence(labels)
+        if dates["unknown"] or dates["clear_inversions"]:
+            result["reason"]="DATE_ORDER_INCONCLUSIVE"
+            return result
+        previous=ids
+    ids,labels=samples[-1]
+    result["after"]=displayed_age_evidence(labels[:NEWEST_BEHAVIOR_HEAD])
+    if (len(samples[-2][0])<NEWEST_BEHAVIOR_HEAD or len(ids)<NEWEST_BEHAVIOR_HEAD
+            or before_ids[0]==ids[0] or ordered_extension(before_ids,ids)
+            or not result["after"]["displayed_order_consistent"]
+            or len(set(relative_age_interval(x) for x in labels[:NEWEST_BEHAVIOR_HEAD]))<3):
+        return result
+    result.update(verified=True,reason="NEWEST_ACTION_REPLACED_UNSORTED_HEAD_WITH_STABLE_DATED_IDS",
+                  head_size=NEWEST_BEHAVIOR_HEAD)
+    return result
+
+
+def verify_behavioral_newest(page, store_key, reviews, before_ids, before_labels, evidence):
+    """Bounded normal scrolling; no force click, sort retries or account changes."""
+    samples=[]
+    started=time.monotonic()
+    for round_no in range(NEWEST_BEHAVIOR_ROUNDS+1):
+        if blocked(page) or not same_place(page.url,store_key) or not selected(reviews):
+            return "ACCESS_RESTRICTED_STOPPED" if blocked(page) else "REVIEW_CONTEXT_LOST"
+        ids,labels=ordered_date_sample(page,limit=NEWEST_BEHAVIOR_HEAD)
+        samples.append((ids,labels))
+        check=behavioral_newest_evidence(before_ids,before_labels,samples)
+        if evidence is not None:
+            evidence.append(dict(stage="behavioral_order",round=round_no,**check))
+        if check["verified"]:
+            return "NEWEST_SORT_BEHAVIOR_VERIFIED"
+        if (check["reason"] in {"ID_ORDER_UNSTABLE","DATE_ORDER_INCONCLUSIVE"}
+                or round_no==NEWEST_BEHAVIOR_ROUNDS or time.monotonic()-started>=NEWEST_BEHAVIOR_SECONDS):
+            break
+        if ids and len(ids)>=NEWEST_BEHAVIOR_HEAD:
+            page.wait_for_timeout(1800)
+            continue
+        pane=review_pane(page)
+        if pane is None:
+            break
+        try:
+            point=pane.evaluate("""el=>{
+                const r=el.getBoundingClientRect();
+                const l=Math.max(0,r.left),t=Math.max(0,r.top),right=Math.min(innerWidth,r.right),bottom=Math.min(innerHeight,r.bottom);
+                if(right-l<40 || bottom-t<40) return null;
+                const x=(l+right)/2,y=(t+bottom)/2;
+                return el.contains(document.elementFromPoint(x,y))?{x,y}:null;
+            }""")
+        finally:
+            pane.dispose()
+        if not point:
+            break
+        page.mouse.move(point["x"],point["y"])
+        page.mouse.wheel(0,1800)
+        page.wait_for_timeout(1800)
+    return "NEWEST_SORT_ACTION_OBSERVED_ONLY"
+
+
 def verify_newest_sort(page, store_key, reviews, evidence=None):
-    """Use only ordinary visible Sort controls; require explicit selected state."""
+    """Require explicit state or a discriminating, stable UI/date/ID transition."""
     def context_ok():
         return not blocked(page) and same_place(page.url, store_key) and selected(reviews)
     def failure():
@@ -542,7 +626,9 @@ def verify_newest_sort(page, store_key, reviews, evidence=None):
     if evidence is not None:
         evidence.append({"stage":"after_head","head_changed":before_head!=after_head if before_head and after_head else None,
                          "date_evidence":displayed_age_evidence(after_labels)})
-    return "NEWEST_SORT_UI_VERIFIED" if explicit else "NEWEST_SORT_ACTION_OBSERVED_ONLY"
+    if explicit:
+        return "NEWEST_SORT_UI_VERIFIED"
+    return verify_behavioral_newest(page,store_key,reviews,before_head,before_labels,evidence)
 
 
 def ordered_head(page):
@@ -1941,7 +2027,8 @@ def run_once(context, expected_total=None, store_key="thailand", auto_total=Fals
             report["phase"] = "verify_newest_sort"
             report["newest_sort_evidence"] = []
             report["newest_sort_status"] = verify_newest_sort(page, store_key, reviews, report["newest_sort_evidence"])
-            if report["newest_sort_status"] not in {"NEWEST_SORT_UI_VERIFIED","NEWEST_SORT_ACTION_OBSERVED_ONLY"}:
+            if not (newest_sort_verified(report["newest_sort_status"])
+                    or report["newest_sort_status"]=="NEWEST_SORT_ACTION_OBSERVED_ONLY"):
                 report["status"] = report["newest_sort_status"]
                 return report
         if auto_total:
@@ -1991,6 +2078,7 @@ def run_once(context, expected_total=None, store_key="thailand", auto_total=Fals
             report["status"] = "REVIEW_CONTEXT_LOST"
             return report
 
+        fallback_limits=(count_round_limit,count_second_limit)
         if expected_total is not None:
             count_round_limit, count_second_limit = scaled_count_budget(expected_total, count_round_limit, count_second_limit, scale_count_budget)
             report["count_round_limit"] = count_round_limit
@@ -2021,11 +2109,22 @@ def run_once(context, expected_total=None, store_key="thailand", auto_total=Fals
             report["status"] = "ACCESS_RESTRICTED_STOPPED" if blocked(page) else "REVIEW_CONTEXT_LOST"
             return report
 
+        fallback_backfill=False
         if recent_limit is not None or stream_recent:
-            report["newest_sort_status"] = verify_newest_sort(page, store_key, reviews)
-            if report["newest_sort_status"] != "NEWEST_SORT_UI_VERIFIED":
-                report["status"] = report["newest_sort_status"]
-                return report
+            report["newest_sort_evidence"]=[]
+            report["newest_sort_status"] = verify_newest_sort(page, store_key, reviews,report["newest_sort_evidence"])
+            if not newest_sort_verified(report["newest_sort_status"]):
+                if (not stream_recent or blocked(page) or not same_place(page.url,store_key)
+                        or not selected(reviews) or newest_menu_item(page) is not None):
+                    report["status"] = report["newest_sort_status"]
+                    return report
+                fallback_backfill=True
+                count_round_limit,count_second_limit=fallback_limits
+                report.update(effective_mode="bounded_backfill", incremental_frontier_allowed=False,
+                              fallback_reason=report["newest_sort_status"],
+                              count_round_limit=count_round_limit,count_second_limit=count_second_limit)
+            else:
+                report.update(effective_mode="recent",incremental_frontier_allowed=True)
             page.wait_for_timeout(1800)
         report["phase"] = "observe_initial_reviews"
         report["initial_unique"], _ = observe(page, seen, id_cache)
@@ -2186,9 +2285,18 @@ def run_once(context, expected_total=None, store_key="thailand", auto_total=Fals
                 report["status"] = "REVIEW_CONTEXT_LOST"
                 return report
             if stream is not None:
-                state = stream(page, reviews)
+                if report.get("newest_sort_status")=="NEWEST_SORT_BEHAVIOR_VERIFIED":
+                    _,labels=ordered_date_sample(page,limit=NEWEST_BEHAVIOR_HEAD)
+                    dates=displayed_age_evidence(labels)
+                    if len(labels)<NEWEST_BEHAVIOR_HEAD or not dates["displayed_order_consistent"]:
+                        report.update(newest_sort_status="NEWEST_SORT_BEHAVIOR_LOST",
+                                      effective_mode="bounded_backfill",incremental_frontier_allowed=False,
+                                      fallback_reason="NEWEST_SORT_BEHAVIOR_LOST")
+                        fallback_backfill=True
+                        count_round_limit,count_second_limit=fallback_limits
+                state = stream(page, reviews, recent_verified=stream_recent and not fallback_backfill)
                 report['stream'] = state
-                if state['boundary_reached']:
+                if state['boundary_reached'] and not fallback_backfill:
                     report['stop_reason'] = ('COMMITTED_BOUNDARY_REACHED' if state.get('boundary_kind','committed')=='committed'
                                              else 'OBSERVED_FRONTIER_REACHED')
                     break
@@ -2331,8 +2439,13 @@ def run_once(context, expected_total=None, store_key="thailand", auto_total=Fals
                 report["initial_unique"], len(seen), blocked(page)
             )
         if stream is not None:
+            if report.get("newest_sort_status")=="NEWEST_SORT_BEHAVIOR_VERIFIED":
+                _,labels=ordered_date_sample(page,limit=NEWEST_BEHAVIOR_HEAD)
+                if len(labels)<NEWEST_BEHAVIOR_HEAD or not displayed_age_evidence(labels)["displayed_order_consistent"]:
+                    report.update(newest_sort_status="NEWEST_SORT_BEHAVIOR_LOST",effective_mode="bounded_backfill",
+                                  incremental_frontier_allowed=False,fallback_reason="NEWEST_SORT_BEHAVIOR_LOST")
             # Flush the final visible batch even when the last wheel reaches a cap.
-            report['stream'] = stream(page, reviews)
+            report['stream'] = stream(page, reviews, recent_verified=stream_recent and newest_sort_verified(report.get('newest_sort_status')))
             report['status'] = 'STREAM_CAPTURE_FINISHED'
             return report
         if window_sink is not None:

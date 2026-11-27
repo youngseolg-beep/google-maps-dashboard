@@ -50,6 +50,55 @@ class WriterPlanning(unittest.TestCase):
         writer.history,writer.known,writer.linked_rows,writer.held,writer.run_id={},set(),set(),{},None
         return writer
 
+
+    def sort_samples(self):
+        before=['old'+str(i) for i in range(8)]
+        before_dates=['2 years ago','a week ago']+['a month ago']*6
+        ids=['new'+str(i) for i in range(30)]
+        dates=['a week ago']+['a month ago']*9+['6 months ago']*10+['2 years ago']*10
+        return before,before_dates,[(ids[:10],dates[:10]),(ids,dates),(ids[:],dates[:])]
+
+    def test_behavioral_sort_requires_changed_ids_stable_head_and_dates(self):
+        before,dates,samples=self.sort_samples()
+        result=pilot.probe.behavioral_newest_evidence(before,dates,samples)
+        self.assertTrue(result['verified'])
+        self.assertFalse(result['full_coverage_verified'])
+        self.assertTrue(pilot.probe.newest_sort_verified('NEWEST_SORT_BEHAVIOR_VERIFIED'))
+        self.assertFalse(pilot.probe.newest_sort_verified('NEWEST_SORT_ACTION_OBSERVED_ONLY'))
+
+    def test_click_or_relative_date_order_alone_never_verifies_sort(self):
+        before,dates,samples=self.sort_samples()
+        self.assertFalse(pilot.probe.behavioral_newest_evidence(before,dates,samples[:1])['verified'])
+        self.assertFalse(pilot.probe.behavioral_newest_evidence(before,['a week ago']*8,samples)['verified'])
+        ids,labels=samples[-1]
+        self.assertFalse(pilot.probe.behavioral_newest_evidence(ids,labels,samples)['verified'])
+
+    def test_behavioral_sort_rejects_unknown_inverted_and_same_band_dates(self):
+        before,dates,samples=self.sort_samples()
+        for labels in ([None]*30,['2 years ago']+['a week ago']*29,['a month ago']*30):
+            self.assertFalse(pilot.probe.behavioral_newest_evidence(before,dates,[(samples[-1][0],labels)]*2)['verified'])
+
+    def test_behavioral_sort_rejects_reordered_duplicate_or_missing_ids(self):
+        before,dates,samples=self.sort_samples()
+        ids,labels=samples[-1]
+        for changed in (list(reversed(ids)),[ids[0]]*30,None):
+            self.assertFalse(pilot.probe.behavioral_newest_evidence(before,dates,[samples[-1],(changed,labels)])['verified'])
+
+    def test_behavioral_browser_probe_is_bounded_and_context_guarded(self):
+        before,dates,samples=self.sort_samples()
+        page=Mock()
+        with patch.object(pilot.probe,'blocked',return_value=False), \
+             patch.object(pilot.probe,'same_place',return_value=True), \
+             patch.object(pilot.probe,'selected',return_value=True), \
+             patch.object(pilot.probe,'ordered_date_sample',return_value=samples[-1]):
+            result=pilot.probe.verify_behavioral_newest(page,'thailand',Mock(),before,dates,[])
+            self.assertEqual(result,'NEWEST_SORT_BEHAVIOR_VERIFIED')
+            page.mouse.click.assert_not_called()
+            page.wait_for_timeout.assert_called_once_with(1800)
+        with patch.object(pilot.probe,'blocked',return_value=True):
+            self.assertEqual(pilot.probe.verify_behavioral_newest(page,'thailand',Mock(),before,dates,[]),
+                             'ACCESS_RESTRICTED_STOPPED')
+
     def test_actionable_rejection_is_one_primary_category(self):
         raw=card('rejected')
         proof=evidence([raw])[hashlib.sha256(b'rejected').hexdigest()]
@@ -611,6 +660,52 @@ with patch.object(tests.production,'supabase_request',side_effect=case.api), pat
             with self.assertRaises(HTTPError):
                 self.api(method,table,query={'store_id':'eq.'+self.store['id']},body=body)
         self.assertEqual(self.saved(),before)
+
+
+    def run_sorted_batch(self, status):
+        (Path(self.tmp.name)/'SVReviewMaster').mkdir()
+        records=[card('batch-sort'+str(i),author='Batch '+str(i)) for i in range(30)]
+        page=Mock()
+        page.locator.return_value.evaluate_all.return_value=[r['source_id'] for r in records]
+        def audit(*args,evidence_sink,**kwargs):
+            evidence_sink.update(evidence(records))
+            return dict(context_lost=False,identity_mismatch=0)
+        def capture(*args,stream,**kwargs):
+            self.assertTrue(kwargs['stream_recent'])
+            stream(page,Mock(),recent_verified=pilot.probe.newest_sort_verified(status))
+            return dict(status='STREAM_CAPTURE_FINISHED',stop_reason='EXPECTED_TOTAL_REACHED',
+                expected_total_user_observed=30,newest_sort_status=status,
+                effective_mode='recent' if pilot.probe.newest_sort_verified(status) else 'bounded_backfill',
+                fallback_reason=None if pilot.probe.newest_sort_verified(status) else status)
+        task=dict(key='synthetic-sort',store_id=self.store['id'],name=self.store['store_name'],
+                  country='Synthetic',pair='fixture',url='https://www.google.com/maps/place/fixture')
+        with patch.object(pilot.probe,'verified_db_store',return_value=self.store), \
+             patch.object(pilot.probe,'run_once',side_effect=capture), \
+             patch.object(pilot.probe,'audit_loaded_fields',return_value=({},records)), \
+             patch.object(pilot.probe,'audit_body_sample',side_effect=audit), \
+             patch.dict(os.environ,{'LOCALAPPDATA':self.tmp.name}):
+            return batch.run_store(Mock(pages=[]),None,task,True,None,mode='recent')
+
+    def test_actual_batch_behavioral_verification_can_advance_frontier(self):
+        result=self.run_sorted_batch('NEWEST_SORT_BEHAVIOR_VERIFIED')
+        self.assertEqual(result['confirmed_new'],30)
+        self.assertTrue(result['observed_frontier_saved'])
+        self.assertTrue(result['boundary_advanced'])
+
+    def test_actual_batch_unverified_backfill_inserts_without_advancing_frontier(self):
+        result=self.run_sorted_batch('NEWEST_SORT_ACTION_OBSERVED_ONLY')
+        self.assertEqual(result['confirmed_new'],30)
+        self.assertFalse(result['observed_frontier_saved'])
+        self.assertFalse(result['boundary_advanced'])
+        self.assertEqual(result['effective_mode'],'bounded_backfill')
+        self.assertEqual(self.api('GET','review_source_baselines',query={'store_id':'eq.'+self.store['id']}),[])
+
+    def test_actual_batch_lost_behavior_cannot_advance_frontier(self):
+        result=self.run_sorted_batch('NEWEST_SORT_BEHAVIOR_LOST')
+        self.assertEqual(result['confirmed_new'],30)
+        self.assertFalse(result['observed_frontier_saved'])
+        self.assertFalse(result['boundary_advanced'])
+
 
     def test_real_batch_callback_uses_the_source_writer(self):
         raw=card('batch')
