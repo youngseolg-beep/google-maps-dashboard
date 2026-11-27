@@ -1712,7 +1712,7 @@ def maps_language_url(url, language):
     return urlunsplit((p.scheme, p.netloc, p.path, urlencode(query), p.fragment))
 
 
-def run_once(context, expected_total=None, store_key="thailand", auto_total=False, scroll_mode="baseline", audit_fields=False, field_sample=False, body_sample=False, adapter_sample=False, db_sample=False, count_round_limit=240, count_second_limit=600, count_db_audit=False, count_body_audit=False, maps_language="profile", scale_count_budget=False, newest_heads=None, newest_db_audit=False, capture_sink=None, capture_select=None):
+def run_once(context, expected_total=None, store_key="thailand", auto_total=False, scroll_mode="baseline", audit_fields=False, field_sample=False, body_sample=False, adapter_sample=False, db_sample=False, count_round_limit=240, count_second_limit=600, count_db_audit=False, count_body_audit=False, maps_language="profile", scale_count_budget=False, newest_heads=None, newest_db_audit=False, capture_sink=None, capture_select=None, window_sink=None, recent_limit=None, window_select=None, max_body_batches=4):
     report = {"status": "NOT_STARTED", "phase": "select_startup_tab",
               "overview_selected": False,
               "reviews_selected": False, "initial_unique": 0,
@@ -1720,6 +1720,13 @@ def run_once(context, expected_total=None, store_key="thailand", auto_total=Fals
               "scroll_verified": False, "database_writes": False,
               "full_coverage_verified": False}
     report["store"] = STORE_CONFIG[store_key]["name"]
+    if window_sink is not None and (not auto_total or not count_body_audit or count_db_audit
+            or capture_sink is not None or window_select is None or maps_language != "en"
+            or type(max_body_batches) is not int or not 1 <= max_body_batches <= 40
+            or (recent_limit is not None and (type(recent_limit) is not int or not 30 <= recent_limit <= 250))):
+        raise ValueError("WINDOW_CAPTURE_SCOPE_INVALID")
+    if recent_limit is not None and window_sink is None:
+        raise ValueError("RECENT_CAPTURE_REQUIRES_WINDOW")
     if capture_select is not None and capture_sink is None:
         raise ValueError("PILOT_SELECTION_REQUIRES_CAPTURE")
     if capture_sink is not None and (not count_body_audit or count_db_audit or maps_language != "en"):
@@ -1732,9 +1739,9 @@ def run_once(context, expected_total=None, store_key="thailand", auto_total=Fals
     report["maps_ui_language"] = "UNVERIFIED"
     if maps_language not in {"profile", "en"} or (auto_total and expected_total is not None):
         raise ValueError("MAPS_LANGUAGE_SCOPE_INVALID")
-    if scale_count_budget and (not (auto_total or expected_total is not None) or count_db_audit or (count_body_audit and capture_select is None)):
+    if scale_count_budget and (not (auto_total or expected_total is not None) or count_db_audit or (count_body_audit and capture_select is None and window_sink is None)):
         raise ValueError("SCALED_BUDGET_COUNT_ONLY")
-    pilot_auto_body = capture_sink is not None and auto_total and expected_total is None
+    pilot_auto_body = (capture_sink is not None or window_sink is not None) and auto_total and expected_total is None
     if count_body_audit and ((not pilot_auto_body and (expected_total is None or not 1 <= expected_total <= MAX_COUNT_BODY_AUDIT or auto_total))
                              or field_sample or body_sample or adapter_sample or db_sample):
         raise ValueError("COUNT_BODY_AUDIT_SCOPE_INVALID")
@@ -1907,7 +1914,7 @@ def run_once(context, expected_total=None, store_key="thailand", auto_total=Fals
             if expected_total is None or not 1 <= expected_total <= MAX_EXPECTED_COUNT:
                 report["status"] = "DISPLAYED_TOTAL_NOT_VERIFIED_OR_OUT_OF_SCOPE"
                 return report
-            if count_body_audit and capture_select is None and expected_total > MAX_COUNT_BODY_AUDIT:
+            if count_body_audit and capture_select is None and window_sink is None and expected_total > MAX_COUNT_BODY_AUDIT:
                 report["status"] = "PILOT_TOTAL_OUT_OF_SCOPE"
                 return report
             report["expected_total_user_observed"] = expected_total
@@ -1953,8 +1960,18 @@ def run_once(context, expected_total=None, store_key="thailand", auto_total=Fals
             report["status"] = "ACCESS_RESTRICTED_STOPPED" if blocked(page) else "REVIEW_CONTEXT_LOST"
             return report
 
+        if recent_limit is not None:
+            report["newest_sort_status"] = verify_newest_sort(page, store_key, reviews)
+            if report["newest_sort_status"] != "NEWEST_SORT_UI_VERIFIED":
+                report["status"] = report["newest_sort_status"]
+                return report
+            page.wait_for_timeout(1800)
         report["phase"] = "observe_initial_reviews"
         report["initial_unique"], _ = observe(page, seen, id_cache)
+        recent_head = ordered_head(page) if recent_limit is not None else None
+        if recent_limit is not None and not recent_head:
+            report["status"] = "RECENT_HEAD_UNVERIFIED"
+            return report
         report["observed_unique"] = len(seen)
         if newest_heads is not None:
             report["phase"] = "newest_order_sample"
@@ -2107,6 +2124,9 @@ def run_once(context, expected_total=None, store_key="thailand", auto_total=Fals
             if not same_place(page.url, store_key) or not selected(reviews):
                 report["status"] = "REVIEW_CONTEXT_LOST"
                 return report
+            if recent_limit is not None and len(seen) >= min(expected_total, recent_limit):
+                report["stop_reason"] = "RECENT_WINDOW_REACHED"
+                break
             if expected_total is not None:
                 if len(seen) >= expected_total:
                     report["stop_reason"] = "EXPECTED_TOTAL_REACHED" if len(seen) == expected_total else "EXPECTED_TOTAL_EXCEEDED"
@@ -2150,6 +2170,12 @@ def run_once(context, expected_total=None, store_key="thailand", auto_total=Fals
                 return report
             report["observed_unique"], retained = observe(page, seen, id_cache)
             report["append_only_retained"] = report["append_only_retained"] and retained
+            if recent_limit is not None:
+                current = ordered_head(page)
+                if not ordered_extension(recent_head, current):
+                    report["status"] = "RECENT_HEAD_ORDER_CHANGED"
+                    return report
+                recent_head = current
             report["additional_unique"] = len(seen) - report["initial_unique"]
             after_pane = review_pane(page)
             try:
@@ -2236,6 +2262,64 @@ def run_once(context, expected_total=None, store_key="thailand", auto_total=Fals
             report["status"] = fresh_depth_status(
                 report["initial_unique"], len(seen), blocked(page)
             )
+        if window_sink is not None:
+            # A bounded observed set is not a full-store snapshot. Only save
+            # cards whose identities, metadata and body controls are verified.
+            if (not seen or len(seen) > expected_total or not report["append_only_retained"]
+                    or (len(seen) < expected_total and report["stop_reason"] not in {
+                        "TIME_BUDGET_REACHED", "ROUND_LIMIT", "NO_FURTHER_SCROLL_OR_NEW_IDS",
+                        "RECENT_WINDOW_REACHED"})):
+                report["status"] = "WINDOW_CAPTURE_HELD"
+                return report
+            if recent_limit is not None:
+                ids, labels = ordered_date_sample(page)
+                order = displayed_age_evidence(labels)
+                report["recent_order_evidence"] = order
+                if (len(seen) < min(expected_total,recent_limit) or not ordered_extension(recent_head, ids)
+                        or not order["displayed_order_consistent"]):
+                    report["status"] = "RECENT_ORDER_OR_DEPTH_HELD"
+                    return report
+            report["phase"] = "window_body_audit"
+            metrics, records = audit_loaded_fields(page, len(seen), include_records=True)
+            if metrics["duplicate_cards"] or not verified_record_set(records, seen):
+                report["status"] = "WINDOW_CARD_SET_HELD"
+                return report
+            selection = list(window_select(records))
+            original_meta = {r["source_id"]:(r["author"],r["rating"],r["date_label"]) for r in records}
+            if len(set(selection)) != len(selection) or not set(selection).issubset(original_meta):
+                report["status"] = "WINDOW_SELECTION_HELD"
+                return report
+            report["window_candidate_count"] = len(selection)
+            report["window_audited_count"] = 0
+            report["window_batches"] = 0
+            for offset in range(0,min(len(selection), max_body_batches*MAX_COUNT_BODY_AUDIT),MAX_COUNT_BODY_AUDIT):
+                chosen = set(selection[offset:offset+MAX_COUNT_BODY_AUDIT])
+                evidence = {}
+                audit = audit_body_sample(page, store_key, reviews, limit=len(chosen),
+                    deadline=time.monotonic()+COUNT_BODY_SECONDS, evidence_sink=evidence, selected_ids=chosen)
+                status = count_body_evidence(audit,len(chosen))
+                if blocked(page) or not same_place(page.url,store_key) or not selected(reviews):
+                    report["status"] = "ACCESS_RESTRICTED_STOPPED" if blocked(page) else "WINDOW_CONTEXT_LOST"
+                    return report
+                if status in {"COUNT_BODY_CONTEXT_LOST","COUNT_BODY_INCOMPLETE"}:
+                    report["status"] = "WINDOW_BODY_INCOMPLETE"
+                    return report
+                after_metrics, after_records = audit_loaded_fields(page,len(seen),include_records=True)
+                after_meta = {r["source_id"]:(r["author"],r["rating"],r["date_label"]) for r in after_records}
+                scoped = [r for r in after_records if r["source_id"] in chosen]
+                if (after_metrics["duplicate_cards"] or not verified_record_set(after_records,seen)
+                        or any(after_meta.get(i)!=original_meta[i] for i in chosen)
+                        or not body_evidence_partition(scoped,evidence)["exact_audit_scope"]):
+                    report["status"] = "WINDOW_BODY_SET_HELD"
+                    return report
+                if not window_sink(after_records,evidence):
+                    report["status"] = "WINDOW_WRITE_HELD"
+                    return report
+                report["window_batches"] += 1
+                report["window_audited_count"] += len(chosen)
+            report["window_backlog"] = len(selection)-report["window_audited_count"]
+            report["status"] = "WINDOW_CAPTURE_FINISHED"
+            return report
         if audit_fields and report["status"] == "EXPECTED_COUNT_MATCHED":
             report["phase"] = "audit_loaded_fields"
             if blocked(page) or not same_place(page.url, store_key) or not selected(reviews):

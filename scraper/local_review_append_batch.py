@@ -18,7 +18,7 @@ import local_review_append_pilot as pilot
 import scraper as production
 
 
-def select_for_body(records, history):
+def select_for_body(records, history, *, all_candidates=False):
     """Prioritize new unique authors, not already stored or ambiguous reviews."""
     def name(row):
         return production.normalize_spaces(row.get("author") or "").casefold()
@@ -33,10 +33,12 @@ def select_for_body(records, history):
                 and isinstance(r.get("source_id"), str) and r["source_id"]]
     # Prioritize visible customer text. A blank body is NOT rating-only proof.
     eligible.sort(key=lambda r: r.get("body_scope") != "PRIMARY" or not r.get("body"))
+    if all_candidates:
+        return [r["source_id"] for r in eligible]
     return {r["source_id"] for r in eligible[:probe.MAX_COUNT_BODY_AUDIT]}, len(eligible)
 
 
-def run_store(context, config, task, commit, run_id):
+def run_store(context, config, task, commit, run_id, *, mode="backfill", recent_limit=100, max_body_batches=4):
     key = task["key"]
     if key in probe.STORE_CONFIG:
         raise ValueError("BATCH_STORE_KEY_COLLISION")
@@ -47,45 +49,69 @@ def run_store(context, config, task, commit, run_id):
     try:
         store = probe.verified_db_store(config, key)
         before = pilot.history_snapshot(config, store)
-        captured = []
-        selection = {}
+        confirmed = 0
+        audited = 0
+        writes = False
+        write_failure = None
+        chunks = []
+        history = before
         def select(records):
-            chosen, count = select_for_body(records, before)
-            selection.update(candidate_count=count, selected_count=len(chosen))
-            return chosen
+            return select_for_body(records, before, all_candidates=True)
         def receive(records, evidence):
-            if captured:
-                raise ValueError("BATCH_MULTIPLE_CAPTURES")
-            captured.append((records, evidence))
-        report = probe.run_once(context, store_key=key, auto_total=True,
-                                scroll_mode="adaptive", maps_language="en",
-                                count_body_audit=True, scale_count_budget=True,
-                                capture_sink=receive, capture_select=select)
-        restricted = report.get("status") == "ACCESS_RESTRICTED_STOPPED"
+            nonlocal confirmed, audited, writes, history, write_failure
+            # Refresh the exact store history before each independent POST.
+            try:
+                fresh = pilot.history_snapshot(config,store)
+                if fresh != history:
+                    write_failure = "HISTORY_CHANGED_HELD"
+                    return False
+                plan, rows = pilot.plan_rows(store,fresh,records,evidence)
+                if run_id is not None:
+                    for row in rows:
+                        row["first_seen_run_id"] = run_id
+                outcome = pilot.execute_append(config,store,fresh,rows,commit=commit)
+                confirmed += outcome["confirmed_new"]
+                audited += len(evidence)
+                writes = outcome["database_writes"] if outcome["database_writes"] == "UNKNOWN" else bool(writes or outcome["database_writes"])
+                chunk = dict(plan,**outcome)
+                chunks.append(chunk)
+                print("LOCAL_BATCH_CHUNK: "+json.dumps(dict(store=task["name"],chunk=len(chunks),**chunk),ensure_ascii=False),flush=True)
+                if outcome["status"] not in {"DRY_RUN","APPEND_CONFIRMED","NO_READY_ROWS"}:
+                    write_failure = outcome["status"]
+                    return False
+                history = pilot.history_snapshot(config,store) if commit and rows else fresh
+                return True
+            except Exception as exc:
+                write_failure = "STORE_EXECUTION_ERROR"
+                writes = "UNKNOWN" if commit else False
+                print("LOCAL_BATCH_CHUNK_ERROR: "+type(exc).__name__,flush=True)
+                return False
+        report = probe.run_once(context,store_key=key,auto_total=True,
+            scroll_mode="adaptive",maps_language="en",count_body_audit=True,
+            scale_count_budget=True,window_sink=receive,window_select=select,
+            recent_limit=recent_limit if mode=="recent" else None,max_body_batches=max_body_batches)
+        restricted = report.get("status")=="ACCESS_RESTRICTED_STOPPED"
         for page in context.pages:
             if not page.is_closed() and probe.blocked(page):
-                restricted = True
+                restricted=True
                 break
-        observed = report.get("observed_unique", 0)
-        total = report.get("expected_total_user_observed")
-        if (restricted or not captured or len(captured) != 1 or
-                type(total) is not int or total < 1 or observed != total or
-                report.get("status") not in {"LOCAL_COUNT_BODY_CONTROLS_CHECKED",
-                    "LOCAL_COUNT_BODY_CONTROL_GAPS", "LOCAL_COUNT_BODY_EVIDENCE_LIMITED"}):
-            return dict(status="ACCESS_RESTRICTED_STOPPED" if restricted else report.get("status","CAPTURE_HELD"),
-                        observed=observed, expected=total, confirmed_new=0, database_writes=False)
-        fresh = pilot.history_snapshot(config, store)
-        if fresh != before:
-            return dict(status="HISTORY_CHANGED_HELD", observed=observed,
-                        expected=total, confirmed_new=0, database_writes=False)
-        plan, rows = pilot.plan_rows(store, fresh, *captured[0])
-        captured.clear()
-        if run_id is not None:
-            for row in rows:
-                row["first_seen_run_id"] = run_id
-        outcome = pilot.execute_append(config, store, fresh, rows, commit=commit)
-        return dict(plan, **outcome, **selection, expected=total,
-                    selection_backlog=selection["candidate_count"]-selection["selected_count"])
+        observed=report.get("observed_unique",0)
+        total=report.get("expected_total_user_observed")
+        status = write_failure or ("ACCESS_RESTRICTED_STOPPED" if restricted else report.get("status","CAPTURE_HELD"))
+        if status=="WINDOW_CAPTURE_FINISHED":
+            if not commit:
+                status="DRY_RUN"
+            elif mode=="recent" or observed != total or report.get("window_backlog",0):
+                status="PARTIAL_APPEND_CONFIRMED" if confirmed else "PARTIAL_NO_READY_ROWS"
+            else:
+                status="APPEND_CONFIRMED" if confirmed else "NO_READY_ROWS"
+        return dict(status=status, observed=observed, expected=total, mode=mode,
+                    stop_reason=report.get("stop_reason"), confirmed_new=confirmed,
+                    database_writes=writes, body_audited=audited, chunks=len(chunks),
+                    candidate_count=report.get("window_candidate_count"),
+                    selection_backlog=report.get("window_backlog"),
+                    elapsed_scroll_seconds=report.get("elapsed_scroll_seconds"),
+                    full_coverage_verified=False)
     finally:
         probe.STORE_CONFIG.pop(key, None)
 
@@ -110,8 +136,13 @@ def main():
     parser.add_argument("--country", action="append", help="Optional registered country filter")
     parser.add_argument("--limit", type=int, help="Optional number of eligible stores")
     parser.add_argument("--skip-store", action="append", default=[])
+    parser.add_argument("--mode", choices=("backfill","recent"), default="backfill")
+    parser.add_argument("--recent-limit", type=int, default=100)
+    parser.add_argument("--max-body-batches", type=int, default=4)
     parser.add_argument("--commit", action="store_true")
     args = parser.parse_args()
+    if not 30 <= args.recent_limit <= 250 or not 1 <= args.max_body_batches <= 40:
+        parser.error("invalid capture budget")
     if args.limit is not None and not 1 <= args.limit <= 2000:
         parser.error("invalid limit")
     if os.name != "nt":
@@ -172,7 +203,7 @@ def main():
             run_id = production.create_crawl_run(len(tasks))
         def checkpoint(state):
             report = dict(state=state, mode="APPEND" if args.commit else "DRY_RUN",
-                          full_scope=full_scope, crawl_run_id=run_id,
+                          full_scope=full_scope, capture_mode=args.mode, crawl_run_id=run_id,
                           started_at=started.isoformat(),
                           stores=[dict(store=t["name"],country=t["country"],**r)
                                   for t,r in zip(tasks,results)])
@@ -191,7 +222,8 @@ def main():
                         print("LOCAL_BATCH_STORE: "+json.dumps(dict(index=i+1,total=len(tasks),
                               store=task["name"],country=task["country"]),ensure_ascii=False),flush=True)
                         try:
-                            result = run_store(context,config,task,args.commit,run_id)
+                            result = run_store(context,config,task,args.commit,run_id,mode=args.mode,
+                                               recent_limit=args.recent_limit,max_body_batches=args.max_body_batches)
                         except Exception as exc:
                             # A write may have reached DB; never blindly retry.
                             result = dict(status="STORE_EXECUTION_ERROR",error_type=type(exc).__name__,

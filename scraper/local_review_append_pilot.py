@@ -100,6 +100,7 @@ def plan_rows(store, history, records, evidence):
     raw_authors = Counter(production.normalize_spaces(r.get("author") or "").casefold()
                           for r in records)
     verified = set()
+    evidence_rejections = Counter()
     for raw in records:
         identity = raw.get("source_id")
         body = raw.get("body")
@@ -107,6 +108,8 @@ def plan_rows(store, history, records, evidence):
             continue
         e = evidence.get(hashlib.sha256(identity.encode("utf-8")).hexdigest(), {})
         author = production.normalize_spaces(raw.get("author") or "").casefold()
+        if not e:
+            continue
         if (raw.get("body_scope") == e.get("scope") == "PRIMARY"
                 and e.get("fingerprint") == hashlib.sha256(body.encode("utf-8")).digest()
                 and e.get("click_error") is False and e.get("more_remaining") == 0
@@ -114,6 +117,12 @@ def plan_rows(store, history, records, evidence):
                 and e.get("more_verified") is True and e.get("original_verified") is True
                 and author and raw_authors[author] == 1):
             verified.add(production.hash_google_source_review_id(store["id"], identity))
+        else:
+            if e.get("more_verified") is not True: evidence_rejections["expansion_not_verified"] += 1
+            if e.get("original_verified") is not True: evidence_rejections["original_not_verified"] += 1
+            if e.get("click_error") is not False: evidence_rejections["control_error"] += 1
+            if raw_authors[author] != 1: evidence_rejections["author_collision"] += 1
+            if e.get("fingerprint") != hashlib.sha256(body.encode("utf-8")).digest(): evidence_rejections["fingerprint_changed"] += 1
     allowed_keys = {production.canonical_review_hash(r) for r in candidates
                     if r.get("google_source_id_hash") in verified}
     rows = [r for r in proposed if r["review_key"] in allowed_keys]
@@ -126,6 +135,7 @@ def plan_rows(store, history, records, evidence):
                   legacy_held=preview["legacy_held"]+preview["additional_held"],
                   body_or_author_held=len(proposed)-len(rows),
                   body_audited=len(audited), classification=partition["counts"],
+                  evidence_rejections=dict(evidence_rejections), verified_source_count=len(verified),
                   full_coverage_verified=False, source_registry_persisted=False)
     return report, rows
 
