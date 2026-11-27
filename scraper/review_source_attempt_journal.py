@@ -1,5 +1,6 @@
 """Local source append attempt journal prototype. No remote writes or credentials."""
 import json
+import os
 import re
 import sqlite3
 from pathlib import Path
@@ -18,9 +19,14 @@ class AttemptJournal:
     """One unresolved attempt per store; never authorizes a write or retry.
 
     Caller must use a private local directory with appropriate OS permissions.
-    No body, author, credential, or raw Google ID is accepted or stored.
+    The legacy attempts table stores hashes only. Live source_requests also
+    stores original review payloads for recovery; credentials and raw IDs
+    are never part of those requests.
     """
     def __init__(self, path):
+        self.path = Path(path).resolve()
+        descriptor = os.open(self.path, os.O_CREAT | os.O_RDWR, 0o600)
+        os.close(descriptor)
         self.db = sqlite3.connect(str(path), timeout=5)
         self.db.execute("PRAGMA synchronous=FULL")
         self.db.execute("PRAGMA busy_timeout=5000")
@@ -34,6 +40,55 @@ class AttemptJournal:
 
     def close(self):
         self.db.close()
+
+    def bind_backend(self, identity):
+        """A staging journal must never replay requests into another project."""
+        if not isinstance(identity,str) or not identity:
+            raise ValueError('JOURNAL_BACKEND_INVALID')
+        with self.db:
+            self.db.execute('CREATE TABLE IF NOT EXISTS source_backend (singleton INTEGER PRIMARY KEY CHECK(singleton=1), identity TEXT NOT NULL)')
+            self.db.execute('INSERT INTO source_backend VALUES (1,?) ON CONFLICT DO NOTHING',(identity,))
+            if self.db.execute('SELECT identity FROM source_backend WHERE singleton=1').fetchone()[0] != identity:
+                raise ValueError('JOURNAL_BACKEND_MISMATCH')
+
+    def prepare_request(self, request):
+        """Durable live-writer envelope. Contains review bodies; keep outside Git."""
+        if self.path.is_relative_to(Path(__file__).resolve().parents[1]):
+            raise ValueError('LIVE_JOURNAL_MUST_BE_OUTSIDE_REPOSITORY')
+        with self.db:
+            self.db.execute("""CREATE TABLE IF NOT EXISTS source_requests (
+                operation_id TEXT PRIMARY KEY, store_id TEXT NOT NULL,
+                payload TEXT NOT NULL, result TEXT)""")
+            operation = request['p_operation_id']
+            payload = json.dumps(request, sort_keys=True, separators=(',', ':'), allow_nan=False)
+            self.db.execute('INSERT INTO source_requests VALUES (?,?,?,NULL) ON CONFLICT DO NOTHING',
+                            (operation, request['p_store_id'], payload))
+            if self.db.execute('SELECT payload FROM source_requests WHERE operation_id=?', (operation,)).fetchone()[0] != payload:
+                raise ValueError('JOURNAL_REQUEST_CONFLICT')
+        return operation
+
+    def pending_requests(self, store_id):
+        # Initialize the table even on a fresh process with no prepared request.
+        with self.db:
+            self.db.execute('CREATE TABLE IF NOT EXISTS source_requests (operation_id TEXT PRIMARY KEY, store_id TEXT NOT NULL, payload TEXT NOT NULL, result TEXT)')
+        return [json.loads(row[0]) for row in self.db.execute(
+            'SELECT payload FROM source_requests WHERE store_id=? AND result IS NULL ORDER BY rowid', (store_id,))]
+
+    def confirm_request(self, request, result):
+        if (not isinstance(result, dict) or result.get('operation_id') != request['p_operation_id']
+                or not isinstance(result.get('outcomes'), list)
+                or type(result.get('boundary_advanced')) is not bool):
+            raise ValueError('SOURCE_RECEIPT_INVALID')
+        expected = [item['source_hash'] for item in request['p_items']]
+        outcomes = result['outcomes']
+        if ([item.get('source_hash') for item in outcomes] != expected or any(
+                item.get('status') not in {'inserted','existing_source','linked_legacy','unresolved'} for item in outcomes)):
+            raise ValueError('SOURCE_RECEIPT_INCOMPLETE')
+        if any(item['status'] != 'unresolved' and not valid(item.get('review_id'), UUID) for item in outcomes):
+            raise ValueError('SOURCE_RECEIPT_IDENTITY_INVALID')
+        with self.db:
+            self.db.execute('UPDATE source_requests SET result=? WHERE operation_id=? AND result IS NULL',
+                            (json.dumps(result, sort_keys=True), request['p_operation_id']))
 
     def prepare(self, attempt_id, store_id, items):
         if not valid(attempt_id, UUID) or not valid(store_id, UUID) or not isinstance(items, list) or not 1 <= len(items) <= 500:

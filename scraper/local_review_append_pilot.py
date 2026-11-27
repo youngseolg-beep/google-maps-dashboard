@@ -9,13 +9,212 @@ from collections import Counter
 import hashlib
 import json
 import os
+import time
 from pathlib import Path
 from urllib.parse import urlsplit
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import local_review_profile_probe as probe
 import scraper as production
 from review_append_preflight import build_append_preview
+from review_source_attempt_journal import AttemptJournal
+from review_source_identity import valid_hash
+from review_incremental_boundary import preview_boundary, MIN_OVERLAP
+from review_incremental_baseline import committed_baseline
+from review_source_reconcile import legacy_target
+
+
+class SourceWriter:
+    """Actual append path: atomic source links/rows/receipts, durable retries."""
+    def __init__(self, config, store, journal_path, *, commit, run_id=None):
+        self.store, self.commit, self.run_id = store, commit, run_id
+        self.journal = AttemptJournal(journal_path)
+        self.outcomes = Counter()
+        self.recovered_outcomes = Counter()
+        self.recovered_operations = 0
+        self.held = {}
+        self.config = config
+        try:
+            if config is not None:
+                self.journal.bind_backend(config[0])
+            self.recover()
+            self.history = history_snapshot(config, store)
+            self.links = self.read_rows('review_source_links', 'source_hash,review_id', 'source_hash.asc')
+            self.known = {row['source_hash'] for row in self.links}
+            self.linked_rows = {row['review_id'] for row in self.links}
+            bases = self.read_rows('review_source_baselines', 'generation,head', 'store_id.asc')
+            if len(bases) > 1:
+                raise ValueError('SOURCE_BASELINE_INVALID')
+            self.baseline = committed_baseline(store['id'], **bases[0]) if bases else None
+        except BaseException:
+            self.journal.close()
+            raise
+        self.observed = []
+        self.raw_seen = set()
+        self.previous_order = []
+
+    def collect_window(self, page, reviews, store_key, *, recent):
+        ids = page.locator('.jftiEf').evaluate_all(
+            "cards => cards.map(c => c.getAttribute('data-review-id'))")
+        if any(not isinstance(identity,str) or not identity for identity in ids) or len(set(ids)) != len(ids):
+            raise ValueError('STREAM_DUPLICATE_DOM_IDS')
+        if recent and self.previous_order and not probe.ordered_extension(self.previous_order, ids):
+            raise ValueError('STREAM_ORDER_CHANGED')
+        self.previous_order = ids
+        fresh = [identity for identity in ids if identity not in self.raw_seen]
+        for identity in fresh:
+            self.observed.append(production.hash_google_source_review_id(self.store['id'], identity))
+        # Re-read already committed IDs only as boundary evidence. Their bodies
+        # and history need no repeat audit after a browser/process restart.
+        pending = [identity for identity in fresh if production.hash_google_source_review_id(self.store['id'],identity) not in self.known]
+        for offset in range(0,len(pending),250):
+            chosen = set(pending[offset:offset+250])
+            _, before = probe.audit_loaded_fields(page,len(chosen),include_records=True,selected_ids=chosen)
+            evidence = {}
+            audit = probe.audit_body_sample(page,store_key,reviews,limit=len(chosen),
+                deadline=time.monotonic()+probe.COUNT_BODY_SECONDS,evidence_sink=evidence,selected_ids=chosen)
+            if audit['context_lost'] or audit['identity_mismatch']:
+                raise ValueError('STREAM_CONTEXT_LOST')
+            _, after = probe.audit_loaded_fields(page,len(chosen),include_records=True,selected_ids=chosen)
+            original_meta = {r['source_id']:(r['author'],r['rating'],r['date_label']) for r in before}
+            actual_meta = {r['source_id']:(r['author'],r['rating'],r['date_label']) for r in after}
+            if set(original_meta) != chosen or original_meta != actual_meta:
+                raise ValueError('STREAM_METADATA_CHANGED')
+            self.append(after,evidence)
+        self.raw_seen.update(fresh)
+        return dict(observed=len(self.observed), committed=sum(h in self.known for h in self.observed),
+                    unresolved=sum(h not in self.known for h in self.observed),
+                    boundary_reached=recent and self.boundary(self.observed))
+
+    def read_rows(self, table, columns, order):
+        rows = []
+        while True:
+            page = production.supabase_request('GET', table, query={
+                'store_id':'eq.'+self.store['id'], 'select':columns,
+                'order':order, 'limit':'500', 'offset':str(len(rows))})
+            if not isinstance(page, list):
+                raise ValueError('SOURCE_READ_UNCONFIRMED')
+            rows.extend(page)
+            if len(page) < 500:
+                return rows
+
+    def request(self, request):
+        operation = self.journal.prepare_request(request)
+        # Reconcile the receipt before retrying the identical transactional RPC.
+        receipts = production.supabase_request('GET', 'review_source_receipts', query={
+            'operation_id':'eq.'+operation, 'store_id':'eq.'+self.store['id'], 'select':'request,result'})
+        if not isinstance(receipts, list) or len(receipts) > 1:
+            raise ValueError('SOURCE_RECEIPT_UNCONFIRMED')
+        if receipts:
+            expected = dict(items=request['p_items'], finalize=request['p_finalize'])
+            if receipts[0]['request'] != expected:
+                raise ValueError('SOURCE_RECEIPT_CONFLICT')
+            result = receipts[0]['result']
+        else:
+            result = production.supabase_request('POST', 'rpc/append_review_sources', body=request)
+        self.journal.confirm_request(request, result)
+        return result
+
+    def recover(self):
+        pending = self.journal.pending_requests(self.store['id'])
+        if pending and not self.commit:
+            raise ValueError('SOURCE_RECOVERY_REQUIRES_COMMIT')
+        for request in pending:
+            result = self.request(request)
+            self.recovered_operations += 1
+            self.recovered_outcomes.update(item['status'] for item in result['outcomes'])
+
+    def plan(self, records, evidence):
+        items = []
+        seen = set()
+        variants = {}
+        for raw in records:
+            source = production.hash_google_source_review_id(self.store['id'],raw.get('source_id'))
+            shape = repr(tuple(raw.get(k) for k in ('author','rating','body','body_scope','date_label')))
+            variants.setdefault(source,set()).add(shape)
+        norm = lambda text: production.normalize_spaces(text or '').casefold()
+        for raw in records:
+            source = production.hash_google_source_review_id(self.store['id'], raw.get('source_id'))
+            if not valid_hash(source) or source in seen:
+                continue
+            seen.add(source)
+            if source in self.known:
+                continue
+            if len(variants[source]) > 1:
+                self.held[source] = 'duplicate_source_conflict'
+                continue
+            e = evidence.get(hashlib.sha256(raw['source_id'].encode()).hexdigest(), {})
+            body = raw.get('body')
+            rating_only = e.get('rating_only_verified') is True and body == ''
+            valid_body = (isinstance(body, str) and bool(body.strip()) and raw.get('body_scope') == e.get('scope') == 'PRIMARY'
+                          and e.get('fingerprint') == hashlib.sha256(body.encode()).digest())
+            if (not (valid_body or rating_only) or e.get('click_error') is not False
+                    or e.get('more_remaining') != 0 or e.get('original_remaining') != 0
+                    or e.get('more_verified') is not True or e.get('original_verified') is not True
+                    or type(raw.get('rating')) is not int or not 1 <= raw['rating'] <= 5
+                    or not norm(raw.get('author'))):
+                self.held[source] = 'body_or_metadata_unverified'
+                continue
+            date_value, date_source = probe.local_date_value(raw.get('date_label'), production.now_kst().date(), production)
+            review = dict(store_name=self.store['store_name'], sv=self.store['sv'], country=self.store['country'],
+                          city=self.store.get('city',''), author=raw['author'], text=body, rating=raw['rating'],
+                          has_text=bool(body.strip()), date=raw.get('date_label') or 'Unknown',
+                          review_date=date_value, review_date_source=date_source or 'unknown')
+            row = production.prepare_review_row(review, {production.normalize_store_lookup_key(self.store['store_name']):self.store['id']}, self.run_id)
+            target, hold = legacy_target(self.history.values(),self.linked_rows,row,production)
+            if hold:
+                self.held[source] = hold
+                continue
+            # New IDs may represent distinct same-author reviews with identical text.
+            # Keep historical keys intact; scope new keys to the durable source ID.
+            row['review_key'] = hashlib.sha256(('google-source-v1:'+self.store['id']+':'+source).encode()).hexdigest()
+            item = dict(source_hash=source, row=row)
+            if target:
+                item['legacy_id'] = target
+            items.append(item)
+        targets = Counter(item.get('legacy_id') for item in items if item.get('legacy_id'))
+        accepted = []
+        for item in items:
+            if item.get('legacy_id') and targets[item['legacy_id']] > 1:
+                self.held[item['source_hash']] = 'legacy_target_collision'
+            else:
+                accepted.append(item)
+        return accepted
+
+    def append(self, records, evidence):
+        items = self.plan(records, evidence)
+        if not self.commit:
+            return dict(status='DRY_RUN', ready=len(items), held=len(self.held))
+        for offset in range(0,len(items),250):
+            result = self.request(dict(p_operation_id=str(uuid4()), p_store_id=self.store['id'],
+                                       p_items=items[offset:offset+250], p_finalize=None))
+            for outcome in result['outcomes']:
+                source, status = outcome['source_hash'], outcome['status']
+                self.outcomes[status] += 1
+                if status == 'unresolved':
+                    self.held[source] = status
+                else:
+                    self.known.add(source)
+                    self.linked_rows.add(outcome['review_id'])
+                    self.held.pop(source, None)
+        return dict(status='APPEND_CONFIRMED', held=len(self.held))
+
+    def boundary(self, observed):
+        if self.baseline is None:
+            return False
+        return preview_boundary(self.store['id'], self.baseline, observed, self.known,
+            newest_verified=True, registry_verified=True, context_verified=True)['status'] == 'INCREMENTAL_BOUNDARY_CANDIDATE'
+
+    def finish(self, observed, *, newest_verified, complete):
+        if (not self.commit or not newest_verified or len(observed) < MIN_OVERLAP
+                or self.held or self.journal.pending_requests(self.store['id'])
+                or not set(observed).issubset(self.known)
+                or (self.baseline is None and not complete) or (self.baseline and not self.boundary(observed))):
+            return False
+        request = dict(p_operation_id=str(uuid4()), p_store_id=self.store['id'], p_items=[],
+                       p_finalize=dict(generation=self.baseline['generation'] if self.baseline else 0,
+                           observed=observed, newest_verified=True, resolved=True, initial_complete=complete))
+        return self.request(request)['boundary_advanced']
 
 
 def backend_config(target):
@@ -236,12 +435,15 @@ def main():
                 return 2
             # Fresh privileged, store-scoped history; do not rely on public
             # RLS-limited audit results for an insertion decision.
-            history = history_snapshot(config, store)
-            report, rows = plan_rows(store, history, *captured[0])
-            captured.clear()
-            outcome = execute_append(config, store, history, rows, commit=args.commit)
-            print("LOCAL_APPEND_PILOT: "+json.dumps(dict(report, **outcome), ensure_ascii=False))
-            return 0 if outcome["status"] in {"DRY_RUN", "APPEND_CONFIRMED", "NO_READY_ROWS"} else 2
+            writer = SourceWriter(config,store,root/'review-source-requests.sqlite3',commit=args.commit)
+            try:
+                outcome = writer.append(*captured[0])
+                captured.clear()
+                print('LOCAL_APPEND_PILOT: '+json.dumps(dict(outcome,outcomes=dict(writer.outcomes),
+                    full_coverage_verified=False, boundary_advanced=False)))
+                return 0 if not writer.held else 2
+            finally:
+                writer.journal.close()
         finally:
             lock.seek(0)
             msvcrt.locking(lock.fileno(), msvcrt.LK_UNLCK, 1)

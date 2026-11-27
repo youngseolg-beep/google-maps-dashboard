@@ -650,7 +650,7 @@ def field_audit_status(metrics, observed_unique):
     return "REQUIRED_FIELDS_PRESENT"
 
 
-def audit_loaded_fields(page, observed_unique, *, include_records=False, expected_prefix=None):
+def audit_loaded_fields(page, observed_unique, *, include_records=False, expected_prefix=None, selected_ids=None):
     """Inspect loaded review cards in one DOM pass; return aggregate counts only.
 
     Never export individual authors, text, dates or review IDs. A blank body
@@ -664,6 +664,10 @@ def audit_loaded_fields(page, observed_unique, *, include_records=False, expecte
         const prefixLimit = options.prefixLimit;
         const allIds = prefixLimit === null ? null : cards.map(c=>c.getAttribute('data-review-id'));
         if (prefixLimit !== null) cards = cards.slice(0,prefixLimit);
+        if (options.selectedIds !== null) {
+            const chosen = new Set(options.selectedIds);
+            cards = cards.filter(c => chosen.has(c.getAttribute('data-review-id')));
+        }
         const mainBody = """ + MAIN_BODY_JS + r""";
         const readDates = """ + REVIEW_DATE_METADATA_JS + r""";
         const out = {
@@ -771,7 +775,8 @@ def audit_loaded_fields(page, observed_unique, *, include_records=False, expecte
             }
         }
         return {metrics:out, records, allIds};
-    }""", {"includeRecords":include_records,"prefixLimit":len(expected_prefix) if expected_prefix is not None else None})
+    }""", {"includeRecords":include_records,"prefixLimit":len(expected_prefix) if expected_prefix is not None else None,
+           "selectedIds":list(selected_ids) if selected_ids is not None else None})
     metrics = result["metrics"]
     if expected_prefix is not None:
         all_ids=result["allIds"]
@@ -1072,6 +1077,35 @@ def audit_body_sample(page, store_key, reviews, limit=10, deadline=None, *, evid
                 more_verified=(not more_count or metrics["more_confirmed"]>more_confirmed_before),
                 original_verified=(not original_count or (metrics["original_confirmed"]>original_confirmed_before
                                   and metrics["original_text_changed"]>original_changed_before)))
+            # Positive structural check, repeated after rendering settles. Hidden,
+            # empty or unrecognized customer text containers remain held.
+            def rating_only_structure():
+                return card.evaluate(r"""card => {
+                    const visible = n => !!n.getClientRects().length;
+                    const busy = card.querySelector('[aria-busy="true"],[role="progressbar"]');
+                    const customer = [...card.querySelectorAll('.wiI7pd,.MyEned')]
+                        .filter(n => !n.closest('.CDe7pd'));
+                    const controls = [...card.querySelectorAll('button,[role="button"]')]
+                        .filter(visible).some(n => /more|original|더.?보기|원문|원본/i.test(n.innerText || ''));
+                    const walker = document.createTreeWalker(card,NodeFilter.SHOW_TEXT);
+                    let text;
+                    while (text = walker.nextNode()) {
+                        const parent = text.parentElement;
+                        if (!parent || !visible(parent) || parent.closest(
+                            '.d4r55,.rsqaof,.xRkPPb,.rsqaWe,.CDe7pd,button,[role="button"],[role="img"],svg')) continue;
+                        const value = text.textContent.trim();
+                        if (!value || /^(?:new|새 리뷰|local guide|지역 가이드|\d+[,.]?\d* (?:reviews?|photos?)|·|[0-5](?:\.0)?)$/i.test(value)) continue;
+                        // Unknown text structure must never become a rating-only row.
+                        return false;
+                    }
+                    return !busy && !customer.length && !controls &&
+                        !!card.querySelector('.d4r55') && !!card.querySelector('[role="img"][aria-label]');
+                }""")
+            if not final_length and not more_count and not original_count and rating_only_structure():
+                page.wait_for_timeout(400)
+                evidence_sink[source]['rating_only_verified'] = (
+                    not blocked(page) and same_place(page.url,store_key) and selected(reviews)
+                    and card.get_attribute('data-review-id') == identity and rating_only_structure())
         metrics["final_scope_counts"][final_scope] = metrics["final_scope_counts"].get(final_scope, 0) + 1
         if not final_length:
             metrics["body_missing_after"] += 1
@@ -1712,7 +1746,7 @@ def maps_language_url(url, language):
     return urlunsplit((p.scheme, p.netloc, p.path, urlencode(query), p.fragment))
 
 
-def run_once(context, expected_total=None, store_key="thailand", auto_total=False, scroll_mode="baseline", audit_fields=False, field_sample=False, body_sample=False, adapter_sample=False, db_sample=False, count_round_limit=240, count_second_limit=600, count_db_audit=False, count_body_audit=False, maps_language="profile", scale_count_budget=False, newest_heads=None, newest_db_audit=False, capture_sink=None, capture_select=None, window_sink=None, recent_limit=None, window_select=None, max_body_batches=4):
+def run_once(context, expected_total=None, store_key="thailand", auto_total=False, scroll_mode="baseline", audit_fields=False, field_sample=False, body_sample=False, adapter_sample=False, db_sample=False, count_round_limit=240, count_second_limit=600, count_db_audit=False, count_body_audit=False, maps_language="profile", scale_count_budget=False, newest_heads=None, newest_db_audit=False, capture_sink=None, capture_select=None, window_sink=None, recent_limit=None, window_select=None, max_body_batches=4, stream=None, stream_recent=False):
     report = {"status": "NOT_STARTED", "phase": "select_startup_tab",
               "overview_selected": False,
               "reviews_selected": False, "initial_unique": 0,
@@ -1720,6 +1754,8 @@ def run_once(context, expected_total=None, store_key="thailand", auto_total=Fals
               "scroll_verified": False, "database_writes": False,
               "full_coverage_verified": False}
     report["store"] = STORE_CONFIG[store_key]["name"]
+    if stream is not None and (not auto_total or maps_language != 'en' or window_sink is not None or capture_sink is not None):
+        raise ValueError('STREAM_SCOPE_INVALID')
     if window_sink is not None and (not auto_total or not count_body_audit or count_db_audit
             or capture_sink is not None or window_select is None or maps_language != "en"
             or type(max_body_batches) is not int or not 1 <= max_body_batches <= 40
@@ -1960,7 +1996,7 @@ def run_once(context, expected_total=None, store_key="thailand", auto_total=Fals
             report["status"] = "ACCESS_RESTRICTED_STOPPED" if blocked(page) else "REVIEW_CONTEXT_LOST"
             return report
 
-        if recent_limit is not None:
+        if recent_limit is not None or stream_recent:
             report["newest_sort_status"] = verify_newest_sort(page, store_key, reviews)
             if report["newest_sort_status"] != "NEWEST_SORT_UI_VERIFIED":
                 report["status"] = report["newest_sort_status"]
@@ -2124,6 +2160,12 @@ def run_once(context, expected_total=None, store_key="thailand", auto_total=Fals
             if not same_place(page.url, store_key) or not selected(reviews):
                 report["status"] = "REVIEW_CONTEXT_LOST"
                 return report
+            if stream is not None:
+                state = stream(page, reviews)
+                report['stream'] = state
+                if state['boundary_reached']:
+                    report['stop_reason'] = 'COMMITTED_BOUNDARY_REACHED'
+                    break
             if recent_limit is not None and len(seen) >= min(expected_total, recent_limit):
                 report["stop_reason"] = "RECENT_WINDOW_REACHED"
                 break
@@ -2262,6 +2304,11 @@ def run_once(context, expected_total=None, store_key="thailand", auto_total=Fals
             report["status"] = fresh_depth_status(
                 report["initial_unique"], len(seen), blocked(page)
             )
+        if stream is not None:
+            # Flush the final visible batch even when the last wheel reaches a cap.
+            report['stream'] = stream(page, reviews)
+            report['status'] = 'STREAM_CAPTURE_FINISHED'
+            return report
         if window_sink is not None:
             # A bounded observed set is not a full-store snapshot. Only save
             # cards whose identities, metadata and body controls are verified.

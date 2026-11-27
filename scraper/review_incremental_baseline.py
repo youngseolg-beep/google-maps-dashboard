@@ -11,6 +11,15 @@ def valid(v, pattern):
     return isinstance(v, str) and pattern.fullmatch(v) is not None
 
 
+def committed_baseline(store_id, generation, head):
+    """Shared validation for a DB-confirmed head and the isolated fixture."""
+    if (not valid(store_id,UUID) or type(generation) is not int or generation < 1
+            or not isinstance(head,list) or len(head)!=30
+            or any(not valid(h,HEX) for h in head) or len(set(head))!=30):
+        raise ValueError('CHECKPOINT_INVALID')
+    return dict(store_id=store_id,generation=generation,head=head,committed=True,newest_verified=True)
+
+
 class BaselineFixture:
     def __init__(self, path):
         self.db = sqlite3.connect(str(path), timeout=5)
@@ -28,8 +37,7 @@ class BaselineFixture:
         if not row:
             return None
         head = json.loads(row[1])
-        if not valid(store_id, UUID) or not isinstance(head,list) or len(head)!=30 or any(not valid(h,HEX) for h in head) or len(set(head))!=30:
-            raise ValueError("CHECKPOINT_INVALID")
+        committed_baseline(store_id,row[0],head)
         return dict(store_id=store_id, generation=row[0], head=head, fixture_only=True)
 
     def advance(self, store_id, generation, observed, rows, links, *,

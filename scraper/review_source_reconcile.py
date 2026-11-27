@@ -3,6 +3,23 @@ from collections import Counter, defaultdict
 from review_source_identity import source_replay_preview, valid_hash
 
 
+def legacy_target(history, linked_rows, candidate, production):
+    """Return a unique exact unlinked target, or hold an ambiguous old author.
+
+    A successful proposal is still rechecked inside the append transaction.
+    Source-linked rows no longer impose an author-wide exclusion.
+    """
+    norm = lambda value: production.normalize_spaces(value or '').casefold()
+    unlinked = [row for row in history if row['id'] not in linked_rows]
+    exact = [row for row in unlinked if row.get('author') == candidate['author']
+             and row.get('text','') == candidate['text'] and row.get('rating') == candidate['rating']
+             and row.get('date') == candidate['date']]
+    prior_author = any(norm(row.get('author')) == norm(candidate['author']) for row in unlinked)
+    if len(exact)>1 or (not exact and prior_author):
+        return None, 'legacy_identity_ambiguous'
+    return exact[0]['id'] if exact else None, None
+
+
 def reconcile_preview(store_id, records, history, links, production):
     """Conservatively partition every raw observation before adaptation.
 

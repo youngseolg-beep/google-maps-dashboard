@@ -18,26 +18,6 @@ import local_review_append_pilot as pilot
 import scraper as production
 
 
-def select_for_body(records, history, *, all_candidates=False):
-    """Prioritize new unique authors, not already stored or ambiguous reviews."""
-    def name(row):
-        return production.normalize_spaces(row.get("author") or "").casefold()
-    existing = {name(r) for r in history.values()}
-    frequencies = Counter(name(r) for r in records)
-    today = production.now_kst().date()
-    eligible = [r for r in records if name(r) and name(r) not in
-                {"anonymous", "unknown"} and name(r) not in existing
-                and frequencies[name(r)] == 1 and type(r.get("rating")) is int
-                and 1 <= r["rating"] <= 5 and
-                probe.local_date_value(r.get("date_label"), today, production)[0]
-                and isinstance(r.get("source_id"), str) and r["source_id"]]
-    # Prioritize visible customer text. A blank body is NOT rating-only proof.
-    eligible.sort(key=lambda r: r.get("body_scope") != "PRIMARY" or not r.get("body"))
-    if all_candidates:
-        return [r["source_id"] for r in eligible]
-    return {r["source_id"] for r in eligible[:probe.MAX_COUNT_BODY_AUDIT]}, len(eligible)
-
-
 def run_store(context, config, task, commit, run_id, *, mode="backfill", recent_limit=100, max_body_batches=4):
     key = task["key"]
     if key in probe.STORE_CONFIG:
@@ -48,70 +28,42 @@ def run_store(context, config, task, commit, run_id, *, mode="backfill", recent_
                                                    "country":task["country"]}}
     try:
         store = probe.verified_db_store(config, key)
-        before = pilot.history_snapshot(config, store)
-        confirmed = 0
-        audited = 0
-        writes = False
-        write_failure = None
-        chunks = []
-        history = before
-        def select(records):
-            return select_for_body(records, before, all_candidates=True)
-        def receive(records, evidence):
-            nonlocal confirmed, audited, writes, history, write_failure
-            # Refresh the exact store history before each independent POST.
-            try:
-                fresh = pilot.history_snapshot(config,store)
-                if fresh != history:
-                    write_failure = "HISTORY_CHANGED_HELD"
-                    return False
-                plan, rows = pilot.plan_rows(store,fresh,records,evidence)
-                if run_id is not None:
-                    for row in rows:
-                        row["first_seen_run_id"] = run_id
-                outcome = pilot.execute_append(config,store,fresh,rows,commit=commit)
-                confirmed += outcome["confirmed_new"]
-                audited += len(evidence)
-                writes = outcome["database_writes"] if outcome["database_writes"] == "UNKNOWN" else bool(writes or outcome["database_writes"])
-                chunk = dict(plan,**outcome)
-                chunks.append(chunk)
-                print("LOCAL_BATCH_CHUNK: "+json.dumps(dict(store=task["name"],chunk=len(chunks),**chunk),ensure_ascii=False),flush=True)
-                if outcome["status"] not in {"DRY_RUN","APPEND_CONFIRMED","NO_READY_ROWS"}:
-                    write_failure = outcome["status"]
-                    return False
-                history = pilot.history_snapshot(config,store) if commit and rows else fresh
-                return True
-            except Exception as exc:
-                write_failure = "STORE_EXECUTION_ERROR"
-                writes = "UNKNOWN" if commit else False
-                print("LOCAL_BATCH_CHUNK_ERROR: "+type(exc).__name__,flush=True)
-                return False
-        report = probe.run_once(context,store_key=key,auto_total=True,
-            scroll_mode="adaptive",maps_language="en",count_body_audit=True,
-            scale_count_budget=True,window_sink=receive,window_select=select,
-            recent_limit=recent_limit if mode=="recent" else None,max_body_batches=max_body_batches)
-        restricted = report.get("status")=="ACCESS_RESTRICTED_STOPPED"
-        for page in context.pages:
-            if not page.is_closed() and probe.blocked(page):
-                restricted=True
-                break
-        observed=report.get("observed_unique",0)
-        total=report.get("expected_total_user_observed")
-        status = write_failure or ("ACCESS_RESTRICTED_STOPPED" if restricted else report.get("status","CAPTURE_HELD"))
-        if status=="WINDOW_CAPTURE_FINISHED":
-            if not commit:
-                status="DRY_RUN"
-            elif mode=="recent" or observed != total or report.get("window_backlog",0):
-                status="PARTIAL_APPEND_CONFIRMED" if confirmed else "PARTIAL_NO_READY_ROWS"
-            else:
-                status="APPEND_CONFIRMED" if confirmed else "NO_READY_ROWS"
-        return dict(status=status, observed=observed, expected=total, mode=mode,
-                    stop_reason=report.get("stop_reason"), confirmed_new=confirmed,
-                    database_writes=writes, body_audited=audited, chunks=len(chunks),
-                    candidate_count=report.get("window_candidate_count"),
-                    selection_backlog=report.get("window_backlog"),
-                    elapsed_scroll_seconds=report.get("elapsed_scroll_seconds"),
-                    full_coverage_verified=False)
+        root = Path(os.environ["LOCALAPPDATA"])/"SVReviewMaster"
+        journal_path = root/"review-source-requests.sqlite3"
+        writer = pilot.SourceWriter(config,store,journal_path,commit=commit,run_id=run_id)
+        try:
+            def stream(page, reviews):
+                return writer.collect_window(page,reviews,key,recent=mode=="recent")
+            report = probe.run_once(context,store_key=key,auto_total=True,
+                scroll_mode="adaptive",maps_language="en",scale_count_budget=True,
+                stream=stream,stream_recent=mode=="recent")
+            complete = (report.get("status")=="STREAM_CAPTURE_FINISHED"
+                        and report.get("stop_reason")=="EXPECTED_TOTAL_REACHED"
+                        and len(writer.observed)==report.get("expected_total_user_observed"))
+            newest = report.get("newest_sort_status")=="NEWEST_SORT_UI_VERIFIED"
+            boundary_reached = mode=="recent" and writer.boundary(writer.observed)
+            finished = report.get("status")=="STREAM_CAPTURE_FINISHED"
+            advanced = writer.finish(writer.observed,newest_verified=newest and finished,complete=complete)
+            unresolved = sum(h not in writer.known for h in writer.observed)
+            uncertain = bool(writer.journal.pending_requests(store['id']))
+            counts = dict(writer.outcomes)
+            status = ("DRY_RUN" if not commit else
+                      "APPEND_CONFIRMED" if finished and not unresolved and (complete or boundary_reached) else
+                      "PARTIAL_APPEND_CONFIRMED" if counts.get("inserted",0) else "PARTIAL_NO_READY_ROWS")
+            if not finished:
+                status = report.get("status","CAPTURE_HELD")
+            return dict(status=status, observed=len(writer.observed), mode=mode,
+                expected=report.get("expected_total_user_observed"), confirmed_new=counts.get("inserted",0),
+                outcomes=counts, database_writes='UNKNOWN' if uncertain else bool(commit and (counts or writer.recovered_operations)),
+                recovered_operations=writer.recovered_operations, recovered_outcomes=dict(writer.recovered_outcomes),
+                stop_reason=report.get("stop_reason"), boundary_advanced=advanced,
+                boundary_reached=boundary_reached, outstanding_observed=unresolved,
+                coverage_incomplete=not (complete or boundary_reached) or bool(unresolved),
+                backlog_unknown=not (complete or boundary_reached),
+                held_reasons=dict(Counter(writer.held.values())),
+                elapsed_scroll_seconds=report.get("elapsed_scroll_seconds"), full_coverage_verified=False)
+        finally:
+            writer.journal.close()
     finally:
         probe.STORE_CONFIG.pop(key, None)
 
@@ -137,8 +89,8 @@ def main():
     parser.add_argument("--limit", type=int, help="Optional number of eligible stores")
     parser.add_argument("--skip-store", action="append", default=[])
     parser.add_argument("--mode", choices=("backfill","recent"), default="backfill")
-    parser.add_argument("--recent-limit", type=int, default=100)
-    parser.add_argument("--max-body-batches", type=int, default=4)
+    parser.add_argument("--recent-limit", type=int, default=100, help="Deprecated compatibility option; stopping uses the committed boundary")
+    parser.add_argument("--max-body-batches", type=int, default=4, help="Deprecated compatibility option; verified batches are streamed")
     parser.add_argument("--commit", action="store_true")
     args = parser.parse_args()
     if not 30 <= args.recent_limit <= 250 or not 1 <= args.max_body_batches <= 40:

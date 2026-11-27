@@ -3,7 +3,7 @@ import re
 
 HASH = re.compile(r"[0-9a-f]{64}")
 MIN_OVERLAP = 30
-MAX_WINDOW = 1000
+MAX_WINDOW = 10000  # Same hard bound as the live Maps scan.
 
 
 def valid_sequence(values):
@@ -42,7 +42,9 @@ def preview_boundary(store_id, baseline, observed, known, *, newest_verified=Fal
         return result("INCREMENTAL_ANCHOR_NOT_OBSERVED", observed=len(observed))
     index = observed.index(prior[0])
     prefix, tail = observed[:index], observed[index:]
-    if any(h in known for h in prefix):
+    # A previous partial run can already have committed part of the prefix.
+    # Its receipt does not replace the last complete boundary.
+    if set(prefix).intersection(prior):
         return result("INCREMENTAL_ORDER_CONFLICT")
     common = min(len(tail), len(prior))
     if tail[:common] != prior[:common] or any(h not in known for h in tail):
